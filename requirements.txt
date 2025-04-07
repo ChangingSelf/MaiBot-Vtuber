@@ -1,0 +1,5 @@
+aiohttp==3.11.16
+fastapi==0.115.12
+pydantic==2.11.2
+setuptools==75.8.0
+uvicorn==0.34.0
