@@ -4,9 +4,12 @@ import asyncio
 import aiohttp
 import time
 from src.neuro.api import fastapi
-from src.neuro.util import logger, chat_util
+from src.neuro.util import chat_util
+from src.utils.logger import get_logger
 import sys
 from src.utils.config import config
+
+logger = get_logger("main")
 
 
 def run_fastapi():

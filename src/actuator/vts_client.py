@@ -1,8 +1,8 @@
 import pyvts
 import asyncio
 from typing import List, Dict, Any, Optional
-import logging
 from ..utils.config import config
+from ..utils.logger import get_logger
 
 
 class VtubeStudioClient:
@@ -38,7 +38,7 @@ class VtubeStudioClient:
         self.vts = pyvts.vts(
             plugin_info=self.plugin_info, vts_api_info=self.vts_api_info
         )
-        self.logger = logging.getLogger("VtubeStudioClient")
+        self.logger = get_logger("VtubeStudioClient")
 
     async def connect(self) -> bool:
         """

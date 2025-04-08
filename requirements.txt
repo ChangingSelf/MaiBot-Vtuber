@@ -1,5 +1,6 @@
 aiohttp==3.11.16
 fastapi==0.115.12
+loguru==0.7.2
 pydantic==2.11.2
 pyvts==0.3.3
 setuptools==75.8.0

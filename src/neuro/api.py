@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 import uvicorn
-from .util import logger
+from ..utils.logger import get_logger
 import asyncio
 from typing import Optional, Dict, Any
 import json
@@ -8,6 +8,7 @@ from ..utils.config import Config
 
 fastapi = FastAPI()
 config = Config()
+logger = get_logger("api")
 
 
 @fastapi.post("/api/message")
