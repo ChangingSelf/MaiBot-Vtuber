@@ -6,12 +6,13 @@
 
 ```
 .
-├── main.py          # 主程序入口
-├── api.py           # API接口定义
-├── config.py        # 配置文件
-├── util.py          # 工具函数
-├── requirements.txt # 项目依赖
-└── token.txt        # 认证令牌
+├── src/                # 源代码目录
+│   ├── actuator/      # 执行器模块
+│   ├── neuro/         # 神经网络模块
+│   ├── sensor/        # 传感器模块
+│   └── utils/         # 工具函数模块
+├── main.py            # 主程序入口
+└── requirements.txt   # 项目依赖
 ```
 
 ## 安装步骤
@@ -51,15 +52,15 @@ vtube-studio="http://127.0.0.1:18004/api/message" # 新增加的本项目配置
 5. 运行
 
 ```bash
-python main.py
+python -m main
 ```
 
 目前`main.py`中是一个测试用的控制台程序，实现了和MaiBot Core的简单交互，后续会完善。
 
-`vts_test.py`中是连接VTubeStudio的测试程序，启动VTubeStudio之后，在设置中开启允许安装插件的选项，使用如下命令运行插件：
+`vts_client.py`中是对连接VTubeStudio的pyvts库的封装，启动VTubeStudio之后，在设置中开启允许安装插件的选项，可使用如下命令运行这个文件进行简单测试：
 
 ```bash
-python vts_test.py
+python -m src.actuator.vts_client
 ```
 
 会调用当前打开模型的第一个动画。

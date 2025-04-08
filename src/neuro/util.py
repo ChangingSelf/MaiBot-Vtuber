@@ -1,7 +1,7 @@
 from maim_message import GroupInfo, UserInfo, Seg, MessageBase, BaseMessageInfo
 import logging
 import aiohttp
-from config import config
+from ..utils.config import config
 import time
 
 logging.basicConfig(

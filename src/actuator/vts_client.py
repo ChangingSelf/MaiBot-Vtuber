@@ -2,7 +2,7 @@ import pyvts
 import asyncio
 from typing import List, Dict, Any, Optional
 import logging
-from config import config
+from ..utils.config import config
 
 
 class VtubeStudioClient:

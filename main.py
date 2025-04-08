@@ -3,10 +3,10 @@ import uvicorn
 import asyncio
 import aiohttp
 import time
-from api import fastapi
-from util import logger, chat_util
+from src.neuro.api import fastapi
+from src.neuro.util import logger, chat_util
 import sys
-from config import config
+from src.utils.config import config
 
 
 def run_fastapi():
