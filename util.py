@@ -52,7 +52,7 @@ class chat:
 
         session = await self.get_session()
         async with session.post(
-            config.Fastapi_url,
+            config.core_url,
             json=payload,
             headers={"Content-Type": "application/json"},
         ) as response:
