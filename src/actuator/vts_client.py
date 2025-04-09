@@ -1,6 +1,6 @@
 import pyvts
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List
 from ..utils.config import config
 from ..utils.logger import get_logger
 
@@ -35,9 +35,7 @@ class VtubeStudioClient:
             "name": "VTubeStudioPublicAPI",
             "version": "1.0",
         }
-        self.vts = pyvts.vts(
-            plugin_info=self.plugin_info, vts_api_info=self.vts_api_info
-        )
+        self.vts = pyvts.vts(plugin_info=self.plugin_info, vts_api_info=self.vts_api_info)
         self.logger = get_logger("VtubeStudioClient")
 
     async def connect(self) -> bool:
@@ -65,12 +63,8 @@ class VtubeStudioClient:
             List[str]: 热键名称列表
         """
         try:
-            response_data = await self.vts.request(
-                self.vts.vts_request.requestHotKeyList()
-            )
-            hotkey_list = [
-                hotkey["name"] for hotkey in response_data["data"]["availableHotkeys"]
-            ]
+            response_data = await self.vts.request(self.vts.vts_request.requestHotKeyList())
+            hotkey_list = [hotkey["name"] for hotkey in response_data["data"]["availableHotkeys"]]
             self.logger.info(f"获取到{len(hotkey_list)}个热键")
             return hotkey_list
         except Exception as e:

@@ -2,7 +2,6 @@ import threading
 import uvicorn
 import asyncio
 import aiohttp
-import time
 from src.neuro.api import fastapi
 from src.neuro.util import chat_util
 from src.utils.logger import get_logger
@@ -19,8 +18,6 @@ def run_fastapi():
 async def check_for_messages():
     """定期检查是否有新消息"""
     async with aiohttp.ClientSession() as client:
-        last_check_time = time.time()
-
         try:
             while True:
                 try:
@@ -28,9 +25,7 @@ async def check_for_messages():
                     await asyncio.sleep(2)
 
                     # 获取消息
-                    async with client.get(
-                        f"http://localhost:{config.port}/api/messages"
-                    ) as response:
+                    async with client.get(f"http://localhost:{config.port}/api/messages") as response:
                         if response.status == 200:
                             data = await response.json()
                             messages = data.get("messages", [])
@@ -40,8 +35,6 @@ async def check_for_messages():
                                 sender = message.get("sender", "未知用户")
                                 content = message.get("content", "")
                                 logger.info(f"收到来自 {sender} 的消息: {content}")
-
-                    last_check_time = time.time()
 
                 except Exception as e:
                     logger.error(f"检查消息时出错: {str(e)}")

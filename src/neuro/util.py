@@ -1,4 +1,4 @@
-from maim_message import GroupInfo, UserInfo, Seg, MessageBase, BaseMessageInfo
+from maim_message import UserInfo, Seg, MessageBase, BaseMessageInfo
 import aiohttp
 from ..utils.config import config
 from ..utils.logger import get_logger

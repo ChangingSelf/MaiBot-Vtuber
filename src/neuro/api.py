@@ -1,9 +1,5 @@
 from fastapi import FastAPI, Request
-import uvicorn
 from ..utils.logger import get_logger
-import asyncio
-from typing import Optional, Dict, Any
-import json
 from ..utils.config import Config
 
 fastapi = FastAPI()

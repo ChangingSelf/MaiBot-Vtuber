@@ -25,9 +25,7 @@ def setup_logger(
     logger.remove()
 
     # 添加控制台处理器
-    logger.add(
-        sink=lambda msg: print(msg), format=log_format, level=level, colorize=True
-    )
+    logger.add(sink=lambda msg: print(msg), format=log_format, level=level, colorize=True)
 
     # 如果指定了日志文件，添加文件处理器
     if log_file:
