@@ -1,7 +1,7 @@
 import pyvts
 import asyncio
 from typing import List
-from ..utils.config import config
+from ..utils.config import global_config
 from ..utils.logger import get_logger
 
 
@@ -101,8 +101,8 @@ async def main():
     """示例"""
     # 创建VTS管理器实例
     vts_client = VtubeStudioClient(
-        plugin_name=config.plugin_name,
-        developer=config.developer,
+        plugin_name=global_config.plugin_name,
+        developer=global_config.developer,
     )
 
     # 连接到VTS

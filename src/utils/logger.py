@@ -8,7 +8,7 @@ def setup_logger(
     level: str = "DEBUG",
     log_file: Optional[str] = None,
     log_format: str = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-) -> logger:
+):
     """
     设置并返回一个配置好的logger实例
 
@@ -47,7 +47,7 @@ def setup_logger(
 default_logger = setup_logger("MaiBot-Vtuber")
 
 
-def get_logger(name: Optional[str] = None) -> logger:
+def get_logger(name: Optional[str] = None):
     """
     获取一个logger实例。如果指定了name，则返回对应name的logger；
     否则返回默认logger。
