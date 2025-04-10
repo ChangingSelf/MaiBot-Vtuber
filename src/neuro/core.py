@@ -4,12 +4,16 @@ from ..utils.config import global_config
 from ..utils.logger import logger
 import asyncio
 import time
+from .synapse import Synapse, synapse
+from ..neuro.synapse import Neurotransmitter
 
-message_queue = asyncio.Queue()  # 全局消息队列
 
+class Core:
+    """
+    神经中枢(Core)是神经系统的核心，负责处理和整合来自传感器的信息，并生成输出信号。它协调神经元之间的信息传递，确保神经系统正常运作。
+    """
 
-class MaiMaiCore:
-    def __init__(self):
+    def __init__(self, synapse: Synapse):
         """
         初始化平台路由
         """
@@ -22,6 +26,7 @@ class MaiMaiCore:
             }
         )
         self.router = Router(route_config)
+        self.synapse = synapse
 
     async def connect(self, response_handler=None):
         """
@@ -106,32 +111,36 @@ class MaiMaiCore:
 
         if message_segment.type == "text":
             logger.info(f"【麦麦】: {message_segment.data}")
+            # 发布神经递质到突触
+            await self.synapse.publish_output(
+                Neurotransmitter(
+                    raw_message=message_segment.data,
+                    user_info=user_info,
+                    group_info=group_info,
+                )
+            )
         else:
             logger.info(f"收到[{message_segment.type}]类型的消息")
 
-    async def process_message_queue(self):
+    async def process_input(self):
         """后台任务，处理来自传感器的输入消息"""
         logger.info("启动消息队列处理器...")
         while True:
             try:
                 # 等待从队列中获取消息 (user_input, user_info)
-                user_input, user_info = await message_queue.get()
-                logger.debug(f"从队列接收到输入: {user_input[:20]}...")
-
-                # 在这里调用核心的消息处理逻辑
-                # 例如，调用一个处理输入的函数，或者直接在这里实现
-                logger.info(f"正在处理来自 {user_info.user_nickname} 的输入: {user_input}")
-                await self.send_message(user_input, user_info, None)
-
-                # 标记任务完成，以便队列可以跟踪处理进度 (如果需要的话)
-                message_queue.task_done()
+                neurotransmitter = await self.synapse.consume_input()
+                logger.debug(f"从队列接收到输入: {neurotransmitter.raw_message[:20]}...")
+                # 处理消息
+                logger.info(
+                    f"正在处理来自 {neurotransmitter.user_info.user_nickname} 的输入: {neurotransmitter.raw_message}"
+                )
+                await self.send_message(neurotransmitter.raw_message, neurotransmitter.user_info, None)
 
             except asyncio.CancelledError:
                 logger.info("消息队列处理器被取消。")
                 break
             except Exception as e:
                 logger.error(f"处理队列消息时出错: {e}", exc_info=True)
-                # 可以在这里添加重试逻辑或错误处理
 
 
-core = MaiMaiCore()
+core = Core(synapse)

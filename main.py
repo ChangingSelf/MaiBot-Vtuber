@@ -10,7 +10,7 @@ logger = get_logger("main")
 async def boot():
     await asyncio.gather(
         core.connect(),
-        core.process_message_queue(),
+        core.process_input(),
         danmaku_mock_sensor.connect(),
     )
 

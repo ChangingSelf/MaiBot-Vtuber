@@ -1,14 +1,16 @@
 from maim_message.message_base import UserInfo
+
+from src.neuro.synapse import Neurotransmitter, Synapse, synapse
 from .sensor import Sensor
 from ..utils.logger import logger
 import asyncio
 import random
-from ..neuro.core import message_queue
 from ..utils.config import global_config
 
 
 class DanmakuMockSensor(Sensor):
-    def __init__(self):
+    def __init__(self, synapse: Synapse):
+        super().__init__(synapse)
         self.running = False
         # 模拟用户数据
         self.users = [
@@ -67,8 +69,10 @@ class DanmakuMockSensor(Sensor):
                 user_cardname=user["cardname"],
             )
 
-            await message_queue.put((message, user_info))
+            await self.synapse.publish_input(
+                Neurotransmitter(raw_message=message, user_info=user_info, group_info=None)
+            )
             await asyncio.sleep(10)
 
 
-danmaku_mock_sensor = DanmakuMockSensor()
+danmaku_mock_sensor = DanmakuMockSensor(synapse)
