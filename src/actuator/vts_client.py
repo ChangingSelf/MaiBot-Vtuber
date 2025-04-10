@@ -15,6 +15,8 @@ class VtubeStudioClient:
         token_path: str = "./token.txt",
         host: str = "localhost",
         port: int = 8001,
+        api_name: str = "VTubeStudioPublicAPI",
+        api_version: str = "1.0",
     ):
         """
         初始化VTS管理器
@@ -32,8 +34,8 @@ class VtubeStudioClient:
         self.vts_api_info = {
             "host": host,
             "port": port,
-            "name": "VTubeStudioPublicAPI",
-            "version": "1.0",
+            "name": api_name,
+            "version": api_version,
         }
         self.vts = pyvts.vts(plugin_info=self.plugin_info, vts_api_info=self.vts_api_info)
         self.logger = get_logger("VtubeStudioClient")
@@ -54,6 +56,12 @@ class VtubeStudioClient:
         except Exception as e:
             self.logger.error(f"连接VTS失败: {str(e)}")
             return False
+
+    async def close(self):
+        """关闭VTS连接"""
+        if self.vts:
+            await self.vts.close()
+            self.logger.info("已关闭VTS连接")
 
     async def get_hotkey_list(self) -> List[str]:
         """
@@ -90,11 +98,62 @@ class VtubeStudioClient:
             self.logger.error(f"触发热键失败: {str(e)}")
             return False
 
-    async def close(self):
-        """关闭VTS连接"""
-        if self.vts:
-            await self.vts.close()
-            self.logger.info("已关闭VTS连接")
+    async def load_item(
+        self,
+        file_name: str,
+        positionX: float = 0.5,
+        positionY: float = 0.5,
+        size: float = 0.33,
+        rotation: float = 90,
+        fadeTime: float = 0.5,
+        order: int = 4,
+        failIfOrderTaken: bool = False,
+        smoothing: float = 0,
+        censored: bool = False,
+        flipped: bool = False,
+        locked: bool = False,
+        unloadWhenPluginDisconnects: bool = True,
+        customDataBase64: str = "",
+        customDataAskUserFirst: bool = True,
+        customDataSkipAskingUserIfWhitelisted: bool = True,
+        customDataAskTimer: int = -1,
+    ) -> bool:
+        """
+        加载指定物品
+        """
+        try:
+            request_data = {
+                "apiName": self.vts_api_info["name"],
+                "apiVersion": self.vts_api_info["version"],
+                "requestID": "SomeID",
+                "messageType": "ItemLoadRequest",
+                "data": {
+                    "fileName": file_name,
+                    "positionX": positionX,
+                    "positionY": positionY,
+                    "size": size,
+                    "rotation": rotation,
+                    "fadeTime": fadeTime,
+                    "order": order,
+                    "failIfOrderTaken": failIfOrderTaken,
+                    "smoothing": smoothing,
+                    "censored": censored,
+                    "flipped": flipped,
+                    "locked": locked,
+                    "unloadWhenPluginDisconnects": unloadWhenPluginDisconnects,
+                    "customDataBase64": customDataBase64,
+                    "customDataAskUserFirst": customDataAskUserFirst,
+                    "customDataSkipAskingUserIfWhitelisted": customDataSkipAskingUserIfWhitelisted,
+                    "customDataAskTimer": customDataAskTimer,
+                },
+            }
+            response_data = await self.vts.request(request_data)
+            self.logger.info(response_data)
+            self.logger.info(f"成功加载物品: {file_name}")
+            return response_data["instanceID"]
+        except Exception as e:
+            self.logger.error(f"加载物品失败: {str(e)}")
+            return False
 
 
 async def main():
@@ -123,6 +182,11 @@ async def main():
 
         # 等待一段时间
         await asyncio.sleep(2)
+
+        # 加载物品
+        await vts_client.load_item("D:/UserFolders/Pictures/avatar.png")
+
+        input("按回车键退出")
 
     finally:
         # 关闭连接
