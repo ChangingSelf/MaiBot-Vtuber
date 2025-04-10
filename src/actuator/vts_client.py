@@ -183,11 +183,6 @@ async def main():
         # 等待一段时间
         await asyncio.sleep(2)
 
-        # 加载物品
-        await vts_client.load_item("D:/UserFolders/Pictures/avatar.png")
-
-        input("按回车键退出")
-
     finally:
         # 关闭连接
         await vts_client.close()
