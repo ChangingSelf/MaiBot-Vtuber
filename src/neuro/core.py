@@ -6,6 +6,7 @@ import asyncio
 import time
 from .synapse import Synapse, synapse
 from ..neuro.synapse import Neurotransmitter
+from ..actuator.subtitle_actuator import SubtitleActuator
 
 
 class Core:
@@ -27,6 +28,7 @@ class Core:
         )
         self.router = Router(route_config)
         self.synapse = synapse
+        self.subtitle_actuator = SubtitleActuator(synapse)
 
     async def connect(self, response_handler=None):
         """
@@ -34,6 +36,10 @@ class Core:
         """
         logger.info("正在释放神经递质...")
         await self.register_handler(response_handler)
+
+        # 连接字幕执行器
+        await self.subtitle_actuator.connect()
+
         await self.router.run()
 
     async def disconnect(self):
@@ -42,6 +48,9 @@ class Core:
         """
         logger.info("正在切断与核心的连接...")
         await self.router.stop()
+
+        # 断开字幕执行器
+        await self.subtitle_actuator.disconnect()
 
     async def send_message(self, raw_message: str, user_info: UserInfo, group_info: GroupInfo = None):
         """
@@ -81,6 +90,11 @@ class Core:
         )
 
         logger.info(f"发送消息：{raw_message}")
+
+        # 添加到字幕
+        if user_info:
+            self.subtitle_actuator.add_input_message(raw_message, user_info.user_nickname)
+
         await self.router.send_message(message_base)
 
     async def register_handler(self, handler):
@@ -108,6 +122,7 @@ class Core:
         message_segment: Seg = raw_message_base.message_segment
         group_info: GroupInfo = message_info.group_info
         user_info: UserInfo = message_info.user_info
+        user_info.user_nickname = "麦麦"
 
         if message_segment.type == "text":
             logger.info(f"【麦麦】: {message_segment.data}")
