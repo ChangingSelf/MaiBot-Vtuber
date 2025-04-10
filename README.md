@@ -44,7 +44,7 @@ pip install -r requirements.txt
 ```toml
 [platforms] # 必填项目，填写每个平台适配器提供的链接
 nonebot-qq="http://127.0.0.1:18002/api/message" # 原有默认配置
-vtube-studio="http://127.0.0.1:18004/api/message" # 新增加的本项目配置
+maibot-vtuber="http://127.0.0.1:18004/api/message" # 新增加的本项目配置
 ```
 
 跟着[麦麦的安装文档](https://docs.mai-mai.org/manual/deployment/mmc_deploy.html)，安装并运行麦麦。

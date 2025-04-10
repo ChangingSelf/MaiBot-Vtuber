@@ -4,7 +4,7 @@ from maim_message.message_base import UserInfo
 from .sensor import Sensor
 from ..utils.logger import logger
 import asyncio
-from ..neuro.core import core, message_queue
+from ..neuro.core import message_queue
 from ..utils.config import global_config
 
 
