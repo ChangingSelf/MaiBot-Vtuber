@@ -12,7 +12,7 @@ class TkinterSensor(Sensor):
     def __init__(self):
         self.running = False
 
-    async def sense(self):
+    async def connect(self):
         """使用 Tkinter 输入框进行交互，并将消息放入 core 队列"""
 
         await asyncio.sleep(2)  # 给连接一些时间

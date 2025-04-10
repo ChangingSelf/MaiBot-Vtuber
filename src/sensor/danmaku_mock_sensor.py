@@ -47,7 +47,7 @@ class DanmakuMockSensor(Sensor):
             "主播玩得真绝",
         ]
 
-    async def sense(self):
+    async def connect(self):
         """制造模拟消息放入队列"""
 
         await asyncio.sleep(2)  # 等待核心连接

@@ -11,7 +11,7 @@ async def boot():
     await asyncio.gather(
         core.connect(),
         core.process_message_queue(),
-        danmaku_mock_sensor.sense(),
+        danmaku_mock_sensor.connect(),
     )
 
 
