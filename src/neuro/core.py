@@ -28,7 +28,7 @@ class Core:
         )
         self.router = Router(route_config)
         self.synapse = synapse
-        self.subtitle_actuator = SubtitleActuator(synapse)
+        self.subtitle_actuator = SubtitleActuator(synapse, show_history=False)
 
     async def connect(self, response_handler=None):
         """

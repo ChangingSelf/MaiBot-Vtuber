@@ -2,7 +2,7 @@ import asyncio
 import threading
 import time
 from typing import Optional, Dict, Any, List
-from src.actuator.advanced_subtitle import AdvancedSubtitle
+from src.actuator.advanced_subtitle import Subtitle
 from src.neuro.synapse import Synapse, Neurotransmitter
 from src.utils.logger import logger
 
@@ -12,12 +12,13 @@ class SubtitleActuator:
     字幕执行器，用于在屏幕上显示输入输出过程
     """
 
-    def __init__(self, synapse: Synapse):
+    def __init__(self, synapse: Synapse, show_history: bool = True):
         """
         初始化字幕执行器
 
         参数:
             synapse: 突触对象，用于接收神经递质
+            show_history: 是否显示历史消息，默认为True
         """
         self.synapse = synapse
         self.subtitle = None
@@ -26,6 +27,7 @@ class SubtitleActuator:
         self.message_queue = asyncio.Queue()
         self.max_messages = 5  # 最多显示的消息数量
         self.messages: List[Dict[str, Any]] = []  # 存储消息历史
+        self.show_history = show_history  # 是否显示历史消息
 
     async def connect(self):
         """
@@ -86,14 +88,14 @@ class SubtitleActuator:
         运行字幕窗口
         """
         # 创建字幕
-        self.subtitle = AdvancedSubtitle(
+        self.subtitle = Subtitle(
             text="等待消息...",
             theme="dark",
             font_family="Microsoft YaHei",
             font_size=24,
             text_color="#FFFFFF",
             bg_color="#333333",
-            opacity=0.9,
+            opacity=0.5,
             animation_speed=10,
             border_radius=10,
             padding=15,
@@ -146,11 +148,19 @@ class SubtitleActuator:
             return
 
         # 构建字幕文本
-        text = "消息历史:\n\n"
-
-        for msg in self.messages:
-            prefix = "→ " if msg["type"] == "output" else "← "
-            text += f"{prefix}[{msg['time']}] {msg['user']}: {msg['text']}\n"
+        if self.show_history:
+            text = "消息历史:\n\n"
+            for msg in self.messages:
+                prefix = "→ " if msg["type"] == "output" else "← "
+                text += f"{prefix}[{msg['time']}] {msg['user']}: {msg['text']}\n"
+        else:
+            # 只显示最新一条消息
+            if self.messages:
+                latest_msg = self.messages[-1]
+                prefix = "→ " if latest_msg["type"] == "output" else "← "
+                text = f"{prefix}[{latest_msg['time']}] {latest_msg['user']}: {latest_msg['text']}"
+            else:
+                text = "------"
 
         # 更新字幕
         self.subtitle.update_text(text, animate=False)

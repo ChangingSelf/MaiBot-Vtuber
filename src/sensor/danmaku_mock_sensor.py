@@ -1,4 +1,4 @@
-from maim_message.message_base import UserInfo
+from maim_message.message_base import GroupInfo, UserInfo
 
 from src.neuro.synapse import Neurotransmitter, Synapse, synapse
 from .sensor import Sensor
@@ -69,8 +69,14 @@ class DanmakuMockSensor(Sensor):
                 user_cardname=user["cardname"],
             )
 
+            group_info = GroupInfo(
+                platform=global_config.platform,
+                group_id=114514,
+                group_name="测试直播间",
+            )
+
             await self.synapse.publish_input(
-                Neurotransmitter(raw_message=message, user_info=user_info, group_info=None)
+                Neurotransmitter(raw_message=message, user_info=user_info, group_info=group_info)
             )
             await asyncio.sleep(10)
 

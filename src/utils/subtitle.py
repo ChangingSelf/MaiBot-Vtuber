@@ -4,7 +4,7 @@ import threading
 from typing import Optional, Tuple, Dict, Any
 
 
-class AdvancedSubtitle:
+class Subtitle:
     def __init__(
         self,
         text: str = "",
@@ -17,7 +17,7 @@ class AdvancedSubtitle:
         opacity: float = 0.9,
         animation_speed: int = 10,
         border_radius: int = 10,
-        padding: int = 20,
+        padding: int = 10,
     ):
         """
         初始化高级CustomTkinter字幕窗口
@@ -55,9 +55,14 @@ class AdvancedSubtitle:
         self.root.title("高级字幕")
         self.root.attributes("-topmost", True)  # 窗口置顶
         self.root.overrideredirect(True)  # 无边框窗口
+        self.root.resizable(True, True)  # 允许调整大小
 
         # 设置透明度
         self.root.attributes("-alpha", opacity)
+
+        # 设置窗口背景色
+        if bg_color:
+            self.root.configure(fg_color=bg_color)
 
         # 创建字幕标签
         self.label = ctk.CTkLabel(
@@ -65,14 +70,13 @@ class AdvancedSubtitle:
             text=text,
             font=(font_family, font_size),
             text_color=text_color,
-            fg_color=bg_color if bg_color else "transparent",
+            fg_color="transparent",  # 标签背景设为透明
             corner_radius=border_radius,
             wraplength=500,
             justify="left",
         )
         self.label.pack(padx=padding, pady=padding)
 
-        # 设置窗口大小和初始位置
         self._update_geometry()
 
         # 如果指定了位置，则移动到该位置
@@ -99,18 +103,12 @@ class AdvancedSubtitle:
         width = self.label.winfo_reqwidth() + (self.config["padding"] * 2)
         height = self.label.winfo_reqheight() + (self.config["padding"] * 2)
 
-        # 如果窗口位置未设置，则居中
-        if not self.root.geometry().startswith("+"):
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
-            x_pos = (screen_width // 2) - (width // 2)
-            y_pos = screen_height - height - 50  # 屏幕底部向上偏移50像素
+        # 获取当前位置
+        current_x = self.root.winfo_x()
+        current_y = self.root.winfo_y()
 
-            self.root.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
-        else:
-            # 保持当前位置，只更新大小
-            current_pos = self.root.geometry().split("+")[1:]
-            self.root.geometry(f"{width}x{height}+{current_pos[0]}+{current_pos[1]}")
+        # 更新窗口大小和位置
+        self.root.geometry(f"{width}x{height}+{current_x}+{current_y}")
 
     def on_drag_start(self, event):
         """记录初始位置"""
@@ -123,16 +121,7 @@ class AdvancedSubtitle:
         delta_y = event.y_root - self.y
         new_x = self.root.winfo_x() + delta_x
         new_y = self.root.winfo_y() + delta_y
-
-        # 限制窗口在屏幕内移动
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        win_width = self.root.winfo_width()
-        win_height = self.root.winfo_height()
-
-        new_x = max(0, min(new_x, screen_width - win_width))
-        new_y = max(0, min(new_y, screen_height - win_height))
-
+        # 更新窗口位置
         self.root.geometry(f"+{new_x}+{new_y}")
         self.x, self.y = event.x_root, event.y_root
 
@@ -220,7 +209,7 @@ class AdvancedSubtitle:
 
     def set_bg_color(self, color: str):
         """设置背景颜色"""
-        self.label.configure(fg_color=color)
+        self.root.configure(fg_color=color)
 
     def set_border_radius(self, radius: int):
         """设置边框圆角"""
@@ -259,7 +248,7 @@ class AdvancedSubtitle:
 if __name__ == "__main__":
     # 示例用法
     initial_text = "你好，这是一个高级CustomTkinter字幕！"
-    app = AdvancedSubtitle(
+    app = Subtitle(
         text=initial_text,
         theme="dark",
         font_family="Microsoft YaHei",
@@ -276,7 +265,7 @@ if __name__ == "__main__":
     app.root.after(3000, lambda: app.update_text("字幕已更新：现在显示的是新的内容。", animate=True))
 
     # 示例：6秒后再次更新，显示更长的文本以测试换行
-    long_text = "这是另一段更长的文本，用于测试自动换行功能是否正常工作，以及窗口大小是否会相应调整。"
+    long_text = "这是另一段更长的文本，用于测试自动换行功能是否正常工作，以及窗口大小是否会相应调整。这是另一段更长的文本，用于测试自动换行功能是否正常工作，以及窗口大小是否会相应调整。这是另一段更长的文本，用于测试自动换行功能是否正常工作，以及窗口大小是否会相应调整。这是另一段更长的文本，用于测试自动换行功能是否正常工作，以及窗口大小是否会相应调整。"
     app.root.after(6000, lambda: app.update_text(long_text, animate=True))
 
     # 示例：9秒后切换主题
