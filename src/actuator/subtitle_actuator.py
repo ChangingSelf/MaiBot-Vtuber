@@ -2,9 +2,9 @@ import asyncio
 import threading
 import time
 from typing import Optional, Dict, Any, List
-from src.actuator.advanced_subtitle import Subtitle
-from src.neuro.synapse import Synapse, Neurotransmitter
-from src.utils.logger import logger
+from ..utils.subtitle import MultiMessageSubtitle
+from ..neuro.synapse import Synapse, Neurotransmitter
+from ..utils.logger import logger
 
 
 class SubtitleActuator:
@@ -25,9 +25,7 @@ class SubtitleActuator:
         self.subtitle_thread = None
         self.running = False
         self.message_queue = asyncio.Queue()
-        self.max_messages = 5  # 最多显示的消息数量
-        self.messages: List[Dict[str, Any]] = []  # 存储消息历史
-        self.show_history = show_history  # 是否显示历史消息
+        self.show_history = show_history
 
     async def connect(self):
         """
@@ -78,7 +76,6 @@ class SubtitleActuator:
             "type": "output",
             "text": neurotransmitter.raw_message,
             "user": neurotransmitter.user_info.user_nickname if neurotransmitter.user_info else "未知用户",
-            "time": time.strftime("%H:%M:%S"),
         }
 
         await self.message_queue.put(message)
@@ -88,17 +85,18 @@ class SubtitleActuator:
         运行字幕窗口
         """
         # 创建字幕
-        self.subtitle = Subtitle(
+        self.subtitle = MultiMessageSubtitle(
             text="等待消息...",
             theme="dark",
             font_family="Microsoft YaHei",
             font_size=24,
             text_color="#FFFFFF",
             bg_color="#333333",
-            opacity=0.5,
+            opacity=0.7,
             animation_speed=10,
             border_radius=10,
             padding=15,
+            show_history=self.show_history,
         )
 
         # 设置初始位置（屏幕底部）
@@ -122,15 +120,9 @@ class SubtitleActuator:
                 # 从队列获取消息
                 message = await self.message_queue.get()
 
-                # 添加到消息历史
-                self.messages.append(message)
-
-                # 如果消息数量超过最大值，移除最旧的消息
-                if len(self.messages) > self.max_messages:
-                    self.messages.pop(0)
-
-                # 更新字幕
-                self._update_subtitle()
+                # 只处理输出类型的消息
+                if message["type"] == "output":
+                    self.subtitle.add_message(message_type=message["type"], text=message["text"], user=message["user"])
 
                 # 标记任务完成
                 self.message_queue.task_done()
@@ -139,48 +131,3 @@ class SubtitleActuator:
                 break
             except Exception as e:
                 logger.error(f"处理消息时出错: {e}", exc_info=True)
-
-    def _update_subtitle(self):
-        """
-        更新字幕内容
-        """
-        if not self.subtitle:
-            return
-
-        # 构建字幕文本
-        if self.show_history:
-            text = "消息历史:\n\n"
-            for msg in self.messages:
-                prefix = "→ " if msg["type"] == "output" else "← "
-                text += f"{prefix}[{msg['time']}] {msg['user']}: {msg['text']}\n"
-        else:
-            # 只显示最新一条消息
-            if self.messages:
-                latest_msg = self.messages[-1]
-                prefix = "→ " if latest_msg["type"] == "output" else "← "
-                text = f"{prefix}[{latest_msg['time']}] {latest_msg['user']}: {latest_msg['text']}"
-            else:
-                text = "------"
-
-        # 更新字幕
-        self.subtitle.update_text(text, animate=False)
-
-    def add_input_message(self, text: str, user: str):
-        """
-        添加输入消息
-
-        参数:
-            text: 消息文本
-            user: 用户名
-        """
-        message = {"type": "input", "text": text, "user": user, "time": time.strftime("%H:%M:%S")}
-
-        # 添加到消息历史
-        self.messages.append(message)
-
-        # 如果消息数量超过最大值，移除最旧的消息
-        if len(self.messages) > self.max_messages:
-            self.messages.pop(0)
-
-        # 更新字幕
-        self._update_subtitle()

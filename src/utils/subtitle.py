@@ -1,7 +1,7 @@
 import customtkinter as ctk
 import time
 import threading
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 
 class Subtitle:
@@ -243,6 +243,85 @@ class Subtitle:
         if self.animation_thread:
             self.animation_thread.join()
         self.root.destroy()
+
+
+class MultiMessageSubtitle(Subtitle):
+    """
+    支持显示多条消息的字幕类
+    """
+
+    def __init__(self, max_messages: int = 5, show_history: bool = True, **kwargs):
+        """
+        初始化多消息字幕
+
+        参数:
+            max_messages: 最多显示的消息数量
+            show_history: 是否显示历史消息
+            **kwargs: 传递给父类 Subtitle 的其他参数
+        """
+        super().__init__(**kwargs)
+        self.max_messages = max_messages
+        self.show_history = show_history
+        self.messages: List[Dict[str, Any]] = []
+
+    def add_message(self, message_type: str, text: str, user: str):
+        """
+        添加新消息
+
+        参数:
+            message_type: 消息类型 ("input" 或 "output")
+            text: 消息文本
+            user: 用户名
+        """
+        message = {"type": message_type, "text": text, "user": user, "time": time.strftime("%H:%M:%S")}
+
+        # 添加到消息历史
+        self.messages.append(message)
+
+        # 如果消息数量超过最大值，移除最旧的消息
+        if len(self.messages) > self.max_messages:
+            self.messages.pop(0)
+
+        # 更新字幕
+        self._update_subtitle()
+
+    def _update_subtitle(self):
+        """
+        更新字幕内容
+        """
+        if self.show_history:
+            text = "消息历史:\n\n"
+            for msg in self.messages:
+                prefix = "→ " if msg["type"] == "output" else "← "
+                text += f"{prefix}[{msg['time']}] {msg['user']}: {msg['text']}\n"
+        else:
+            # 只显示最新一条消息
+            if self.messages:
+                latest_msg = self.messages[-1]
+                prefix = "→ " if latest_msg["type"] == "output" else "← "
+                text = f"{prefix}[{latest_msg['time']}] {latest_msg['user']}: {latest_msg['text']}"
+            else:
+                text = "------"
+
+        # 更新字幕
+        self.update_text(text, animate=False)
+
+    def clear_messages(self):
+        """清空所有消息"""
+        self.messages.clear()
+        self._update_subtitle()
+
+    def set_max_messages(self, max_messages: int):
+        """设置最大消息数量"""
+        self.max_messages = max_messages
+        while len(self.messages) > max_messages:
+            self.messages.pop(0)
+        self._update_subtitle()
+
+    def set_show_history(self, show_history: bool):
+        """设置是否显示历史消息"""
+        self.show_history = show_history
+        self._update_subtitle()
 
 
 if __name__ == "__main__":

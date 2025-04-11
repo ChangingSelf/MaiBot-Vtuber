@@ -1,6 +1,5 @@
 from maim_message.message_base import GroupInfo, UserInfo
-
-from src.neuro.synapse import Neurotransmitter, Synapse, synapse
+from ..neuro.synapse import Neurotransmitter, Synapse, synapse
 from .sensor import Sensor
 from ..utils.logger import logger
 import asyncio

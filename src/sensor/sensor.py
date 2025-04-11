@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import asyncio
-from src.neuro.synapse import Synapse, synapse
-from src.actuator.subtitle_actuator import SubtitleActuator
+from ..neuro.synapse import Synapse, synapse
+from ..actuator.subtitle_actuator import SubtitleActuator
 
 
 class Sensor(ABC):
@@ -33,5 +33,5 @@ class Sensor(ABC):
             text: 消息文本
             user: 用户名
         """
-        if self.subtitle_actuator:
-            self.subtitle_actuator.add_input_message(text, user)
+        # 不再显示输入消息
+        pass

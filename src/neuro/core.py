@@ -4,8 +4,7 @@ from ..utils.config import global_config
 from ..utils.logger import logger
 import asyncio
 import time
-from .synapse import Synapse, synapse
-from ..neuro.synapse import Neurotransmitter
+from .synapse import Synapse, synapse, Neurotransmitter
 from ..actuator.subtitle_actuator import SubtitleActuator
 
 
@@ -90,10 +89,6 @@ class Core:
         )
 
         logger.info(f"发送消息：{raw_message}")
-
-        # 添加到字幕
-        if user_info:
-            self.subtitle_actuator.add_input_message(raw_message, user_info.user_nickname)
 
         await self.router.send_message(message_base)
 
