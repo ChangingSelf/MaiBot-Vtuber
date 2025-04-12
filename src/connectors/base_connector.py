@@ -1,11 +1,11 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, Union, Callable
+from abc import abstractmethod
+from typing import Dict, Any, Optional, List
 import logging
 import asyncio
 import time
 
 from src.neurons.bidirectional_neuron import BiDirectionalNeuron
-from src.core.synaptic_network import SynapticNetwork, SignalFilter
+from src.core.synaptic_network import SynapticNetwork
 from src.signals.neural_signal import NeuralSignal, SignalType
 
 logger = logging.getLogger(__name__)

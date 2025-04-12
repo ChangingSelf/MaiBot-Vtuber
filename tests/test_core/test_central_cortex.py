@@ -3,8 +3,7 @@
 """
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 from src.core.central_cortex import CortexBase, SensoryCortex, MotorCortex, CentralCortex
 from src.core.synaptic_network import SynapticNetwork
 from src.neurons.neuron import Neuron

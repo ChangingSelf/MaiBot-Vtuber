@@ -1,7 +1,5 @@
 import asyncio
 import threading
-import time
-from typing import Optional, Dict, Any, List
 from ..utils.subtitle import MultiMessageSubtitle
 from ..neuro.synapse import Synapse, Neurotransmitter
 from ..utils.logger import logger

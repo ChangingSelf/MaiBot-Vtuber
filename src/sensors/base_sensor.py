@@ -5,7 +5,7 @@ import time
 import asyncio
 
 from src.core.synaptic_network import SynapticNetwork
-from src.signals.neural_signal import NeuralSignal, SignalType
+from src.signals.neural_signal import NeuralSignal
 from src.neurons.neuron import Neuron
 
 logger = logging.getLogger(__name__)

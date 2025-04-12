@@ -1,21 +1,13 @@
-from typing import Dict, Any, Optional, Type, List, Set, Union, Callable, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import logging
-import importlib.util
 import os
 import sys
-import inspect
 import tempfile
 import shutil
 import zipfile
-import glob
 import json
-import asyncio
 import time
-from pathlib import Path
 
-from src.neurons.neuron import Neuron
-from src.sensors.base_sensor import Sensor
-from src.actuators.base_actuator import Actuator
 from src.neural_plasticity.plugin_manager import PluginMetadata
 
 # 使用TYPE_CHECKING条件导入
@@ -196,7 +188,7 @@ class PluginLoader:
 
                     return metadata
 
-                logger.error(f"未找到有效的插件目录")
+                logger.error("未找到有效的插件目录")
                 return None
         except Exception as e:
             logger.error(f"安装插件时出错: {zip_path}, 错误: {e}")
@@ -266,7 +258,7 @@ class PluginLoader:
 
                 return metadata
 
-            logger.error(f"未找到有效的插件目录")
+            logger.error("未找到有效的插件目录")
             return None
         except Exception as e:
             logger.error(f"安装插件时出错: {directory}, 错误: {e}")

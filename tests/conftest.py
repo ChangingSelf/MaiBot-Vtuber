@@ -4,7 +4,7 @@ Pytest配置文件，提供通用的测试fixtures。
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from src.core.synaptic_network import SynapticNetwork
 from src.core.neural_injector import NeuralInjector
 from src.core.brain_context import BrainContext

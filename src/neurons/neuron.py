@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import logging
-import asyncio
 
 from src.core.synaptic_network import SynapticNetwork
 from src.signals.neural_signal import NeuralSignal

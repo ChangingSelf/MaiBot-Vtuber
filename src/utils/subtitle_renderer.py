@@ -1,7 +1,7 @@
 import customtkinter as ctk
 import time
 import threading
-from typing import Optional, Tuple, Dict, Any, List, Callable
+from typing import Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)

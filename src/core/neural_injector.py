@@ -1,8 +1,7 @@
-from typing import Dict, Any, Type, List, Optional, TypeVar, Generic, Union, get_type_hints, NewType
+from typing import Dict, Any, Type, List, Optional, TypeVar, get_type_hints
 import logging
-import importlib
 import inspect
-from injector import Injector, Module, singleton, provider, inject, Binder
+from injector import Injector, Module, singleton, provider, Binder
 
 from src.core.synaptic_network import SynapticNetwork
 from src.core.central_cortex import CentralCortex

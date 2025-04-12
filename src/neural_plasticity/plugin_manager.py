@@ -1,4 +1,4 @@
-from typing import Dict, List, Type, Any, Optional, Set, TypeVar, Callable, Union
+from typing import Dict, List, Any, Optional, Set, TypeVar
 import logging
 import os
 import importlib.util
@@ -6,7 +6,6 @@ import inspect
 import json
 import asyncio
 import pkg_resources
-from pathlib import Path
 
 from src.neurons.neuron import Neuron
 from src.sensors.base_sensor import Sensor

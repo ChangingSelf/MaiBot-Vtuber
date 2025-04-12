@@ -1,12 +1,8 @@
-from typing import Dict, Any, Type, List, Optional, TypeVar, Set, Union, Callable
+from typing import Dict, Any, Type, Optional, TypeVar, Set
 import logging
-import asyncio
 import os
 import json
 import yaml
-import time
-import sys
-from pathlib import Path
 from datetime import datetime
 
 from src.core.neural_injector import NeuralInjector
@@ -17,14 +13,10 @@ from src.sensors.base_sensor import Sensor
 from src.actuators.base_actuator import Actuator
 from src.cerebellum.immune_system import (
     get_immune_system,
-    ImmuneSystem,
-    RecoveryStrategy,
-    RecoveryConfig,
     install_global_exception_handler,
 )
 from src.cerebellum.neural_trace import (
     setup_neural_trace,
-    NeuralTrace,
     TraceLevel,
     NeuronType,
     LogRotationStrategy,

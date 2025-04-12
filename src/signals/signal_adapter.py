@@ -1,11 +1,10 @@
-from typing import Any, Dict, Optional, Union, Type, List
-import json
+from typing import Any, Dict, Optional
 import logging
 import time
 
-from src.signals.neural_signal import NeuralSignal, SignalType, SignalPriority
-from src.signals.sensory_signals import SensorySignal, DanmakuSignal, CommandSignal
-from src.signals.motor_signals import MotorSignal, SubtitleSignal, Live2DSignal
+from src.signals.neural_signal import NeuralSignal, SignalType
+from src.signals.sensory_signals import DanmakuSignal, CommandSignal
+from src.signals.motor_signals import SubtitleSignal, Live2DSignal
 
 # 引入maim_message包中的类
 from maim_message import (

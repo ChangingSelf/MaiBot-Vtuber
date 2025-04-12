@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 import asyncio
 import logging
-import os
 import sys
 import argparse
-from typing import Dict, Any, List, Optional
+from typing import Optional
 
 from src.core.brain_context import BrainContext
 from src.sensors.danmaku_sensor import DanmakuSensor

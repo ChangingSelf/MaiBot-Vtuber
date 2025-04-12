@@ -1,11 +1,11 @@
 import logging
 import asyncio
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from src.sensors.base_sensor import Sensor
 from src.signals.sensory_signals import SensorySignal
-from src.signals.neural_signal import SignalType, SignalFilter, SignalPriority
+from src.signals.neural_signal import SignalPriority
 
 
 class DemoSensor(Sensor):
@@ -22,7 +22,7 @@ class DemoSensor(Sensor):
             synaptic_network: 神经突触网络
         """
         super().__init__(synaptic_network, name="示例感知神经元")
-        self.logger = logging.getLogger(f"plugin.demo_sensor")
+        self.logger = logging.getLogger("plugin.demo_sensor")
         self._task = None
         self.interval = 5  # 默认5秒
         self.message = "这是一个测试消息"

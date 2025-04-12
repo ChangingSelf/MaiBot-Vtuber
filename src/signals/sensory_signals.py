@@ -1,6 +1,5 @@
 from typing import Any, Dict, Optional
 from datetime import datetime
-import time
 
 from src.signals.neural_signal import NeuralSignal, SignalType, SignalPriority
 

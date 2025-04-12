@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Dict, Any, Optional, List, Type
+from typing import Dict, Any, Optional, List
 import logging
 import asyncio
 import time

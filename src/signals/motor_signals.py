@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 from datetime import datetime
 
 from src.signals.neural_signal import NeuralSignal, SignalType, SignalPriority

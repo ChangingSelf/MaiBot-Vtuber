@@ -1,8 +1,7 @@
-from typing import Dict, Any, Optional, List, Callable, Set
+from typing import Dict, Any, Optional
 import logging
 import asyncio
 import time
-import json
 import random
 
 from src.core.synaptic_network import SynapticNetwork

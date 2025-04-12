@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-import asyncio
-from ..neuro.synapse import Synapse, synapse
+from ..neuro.synapse import Synapse
 from ..actuator.subtitle_actuator import SubtitleActuator
 
 

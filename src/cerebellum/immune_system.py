@@ -7,13 +7,10 @@
 
 import asyncio
 import functools
-import inspect
-import logging
-import traceback
 import sys
 import time
 from enum import Enum, auto
-from typing import Dict, Any, Optional, List, Callable, Type, TypeVar, Union, Set, Tuple
+from typing import Dict, Any, Optional, List, Callable, TypeVar, Set, Tuple
 
 from src.cerebellum.neural_trace import get_logger, NeuronType
 

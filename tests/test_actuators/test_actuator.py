@@ -4,7 +4,7 @@
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 from src.actuators.base_actuator import Actuator
 from src.signals.neural_signal import NeuralSignal, SignalType
 
@@ -24,7 +24,7 @@ class TestActuatorImpl(Actuator):
                 action = await self.action_queue.get()
                 try:
                     await self._execute_action(action)
-                except Exception as e:
+                except Exception:
                     self.stats["errors"] += 1
                 finally:
                     self.action_queue.task_done()

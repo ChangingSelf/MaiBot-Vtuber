@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from enum import Enum, auto
 from typing import Any, Dict, Optional
 import uuid

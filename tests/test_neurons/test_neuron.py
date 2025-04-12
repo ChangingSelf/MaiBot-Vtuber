@@ -3,7 +3,6 @@
 """
 
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from src.neurons.neuron import Neuron
 from src.signals.neural_signal import NeuralSignal, SignalType

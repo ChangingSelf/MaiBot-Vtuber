@@ -4,9 +4,7 @@
 """
 
 import logging
-from typing import Dict, List, Any, Set, Optional, Callable
-from pathlib import Path
-import json
+from typing import Dict, List, Any, Set, Callable
 
 
 class NeuronConfig:

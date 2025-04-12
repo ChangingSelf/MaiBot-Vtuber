@@ -9,12 +9,11 @@ import asyncio
 import time
 import psutil
 import platform
-import logging
-from typing import Dict, Any, Optional, List, Set, Tuple, Callable
+from typing import Dict, Any, Optional, List, Tuple, Callable
 from enum import Enum, auto
 
 from src.cerebellum.neural_trace import get_logger, NeuronType
-from src.cerebellum.immune_system import NeuralException, SystemException, get_immune_system
+from src.cerebellum.immune_system import SystemException, get_immune_system
 
 # 获取日志器
 logger = get_logger("Homeostasis", NeuronType.SYSTEM)

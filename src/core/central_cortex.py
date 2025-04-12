@@ -1,6 +1,5 @@
 from typing import Dict, List, Type, Set, Optional, TypeVar, Any
 import logging
-import asyncio
 from collections import defaultdict
 
 from src.neurons.neuron import Neuron
