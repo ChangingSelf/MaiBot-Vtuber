@@ -272,8 +272,8 @@ class MaiBotCoreConnector(Connector):
             message = self.signal_adapter.to_maim_message(signal)
 
             if message:
-                # 发送消息
-                await self.ws_connection.send(json.dumps(message))
+                # 发送消息 - 将MessageBase对象转换为字典再序列化
+                await self.ws_connection.send(json.dumps(message.to_dict()))
                 logger.debug(f"将信号转换为消息并发送到MaiBot Core: {signal.id}, 类型: {signal.signal_type.name}")
                 self.stats["messages_sent"] += 1
             else:

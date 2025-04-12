@@ -1,10 +1,20 @@
 from typing import Any, Dict, Optional, Union, Type, List
 import json
 import logging
+import time
 
 from src.signals.neural_signal import NeuralSignal, SignalType, SignalPriority
 from src.signals.sensory_signals import SensorySignal, DanmakuSignal, CommandSignal
 from src.signals.motor_signals import MotorSignal, SubtitleSignal, Live2DSignal
+
+# 引入maim_message包中的类
+from maim_message import (
+    BaseMessageInfo,
+    MessageBase,
+    Seg,
+    UserInfo,
+    GroupInfo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,50 +81,86 @@ class SignalAdapter:
             return None
 
     @staticmethod
-    def to_maim_message(signal: NeuralSignal) -> Dict[str, Any]:
-        """将神经信号转换为外部消息格式"""
-        try:
-            base_msg = {"id": signal.id, "timestamp": signal.timestamp.isoformat(), "source": signal.source}
+    def to_maim_message(signal: NeuralSignal) -> MessageBase:
+        """将神经信号转换为MaiM消息格式，遵循MaimCore接口规范
 
-            # 根据信号类型生成对应的消息
+        将NeuralSignal转换为符合MaimCore消息接口的格式，使用maim_message包中的类
+
+        Args:
+            signal: 神经信号对象
+
+        Returns:
+            符合MaimCore消息规范的MessageBase对象
+        """
+        try:
+            # 获取当前时间戳
+            time_stamp = int(time.time())
+            platform = signal.data.get("platform", "unknown")
+
+            # 创建用户信息
+            user_info = UserInfo(
+                platform=platform,
+                user_id=signal.data.get("user_id", time_stamp),
+                user_nickname=signal.data.get("user", "MaiBot"),
+                user_cardname=signal.data.get("user_cardname", None),
+            )
+
+            # 创建群组信息（如果有）
+            group_info = None
+            if "group_id" in signal.data:
+                group_info = GroupInfo(
+                    platform=platform,
+                    group_id=signal.data.get("group_id"),
+                    group_name=signal.data.get("group_name", None),
+                )
+
+            # 基础消息信息
+            message_info = BaseMessageInfo(
+                platform=platform,
+                message_id=signal.id,
+                time=time_stamp,
+                user_info=user_info,
+                group_info=group_info,
+                additional_config={"maimcore_reply_probability_gain": signal.data.get("reply_probability_gain", 1)},
+            )
+
+            # 处理消息段内容
+            content = ""
+            seg_type = "text"
+
             if isinstance(signal, DanmakuSignal):
-                return {
-                    **base_msg,
-                    "type": "danmaku",
-                    "platform": signal.data.get("platform", "unknown"),
-                    "user": signal.data.get("user", "anonymous"),
-                    "content": signal.data.get("content", ""),
-                }
-            elif isinstance(signal, CommandSignal):
-                return {
-                    **base_msg,
-                    "type": "command",
-                    "command": signal.data.get("command", ""),
-                    "args": signal.data.get("args", {}),
-                    "user": signal.data.get("user", "admin"),
-                }
+                content = signal.data.get("content", "")
             elif isinstance(signal, SubtitleSignal):
-                return {
-                    **base_msg,
-                    "type": "subtitle",
-                    "text": signal.data.get("text", ""),
-                    "duration": signal.data.get("duration", 5.0),
-                    "style": signal.data.get("style", {}),
-                }
-            elif isinstance(signal, Live2DSignal):
-                return {
-                    **base_msg,
-                    "type": "live2d",
-                    "expression": signal.data.get("expression"),
-                    "motion": signal.data.get("motion"),
-                    "parameters": signal.data.get("parameters", {}),
-                    "duration": signal.data.get("duration", 3.0),
-                }
+                content = signal.data.get("text", "")
             else:
-                # 通用转换
-                return {**base_msg, "type": signal.signal_type.name.lower(), "data": signal.data}
+                # 如果是其他信号类型，尝试获取文本内容
+                content = signal.data.get("text", signal.data.get("content", ""))
+                # 如果是特殊类型，设置对应的段类型
+                if signal.signal_type == SignalType.MOTOR:
+                    action_type = signal.data.get("action_type")
+                    if action_type == "image":
+                        seg_type = "image"
+                        content = signal.data.get("url", "")
+
+            # 创建消息段
+            message_segment = Seg(type=seg_type, data=content)
+
+            # 创建完整消息
+            message_base = MessageBase(message_info=message_info, message_segment=message_segment, raw_message=content)
+
+            return message_base
 
         except Exception as e:
-            logger.error(f"转换神经信号到消息时出错: {e}")
+            logger.error(f"转换神经信号到MaiM消息时出错: {e}")
             logger.debug(f"问题信号: {signal.to_dict() if hasattr(signal, 'to_dict') else signal}")
-            return {"type": "error", "error": str(e), "source": getattr(signal, "source", "unknown")}
+
+            # 创建错误消息
+            error_info = BaseMessageInfo(
+                platform="error",
+                message_id="error",
+                time=int(time.time()),
+                user_info=UserInfo(platform="error", user_nickname="System"),
+            )
+            error_seg = Seg(type="text", data=f"错误: {str(e)}")
+
+            return MessageBase(message_info=error_info, message_segment=error_seg, raw_message=f"错误: {str(e)}")
