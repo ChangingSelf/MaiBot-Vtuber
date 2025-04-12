@@ -47,6 +47,31 @@ class LogRotationStrategy(Enum):
     HYBRID = auto()  # 混合策略
 
 
+# 定义ANSI颜色代码
+class Colors:
+    """ANSI颜色代码"""
+
+    RESET = "\033[0m"
+    BLACK = "\033[30m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+    BG_BLACK = "\033[40m"
+    BG_RED = "\033[41m"
+    BG_GREEN = "\033[42m"
+    BG_YELLOW = "\033[43m"
+    BG_BLUE = "\033[44m"
+    BG_MAGENTA = "\033[45m"
+    BG_CYAN = "\033[46m"
+    BG_WHITE = "\033[47m"
+
+
 class NeuralTrace:
     """神经痕迹 - 系统日志管理器"""
 
@@ -63,6 +88,26 @@ class NeuralTrace:
     # 反向映射，方便查找
     _REVERSE_LEVEL_MAP = {v: k for k, v in _LEVEL_MAP.items()}
 
+    # 映射日志级别到颜色
+    _LEVEL_COLORS = {
+        TraceLevel.CRITICAL: Colors.BOLD + Colors.RED,
+        TraceLevel.ERROR: Colors.RED,
+        TraceLevel.WARNING: Colors.YELLOW,
+        TraceLevel.INFO: Colors.GREEN,
+        TraceLevel.DEBUG: Colors.BLUE,
+        TraceLevel.TRACE: Colors.CYAN,
+    }
+
+    # 映射神经元类型到颜色
+    _NEURON_TYPE_COLORS = {
+        NeuronType.SENSOR: Colors.MAGENTA,
+        NeuronType.ACTUATOR: Colors.CYAN,
+        NeuronType.CONNECTOR: Colors.YELLOW,
+        NeuronType.CORE: Colors.GREEN,
+        NeuronType.SYSTEM: Colors.BLUE,
+        NeuronType.UNKNOWN: "",
+    }
+
     def __init__(
         self,
         log_dir: str = "logs",
@@ -75,6 +120,7 @@ class NeuralTrace:
         rotation_strategy: LogRotationStrategy = LogRotationStrategy.SIZE,
         rotation_interval: Optional[timedelta] = None,
         enable_json_format: bool = False,
+        enable_console_colors: bool = True,  # 是否启用控制台颜色
     ):
         """初始化神经痕迹系统
 
@@ -89,6 +135,7 @@ class NeuralTrace:
             rotation_strategy: 日志轮转策略
             rotation_interval: 时间轮转间隔（仅当rotation_strategy为TIME或HYBRID时有效）
             enable_json_format: 是否启用JSON格式日志
+            enable_console_colors: 是否启用控制台颜色
         """
         # 注册自定义日志级别
         logging.addLevelName(self._LEVEL_MAP[TraceLevel.TRACE], "TRACE")
@@ -112,6 +159,7 @@ class NeuralTrace:
         self.rotation_strategy = rotation_strategy
         self.rotation_interval = rotation_interval or timedelta(days=1)
         self.enable_json_format = enable_json_format
+        self.enable_console_colors = enable_console_colors
 
         # 神经元类型日志器缓存
         self.neuron_loggers: Dict[NeuronType, logging.Logger] = {}
@@ -146,6 +194,49 @@ class NeuralTrace:
         if self.auto_cleanup_enabled:
             self._cleanup_old_logs()
 
+    def _create_colored_formatter(self):
+        """创建带颜色的日志格式化器"""
+
+        class ColoredFormatter(logging.Formatter):
+            def __init__(self, fmt=None, datefmt=None, style="%", validate=True):
+                super().__init__(fmt, datefmt, style, validate)
+                self.level_colors = {
+                    logging.CRITICAL: Colors.BOLD + Colors.RED,
+                    logging.ERROR: Colors.RED,
+                    logging.WARNING: Colors.YELLOW,
+                    logging.INFO: Colors.GREEN,
+                    logging.DEBUG: Colors.BLUE,
+                    5: Colors.CYAN,  # TRACE级别
+                }
+                self.neuron_type_colors = {
+                    NeuronType.SENSOR.name: Colors.MAGENTA,
+                    NeuronType.ACTUATOR.name: Colors.CYAN,
+                    NeuronType.CONNECTOR.name: Colors.YELLOW,
+                    NeuronType.CORE.name: Colors.GREEN,
+                    NeuronType.SYSTEM.name: Colors.BLUE,
+                    NeuronType.UNKNOWN.name: "",
+                }
+
+            def format(self, record):
+                # 获取日志级别的颜色
+                levelname = record.levelname
+                level_color = self.level_colors.get(record.levelno, "")
+
+                # 设置带颜色的级别名称
+                record.levelname_colored = f"{level_color}{levelname}{Colors.RESET}"
+
+                # 获取神经元类型的颜色
+                neuron_type = getattr(record, "neuron_type", NeuronType.UNKNOWN.name)
+                neuron_type_color = self.neuron_type_colors.get(neuron_type, "")
+
+                # 设置带颜色的名称
+                record.name_colored = f"{neuron_type_color}[{record.name}]{Colors.RESET}"
+
+                # 调用原始的format方法
+                return super().format(record)
+
+        return ColoredFormatter("%(asctime)s - %(levelname_colored)s - %(name_colored)s - %(message)s")
+
     def _setup_handlers(self):
         """设置日志处理器"""
         # 控制台处理器
@@ -156,7 +247,11 @@ class NeuralTrace:
             if self.enable_json_format:
                 console_formatter = self._create_json_formatter()
             else:
-                console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(name)s] - %(message)s")
+                # 根据是否启用颜色选择不同的格式化器
+                if self.enable_console_colors:
+                    console_formatter = self._create_colored_formatter()
+                else:
+                    console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(name)s] - %(message)s")
 
             console_handler.setFormatter(console_formatter)
             self.logger.addHandler(console_handler)
@@ -534,6 +629,7 @@ class NeuralTrace:
             "rotation_strategy": self.rotation_strategy.name,
             "last_rotation_time": self.last_rotation_time.strftime("%Y-%m-%d %H:%M:%S"),
             "json_format_enabled": self.enable_json_format,
+            "console_colors_enabled": self.enable_console_colors,
             "neuron_type_levels": {
                 neuron_type.name: level.name for neuron_type, level in self.neuron_type_levels.items()
             },
