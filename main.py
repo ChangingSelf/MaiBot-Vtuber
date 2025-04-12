@@ -126,8 +126,8 @@ async def main() -> None:
         if args.test:
             await simulate_input(context)
             await asyncio.sleep(5)  # 等待测试完成
-            await context.stop()
-            return
+            # await context.stop()
+            # return
 
         # 等待系统运行
         try:
