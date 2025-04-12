@@ -276,6 +276,14 @@ class BrainContext:
         """
         return self.injector.get(component_type)
 
+    def get_synaptic_network(self) -> SynapticNetwork:
+        """获取神经突触网络
+
+        Returns:
+            神经突触网络实例
+        """
+        return self.get_component(SynapticNetwork)
+
     def _get_central_cortex(self) -> CentralCortex:
         """获取中央皮层，延迟初始化
 
@@ -388,72 +396,60 @@ class BrainContext:
         return neuron
 
     async def start(self) -> None:
-        """启动整个系统，协调组件启动顺序"""
+        """启动系统"""
         if self.running:
             logger.warning("系统已经在运行中")
             return
 
         logger.info("正在启动系统...")
-        self.startup_time = time.time()
-
-        # 获取系统组件
-        synaptic_network = self.get_component(SynapticNetwork)
-        central_cortex = self._get_central_cortex()
+        self.startup_time = datetime.now()
 
         # 启动神经突触网络
-        await synaptic_network.start()
+        await self.get_synaptic_network().start()
 
-        # 初始化和启动神经可塑性系统
+        # 初始化神经可塑性系统
         try:
-            plugin_manager = self.get_component(PluginManager)
-            await plugin_manager.initialize()
-            logger.info("神经可塑性系统已初始化")
+            # 确保配置中有plugin_manager部分
+            plugin_config = self.config.get("plugin_manager", {})
+            self.plugin_manager = PluginManager(self.injector, plugin_config)
+            await self.plugin_manager.initialize()
         except Exception as e:
             logger.error(f"初始化神经可塑性系统时出错: {e}")
 
-        # 激活所有神经元
+        # 获取中央皮层并激活所有神经元
+        central_cortex = self._get_central_cortex()
         await central_cortex.activate_all()
 
-        # 更新系统状态
         self.running = True
-        logger.info(f"系统已启动，耗时: {time.time() - self.startup_time:.2f}秒")
+        startup_duration = (datetime.now() - self.startup_time).total_seconds()
+        logger.info(f"系统已启动，耗时: {startup_duration:.2f}秒")
 
     async def stop(self) -> None:
-        """停止系统，释放资源"""
+        """停止系统"""
         if not self.running:
-            logger.warning("系统未运行")
+            logger.warning("系统未在运行")
             return
 
         logger.info("正在停止系统...")
-        self.shutdown_time = time.time()
+        self.shutdown_time = datetime.now()
 
+        # 停用所有神经元
+        central_cortex = self._get_central_cortex()
+        await central_cortex.deactivate_all()
+
+        # 停止神经突触网络
+        await self.get_synaptic_network().stop()
+
+        # 清理神经可塑性系统
         try:
-            # 获取系统组件
-            synaptic_network = self.get_component(SynapticNetwork)
-            central_cortex = self._get_central_cortex()
-
-            # 停用所有神经元
-            await central_cortex.deactivate_all()
-
-            # 停止神经突触网络
-            await synaptic_network.stop()
-
-            # 清理神经可塑性系统
-            try:
-                plugin_manager = self.get_component(PluginManager)
-                # 卸载所有插件
-                for plugin_id in list(plugin_manager.loaded_plugins.keys()):
-                    await plugin_manager.unload_plugin(plugin_id)
-                logger.info("神经可塑性系统已清理")
-            except Exception as e:
-                logger.error(f"清理神经可塑性系统时出错: {e}")
-
-            # 更新系统状态
-            self.running = False
-            logger.info(f"系统已停止，耗时: {time.time() - self.shutdown_time:.2f}秒")
+            if hasattr(self, "plugin_manager"):
+                await self.plugin_manager.unload_all_plugins()
         except Exception as e:
-            logger.error(f"系统停止时出错: {e}")
-            raise
+            logger.error(f"清理神经可塑性系统时出错: {e}")
+
+        self.running = False
+        shutdown_duration = (datetime.now() - self.shutdown_time).total_seconds()
+        logger.info(f"系统已停止，耗时: {shutdown_duration:.2f}秒")
 
     def get_system_stats(self) -> Dict[str, Any]:
         """获取系统统计信息
@@ -465,7 +461,7 @@ class BrainContext:
             "running": self.running,
             "startup_time": self.startup_time,
             "shutdown_time": self.shutdown_time,
-            "uptime": time.time() - self.startup_time if self.startup_time and self.running else 0,
+            "uptime": (datetime.now() - self.startup_time).total_seconds() if self.startup_time and self.running else 0,
         }
 
         # 获取系统组件统计

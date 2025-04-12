@@ -69,13 +69,18 @@ class DanmakuSensor(Sensor):
         # 提取弹幕信息
         user = processed_data.get("user", "anonymous")
         content = processed_data.get("content", "")
-        extra_data = {k: v for k, v in processed_data.items() if k not in ["user", "content"]}
+
+        # 如果输入中有platform，使用它，否则使用传感器的platform
+        platform = processed_data.get("platform", self.platform)
+
+        # 创建不包含platform的extra_data字典
+        extra_data = {k: v for k, v in processed_data.items() if k not in ["user", "content", "platform"]}
 
         # 创建弹幕信号
         priority = self._determine_priority(user, content)
         signal = DanmakuSignal(
             source=f"{self.name}_{self.platform}",
-            platform=self.platform,
+            platform=platform,
             user=user,
             content=content,
             priority=priority,

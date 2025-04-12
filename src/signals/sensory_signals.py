@@ -57,6 +57,10 @@ class DanmakuSignal(SensorySignal):
         target: Optional[str] = None,
         **extra_data,
     ):
+        # 确保从extra_data中删除platform，避免重复传递
+        if "platform" in extra_data:
+            del extra_data["platform"]
+
         data = {
             "sensory_type": "danmaku",
             "platform": platform,

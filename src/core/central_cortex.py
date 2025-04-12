@@ -6,6 +6,7 @@ from collections import defaultdict
 from src.neurons.neuron import Neuron
 from src.sensors.base_sensor import Sensor
 from src.actuators.base_actuator import Actuator
+from src.connectors.base_connector import Connector
 from src.core.synaptic_network import SynapticNetwork
 
 T = TypeVar("T", bound=Neuron)
@@ -335,7 +336,7 @@ class MotorCortex(CortexBase):
 
 
 class CentralCortex:
-    """中央皮层 - 管理所有神经元的高级协调中心"""
+    """中央皮层 - 管理感觉中枢、运动中枢和联结神经元"""
 
     def __init__(self, synaptic_network: SynapticNetwork):
         """初始化中央皮层
@@ -343,13 +344,13 @@ class CentralCortex:
         Args:
             synaptic_network: 神经突触网络
         """
-        self.synaptic_network = synaptic_network
         self.sensory_cortex = SensoryCortex(synaptic_network)
         self.motor_cortex = MotorCortex(synaptic_network)
-        self.logger = logging.getLogger(__name__)
+        self.connectors = set()  # 存储连接器神经元
+        self.active_connectors = set()  # 存储激活的连接器
 
     async def register_neuron(self, neuron: Neuron) -> None:
-        """注册神经元到适当的中枢
+        """注册神经元
 
         Args:
             neuron: 要注册的神经元
@@ -358,11 +359,17 @@ class CentralCortex:
             await self.sensory_cortex.register_neuron(neuron)
         elif isinstance(neuron, Actuator):
             await self.motor_cortex.register_neuron(neuron)
+        elif isinstance(neuron, Connector):
+            if neuron in self.connectors:
+                logger.warning(f"连接器 {neuron.name} 已经注册")
+                return
+            self.connectors.add(neuron)
+            logger.info(f"已注册连接器: {neuron.name}")
         else:
-            self.logger.error(f"无法注册未知类型的神经元: {neuron.__class__.__name__}")
+            logger.error(f"无法注册未知类型的神经元: {neuron.__class__.__name__}")
 
     async def unregister_neuron(self, neuron: Neuron) -> None:
-        """从适当的中枢取消注册神经元
+        """取消注册神经元
 
         Args:
             neuron: 要取消注册的神经元
@@ -371,32 +378,108 @@ class CentralCortex:
             await self.sensory_cortex.unregister_neuron(neuron)
         elif isinstance(neuron, Actuator):
             await self.motor_cortex.unregister_neuron(neuron)
+        elif isinstance(neuron, Connector):
+            if neuron not in self.connectors:
+                logger.warning(f"连接器 {neuron.name} 未注册")
+                return
+
+            # 如果处于激活状态，先停用
+            if neuron.is_active:
+                await self.deactivate_connector(neuron)
+
+            self.connectors.remove(neuron)
+            self.active_connectors.discard(neuron)
+            logger.info(f"已取消注册连接器: {neuron.name}")
         else:
-            self.logger.error(f"无法取消注册未知类型的神经元: {neuron.__class__.__name__}")
+            logger.warning(f"无法取消注册未知类型的神经元: {neuron.__class__.__name__}")
+
+    async def activate_connector(self, connector: Connector) -> None:
+        """激活连接器
+
+        Args:
+            connector: 要激活的连接器
+        """
+        if connector not in self.connectors:
+            logger.error(f"无法激活未注册的连接器: {connector.name}")
+            return
+
+        if connector in self.active_connectors:
+            logger.warning(f"连接器 {connector.name} 已经处于激活状态")
+            return
+
+        try:
+            await connector.activate()
+            self.active_connectors.add(connector)
+            logger.info(f"已激活连接器: {connector.name}")
+        except Exception as e:
+            logger.error(f"激活连接器 {connector.name} 时出错: {e}")
+            raise
+
+    async def deactivate_connector(self, connector: Connector) -> None:
+        """停用连接器
+
+        Args:
+            connector: 要停用的连接器
+        """
+        if connector not in self.connectors:
+            logger.error(f"无法停用未注册的连接器: {connector.name}")
+            return
+
+        if connector not in self.active_connectors:
+            logger.warning(f"连接器 {connector.name} 未处于激活状态")
+            return
+
+        try:
+            await connector.deactivate()
+            self.active_connectors.discard(connector)
+            logger.info(f"已停用连接器: {connector.name}")
+        except Exception as e:
+            logger.error(f"停用连接器 {connector.name} 时出错: {e}")
+            raise
 
     async def activate_all(self) -> None:
-        """激活所有神经元"""
-        self.logger.info("正在激活所有神经元...")
+        """激活所有注册的神经元"""
+        logger.info("正在激活所有神经元...")
 
-        # 先激活感觉神经元
+        # 先激活感知神经元
         await self.sensory_cortex.activate_all()
 
-        # 再激活运动神经元
+        # 然后激活运动神经元
         await self.motor_cortex.activate_all()
 
-        self.logger.info("已激活所有神经元")
+        # 最后激活连接器
+        logger.info(f"正在激活 {len(self.connectors)} 个连接器...")
+        for connector in self.connectors:
+            try:
+                await self.activate_connector(connector)
+            except Exception as e:
+                logger.error(f"激活连接器 {connector.name} 时出错: {e}")
+
+        logger.info(f"已激活 {len(self.active_connectors)}/{len(self.connectors)} 个连接器")
+
+        logger.info("已激活所有神经元")
 
     async def deactivate_all(self) -> None:
-        """停用所有神经元"""
-        self.logger.info("正在停用所有神经元...")
+        """停用所有激活的神经元"""
+        logger.info("正在停用所有神经元...")
 
-        # 先停用运动神经元
+        # 先停用连接器
+        logger.info(f"正在停用 {len(self.active_connectors)} 个连接器...")
+        for connector in list(self.active_connectors):
+            try:
+                await self.deactivate_connector(connector)
+            except Exception as e:
+                logger.error(f"停用连接器 {connector.name} 时出错: {e}")
+
+        logger.info(f"已停用所有连接器，还有 {len(self.active_connectors)} 个未能正常停用")
+
+        # 然后停用运动神经元
         await self.motor_cortex.deactivate_all()
 
-        # 再停用感觉神经元
+        # 最后停用感知神经元
         await self.sensory_cortex.deactivate_all()
 
-        self.logger.info("已停用所有神经元")
+        logger.info("已停用所有神经元")
 
     def get_neuron_by_name(self, name: str) -> Optional[Neuron]:
         """通过名称获取神经元
@@ -407,26 +490,53 @@ class CentralCortex:
         Returns:
             对应的神经元，如果不存在则返回None
         """
-        # 先在感觉中枢中查找
+        # 优先从感觉中枢查找
         neuron = self.sensory_cortex.get_neuron_by_name(name)
         if neuron:
             return neuron
 
-        # 再在运动中枢中查找
-        return self.motor_cortex.get_neuron_by_name(name)
+        # 其次从运动中枢查找
+        neuron = self.motor_cortex.get_neuron_by_name(name)
+        if neuron:
+            return neuron
+
+        # 最后从连接器查找
+        for connector in self.connectors:
+            if connector.name == name:
+                return connector
+
+        return None
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取中央皮层统计信息
+        """获取统计信息
 
         Returns:
             统计信息
         """
-        stats = {
-            "sensory_cortex": self.sensory_cortex.get_stats(),
-            "motor_cortex": self.motor_cortex.get_stats(),
-            "total_neurons": self.sensory_cortex.get_stats()["total_neurons"]
-            + self.motor_cortex.get_stats()["total_neurons"],
-            "active_neurons": self.sensory_cortex.get_stats()["active_neurons"]
-            + self.motor_cortex.get_stats()["active_neurons"],
+        # 获取感觉中枢和运动中枢的统计信息
+        sensory_stats = self.sensory_cortex.get_stats()
+        motor_stats = self.motor_cortex.get_stats()
+
+        # 构建连接器的统计信息
+        connector_stats = {
+            "total_connectors": len(self.connectors),
+            "active_connectors": len(self.active_connectors),
+            "connectors": {},
         }
-        return stats
+
+        for connector in self.connectors:
+            connector_stats["connectors"][connector.name] = {
+                "active": connector in self.active_connectors,
+                "type": connector.__class__.__name__,
+            }
+
+        # 合并统计信息
+        return {
+            "sensory_cortex": sensory_stats,
+            "motor_cortex": motor_stats,
+            "connectors": connector_stats,
+            "total_neurons": sensory_stats["total_neurons"] + motor_stats["total_neurons"] + len(self.connectors),
+            "active_neurons": sensory_stats["active_neurons"]
+            + motor_stats["active_neurons"]
+            + len(self.active_connectors),
+        }

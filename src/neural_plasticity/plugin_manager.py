@@ -594,9 +594,25 @@ class PluginManager:
         return dict(self.plugins)
 
     def get_loaded_plugins(self) -> Dict[str, Neuron]:
-        """获取所有已加载的插件
+        """获取所有已加载的插件实例
 
         Returns:
-            所有已加载的插件实例字典
+            插件ID到插件实例的映射
         """
-        return dict(self.loaded_plugins)
+        return self.loaded_plugins.copy()
+
+    async def unload_all_plugins(self) -> None:
+        """卸载所有已加载的插件"""
+        logger.info(f"正在卸载所有插件，共 {len(self.loaded_plugins)} 个...")
+
+        # 创建插件ID列表的副本，因为在卸载过程中会修改字典
+        plugin_ids = list(self.loaded_plugins.keys())
+
+        # 按照逆向加载顺序卸载插件（先加载的后卸载）
+        for plugin_id in reversed(plugin_ids):
+            try:
+                await self.unload_plugin(plugin_id)
+            except Exception as e:
+                logger.error(f"卸载插件 {plugin_id} 时出错: {e}")
+
+        logger.info(f"已卸载所有插件，还有 {len(self.loaded_plugins)} 个未能正常卸载")
