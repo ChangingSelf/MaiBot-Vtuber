@@ -8,7 +8,6 @@ import asyncio
 import pkg_resources
 from pathlib import Path
 
-from src.core.neural_injector import NeuralInjector
 from src.neurons.neuron import Neuron
 from src.sensors.base_sensor import Sensor
 from src.actuators.base_actuator import Actuator
@@ -92,7 +91,7 @@ class PluginMetadata:
 class PluginManager:
     """插件管理器 - 管理神经可塑性插件的发现、加载和生命周期"""
 
-    def __init__(self, neural_injector: NeuralInjector, config: Dict[str, Any]):
+    def __init__(self, neural_injector, config: Dict[str, Any]):
         """初始化插件管理器
 
         Args:

@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, Type, List, Set, Union, Callable
+from typing import Dict, Any, Optional, Type, List, Set, Union, Callable, TYPE_CHECKING
 import logging
 import importlib.util
 import os
@@ -16,8 +16,11 @@ from pathlib import Path
 from src.neurons.neuron import Neuron
 from src.sensors.base_sensor import Sensor
 from src.actuators.base_actuator import Actuator
-from src.core.neural_injector import NeuralInjector
 from src.neural_plasticity.plugin_manager import PluginMetadata
+
+# 使用TYPE_CHECKING条件导入
+if TYPE_CHECKING:
+    from src.core.neural_injector import NeuralInjector
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +108,7 @@ class PluginSandbox:
 class PluginLoader:
     """插件加载器 - 负责安装、提取和准备插件"""
 
-    def __init__(self, neural_injector: NeuralInjector, config: Dict[str, Any]):
+    def __init__(self, neural_injector: "NeuralInjector", config: Dict[str, Any]):
         """初始化插件加载器
 
         Args:

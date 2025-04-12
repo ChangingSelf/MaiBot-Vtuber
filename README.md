@@ -1,6 +1,6 @@
 # MaiBot-Vtuber
 
-MaiBot-Vtuber是一个基于[MaiBot核心](https://github.com/MaiM-with-u/MaiBot)的[[VtubeStudio](VTubeStudio](https://github.com/DenchiSoft/VTubeStudio)适配器。
+MaiBot-Vtuber是一个基于[MaiBot核心](https://github.com/MaiM-with-u/MaiBot)的[VtubeStudio](https://github.com/DenchiSoft/VTubeStudio)适配器。
 
 目前只搭建了框架，还在开发中。
 
@@ -22,7 +22,7 @@ pip install -r requirements-dev.txt
 
 ## 快速开始
 
-1. 配置系统:
+### 1. 配置系统:
 
 ```bash
 # 复制默认配置文件
@@ -32,10 +32,72 @@ cp config/default.yaml config/config.yaml
 nano config/config.yaml
 ```
 
-2. 启动系统:
+### 2. 启动系统:
 
 ```bash
-python src/main.py
+# 标准启动方式
+python main.py
+
+# 指定配置文件
+python main.py --config config/config.yaml
+
+# 启用调试模式
+python main.py --debug
+
+# 仅运行测试模式
+python main.py --test
+```
+
+### 3. 使用环境变量配置:
+
+系统支持通过环境变量覆盖配置文件中的设置，所有环境变量必须以 `MAIBOT_` 为前缀。
+
+```bash
+# 设置MaiBot Core连接器的WebSocket URL
+export MAIBOT_CORE_WS_URL="ws://localhost:8000/ws"
+
+# 设置心跳间隔时间
+export MAIBOT_CORE_HEARTBEAT_INTERVAL=30
+
+# 设置日志级别
+export MAIBOT_LOGGING_CONSOLE_LEVEL="DEBUG"
+
+# 启动系统
+python main.py
+```
+
+在Windows中使用PowerShell:
+```powershell
+$env:MAIBOT_CORE_WS_URL = "ws://localhost:8000/ws"
+python main.py
+```
+
+环境变量命名规则：
+- 组件配置: `MAIBOT_[组件类型]_[参数名]`
+  - 例如: `MAIBOT_CORE_WS_URL` 会设置 MaiBot Core 连接器的 `ws_url` 参数
+- 通用配置: `MAIBOT_[参数名]`
+  - 例如: `MAIBOT_DEBUG_MODE=true` 设置全局调试模式
+
+### 4. 配置文件参考:
+
+```yaml
+# MaiBot核心连接器配置
+maibot_core_connector:
+  ws_url: "ws://localhost:8000/ws"  # MaiBot Core的WebSocket地址
+  heartbeat_interval: 30            # 心跳间隔，单位为秒
+  max_reconnect_attempts: 10        # 最大重连尝试次数
+  reconnect_interval: 5.0           # 重连间隔时间，单位为秒
+
+# 弹幕传感器配置
+danmaku_sensor:
+  platform: "test"                  # 弹幕平台，可选值: bilibili, douyu, test等
+  message_queue_size: 100           # 消息队列大小
+
+# 字幕执行器配置
+subtitle_actuator:
+  font_size: 24                     # 字幕字体大小
+  display_time: 5.0                 # 字幕显示时间，单位为秒
+  max_width: 800                    # 字幕最大宽度，单位为像素
 ```
 
 ## 架构概览

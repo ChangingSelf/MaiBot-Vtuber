@@ -156,9 +156,7 @@ class NeuralTrace:
             if self.enable_json_format:
                 console_formatter = self._create_json_formatter()
             else:
-                console_formatter = logging.Formatter(
-                    "%(asctime)s - %(levelname)s - [%(neuron_type)s] - %(name)s - %(message)s"
-                )
+                console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(name)s] - %(message)s")
 
             console_handler.setFormatter(console_formatter)
             self.logger.addHandler(console_handler)
@@ -194,9 +192,7 @@ class NeuralTrace:
             if self.enable_json_format:
                 file_formatter = self._create_json_formatter()
             else:
-                file_formatter = logging.Formatter(
-                    "%(asctime)s - %(levelname)s - [%(neuron_type)s] - %(name)s - %(message)s"
-                )
+                file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(name)s] - %(message)s")
 
             file_handler.setFormatter(file_formatter)
             self.logger.addHandler(file_handler)

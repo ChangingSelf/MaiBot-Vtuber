@@ -1,4 +1,4 @@
-from typing import Any, Dict, Callable, List, Optional, Set, Type, Union
+from typing import Any, Dict, Callable, List, Optional, Set, Type, Union, Awaitable
 import asyncio
 import logging
 import time
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # 回调函数类型定义
 SignalCallback = Callable[[NeuralSignal], None]
-AsyncSignalCallback = Callable[[NeuralSignal], asyncio.coroutine]
+AsyncSignalCallback = Callable[[NeuralSignal], Awaitable[Any]]
 
 
 class SignalFilter:

@@ -5,6 +5,9 @@ import os
 import json
 import yaml
 import time
+import sys
+from pathlib import Path
+from datetime import datetime
 
 from src.core.neural_injector import NeuralInjector
 from src.core.synaptic_network import SynapticNetwork
@@ -210,9 +213,19 @@ class BrainContext:
                     logger.warning(f"不支持的配置文件格式: {config_path}")
                     file_config = {}
 
+                # 打印加载的配置
+                logger.debug(f"从文件加载的配置: {file_config}")
+
                 # 合并配置
                 config.update(file_config)
                 logger.info(f"已加载配置文件: {config_path}")
+
+                # 检查关键配置项
+                if "maibot_core_connector" in config:
+                    logger.debug(f"MaiBot Core配置已加载: {config['maibot_core_connector']}")
+                else:
+                    logger.warning("配置中缺少 maibot_core_connector 部分")
+
             except Exception as e:
                 logger.error(f"加载配置文件出错: {e}")
         else:
@@ -241,6 +254,14 @@ class BrainContext:
                     current[config_parts[-1]] = value
 
                 logger.debug(f"从环境变量加载配置: {key} = {value}")
+
+        # 最后输出所有配置键
+        logger.debug(f"最终配置包含以下键: {list(config.keys())}")
+        # 检查MaiBot核心连接器配置
+        possible_keys = ["maibot_core_connector", "maibotcoreconnector", "maibot_core", "core_connector"]
+        for key in possible_keys:
+            if key in config:
+                logger.debug(f"找到配置键 '{key}': {config[key]}")
 
         return config
 

@@ -176,3 +176,4 @@ cython_debug/
 maim_message/
 .vscode/
 token.txt
+config/config.yml
