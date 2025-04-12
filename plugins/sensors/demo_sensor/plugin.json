@@ -1,0 +1,28 @@
+{
+  "id": "demo_sensor",
+  "name": "示例感知神经元",
+  "version": "0.1.0",
+  "description": "这是一个示例感知神经元插件，用于演示插件系统的使用方法",
+  "author": "MaiBot",
+  "neuron_type": "sensor",
+  "entry_point": "demo_sensor.py",
+  "dependencies": {},
+  "config_schema": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用该插件"
+    },
+    "interval": {
+      "type": "number",
+      "default": 5,
+      "description": "消息生成间隔时间（秒）"
+    },
+    "message": {
+      "type": "string",
+      "default": "这是一个测试消息",
+      "description": "要生成的测试消息内容"
+    }
+  },
+  "enabled": true
+}
