@@ -89,11 +89,14 @@ async def simulate_input(context: BrainContext) -> None:
 
     # 模拟弹幕输入
     logger.info("模拟弹幕输入...")
+
+    platform = context.config.get("system", {}).get("platform", "MaiBot-Vtuber")
+
     test_messages = [
-        {"user": "用户1", "content": "你好，MaiBot！", "platform": "test"},
-        {"user": "用户2", "content": "这是一条测试弹幕", "platform": "test"},
-        {"user": "用户3", "content": "我好开心啊！", "platform": "test"},
-        {"user": "管理员", "content": "!status", "platform": "test"},
+        {"user": "用户1", "content": "你好，MaiBot！", "platform": platform},
+        {"user": "用户2", "content": "这是一条测试弹幕", "platform": platform},
+        {"user": "用户3", "content": "我好开心啊！", "platform": platform},
+        {"user": "管理员", "content": "!status", "platform": platform},
     ]
 
     for msg in test_messages:

@@ -94,7 +94,7 @@ class SignalAdapter:
         try:
             # 获取当前时间戳
             time_stamp = int(time.time())
-            platform = signal.data.get("platform") or "MaiBot-Vtuber"  # 暂时写死
+            platform = signal.data.get("platform") or "MaiBot-Vtuber"
 
             # 创建用户信息
             user_info = UserInfo(

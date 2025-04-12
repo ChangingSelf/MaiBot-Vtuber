@@ -1,6 +1,7 @@
 system:
   log_level: INFO
   debug_mode: false
+  platform: "MaiBot-Vtuber"
 
 # 日志系统配置
 logging:
