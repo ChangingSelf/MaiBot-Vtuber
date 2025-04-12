@@ -4,7 +4,7 @@ MaiBot-Vtuber是一个基于[MaiBot核心](https://github.com/MaiM-with-u/MaiBot
 
 目前只搭建了框架，还在开发中。
 
-main分支为Cursor辅助重构后的代码，旧代码在legacy-demo分支
+main分支为~~Cursor辅助~~人类辅助重构后的代码，旧代码在legacy-demo分支
 
 ## 安装
 
