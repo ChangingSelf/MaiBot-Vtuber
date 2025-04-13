@@ -1,5 +1,5 @@
 from maim_message import Router, RouteConfig, TargetConfig
-from maim_message.message_base import BaseMessageInfo, GroupInfo, MessageBase, Seg, UserInfo
+from maim_message.message_base import BaseMessageInfo, FormatInfo, GroupInfo, MessageBase, Seg, TemplateInfo, UserInfo
 from ..utils.config import global_config
 from ..utils.logger import logger
 import asyncio
@@ -58,6 +58,19 @@ class NeuroCore:
 
         time_stamp = int(time.time())
 
+        format_info = FormatInfo(
+            # 消息内容中包含的Seg的type列表
+            content_format=["text"],
+            # 消息发出后，期望最终的消息中包含的消息类型，可以帮助某些plugin判断是否向消息中添加某些消息类型
+            accept_format=[
+                "text",
+                "emoji",  # 表情包可以保存下来用vts的load_item显示在场景中，不过暂未实现
+            ],
+        )
+
+        # 自定义提示词模板
+        template_info_custom = await self.init_vts_prompt()
+
         # 消息信息
         message_info: BaseMessageInfo = BaseMessageInfo(
             platform=global_config.platform,
@@ -65,8 +78,8 @@ class NeuroCore:
             time=time_stamp,
             user_info=user_info,
             group_info=group_info,
-            template_info=None,
-            format_info=None,
+            template_info=template_info_custom,
+            format_info=format_info,
             additional_config={
                 "maimcore_reply_probability_gain": 1,  # 回复概率增益
             },
@@ -151,6 +164,24 @@ class NeuroCore:
                 break
             except Exception as e:
                 logger.error(f"处理队列消息时出错: {e}", exc_info=True)
+
+    async def init_vts_prompt(self):
+        """初始化vts提示词"""
+        return TemplateInfo(
+            template_items={
+                "reasoning_prompt_main": """
+                    {relation_prompt_all}
+                    {memory_prompt}
+                    {prompt_info}
+                    {schedule_prompt}
+                    {chat_target}
+                    {chat_talking_prompt}
+                    你是一个AI主播，正在bilibili直播间直播，现在弹幕中用户[{sender_name}]说的「{message_txt}」引起了你的注意，请你根据当前的直播内容{chat_target_2},以及之前的弹幕记录，给出日常且口语化的、适合主播回复观众的回复，说中文，不要刻意突出自身学科背景，尽量不要说你说过的话，请注意不要输出多余内容
+                """,
+            },
+            template_name="qq123_default",
+            template_default=False,
+        )
 
 
 core = NeuroCore(synapse)
