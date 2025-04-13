@@ -1,8 +1,12 @@
-aiohttp==3.11.16
-fastapi==0.115.12
+aiohttp==3.8.5
+fastapi==0.101.1
 loguru==0.7.2
-pydantic==2.11.2
+pydantic==2.3.0
 pyvts==0.3.3
 setuptools==75.8.0
-uvicorn==0.34.0
+uvicorn==0.20.0
 ruff==0.11.4
+requests==2.31.0
+websockets==10.4
+python-logging-loki==0.3.1
+typer==0.9.0

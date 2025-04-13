@@ -1,15 +1,37 @@
 import asyncio
+from src.sensor.danmaku_live_sensor import danmaku_live_sensor
 from src.sensor.danmaku_mock_sensor import danmaku_mock_sensor
 from src.utils.logger import get_logger
 import sys
 import signal
 import os
 from src.neuro.core import core
+import threading
 
 logger = get_logger("main")
 
 
+def run_danmaku_sensor():
+    """在单独线程中运行弹幕传感器"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        logger.info("弹幕传感器线程已启动")
+        loop.run_until_complete(danmaku_live_sensor.connect())
+        loop.run_forever()
+    except Exception as e:
+        logger.error(f"弹幕传感器线程异常: {str(e)}")
+    finally:
+        loop.close()
+
+
 async def boot():
+    # 启动弹幕传感器线程
+    # danmaku_thread = threading.Thread(target=run_danmaku_sensor, name="DanmakuSensor")
+    # danmaku_thread.daemon = True
+    # danmaku_thread.start()
+
+    # 主线程运行核心任务
     await asyncio.gather(
         core.connect(),  # 建立与MaiMaiCore的连接
         core.process_input(),  # 处理传输给MaiMaiCore的输入
@@ -22,8 +44,11 @@ async def halt():
         logger.info("正在关闭系统...")
 
         # 先关闭传感器
+        # await danmaku_live_sensor.disconnect()
+        # logger.info("B站直播弹幕传感器已关闭")
+
         await danmaku_mock_sensor.disconnect()
-        logger.info("弹幕传感器已关闭")
+        logger.info("弹幕模拟传感器已关闭")
 
         # 关闭核心
         await core.disconnect()

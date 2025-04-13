@@ -137,8 +137,7 @@ class NeuroCore:
 
         处理麦麦核心返回的消息，只将文本类型的信息通过日志打印输出到控制台
         """
-
-        logger.info(f"大脑信息反馈至神经中枢: {raw_message_base_str}")
+        logger.info(f"大脑信息反馈至神经中枢: {raw_message_base_str[:200]}...")
         raw_message_base: MessageBase = MessageBase.from_dict(raw_message_base_str)
         message_info: BaseMessageInfo = raw_message_base.message_info
         message_segment: Seg = raw_message_base.message_segment

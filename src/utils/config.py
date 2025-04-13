@@ -12,6 +12,8 @@ class Config(BaseModel):
     platform: str = "maibot-vtuber"  # 平台
     port: int = 18004  # 端口
     token_path: str = "./token.txt"  # 认证token文件路径
+    bilibili_room_id: str = "12290973"  # B站直播间ID
+    bilibili_cookies: str = ""  # B站Cookie，如果需要身份验证可以设置
 
     core_host: str = "127.0.0.1"
     core_port: int = 8000
