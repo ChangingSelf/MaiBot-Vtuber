@@ -66,9 +66,17 @@ class Synapse:
         """
         取消订阅输出神经递质
         """
-        if handler in self.output_handlers:
-            self.output_handlers.remove(handler)
-            logger.debug(f"已移除输出处理器: {handler.__name__}")
+        try:
+            if handler in self.output_handlers:
+                self.output_handlers.remove(handler)
+                logger.debug(f"已移除输出处理器: {handler.__name__}")
+            else:
+                logger.debug(
+                    f"尝试移除不存在的输出处理器: {handler.__name__ if hasattr(handler, '__name__') else handler}"
+                )
+        except Exception as e:
+            logger.error(f"移除输出处理器时出错: {e}")
+            # 即使出错也继续执行，不阻塞关闭流程
 
 
 # 创建全局突触实例

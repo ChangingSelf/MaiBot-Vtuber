@@ -239,10 +239,27 @@ class Subtitle:
 
     def close(self):
         """关闭窗口"""
+        # 停止动画线程
         self.animation_running = False
-        if self.animation_thread:
-            self.animation_thread.join()
-        self.root.destroy()
+        if self.animation_thread and self.animation_thread.is_alive():
+            try:
+                self.animation_thread.join(timeout=0.5)
+            except Exception as e:
+                print(f"关闭动画线程时出错: {e}")
+
+        # 安全地销毁窗口
+        try:
+            # 使用after方法在主线程中执行destroy
+            if self.root and self.root.winfo_exists():
+                self.root.after(0, self.root.quit)
+                self.root.after(100, self.root.destroy)
+        except Exception as e:
+            print(f"关闭窗口时出错: {e}")
+            # 即使出错也要尝试强制销毁
+            try:
+                self.root.destroy()
+            except:
+                pass
 
 
 class MultiMessageSubtitle(Subtitle):

@@ -52,17 +52,30 @@ class SubtitleActuator:
         断开连接
         """
         logger.info("字幕执行器正在断开连接...")
+        # 先取消订阅，这样不会再有新消息
+        await self.synapse.unsubscribe_output(self._handle_output)
+        logger.info("字幕执行器已取消订阅输出")
+
+        # 停止处理消息的循环
         self.running = False
 
-        # 取消订阅
-        await self.synapse.unsubscribe_output(self._handle_output)
-
         # 关闭字幕
-        if self.subtitle:
-            self.subtitle.close()
-            self.subtitle = None
+        try:
+            if self.subtitle and hasattr(self.subtitle, "close"):
+                self.subtitle.close()
+                self.subtitle = None
+                logger.info("字幕窗口已关闭")
+        except Exception as e:
+            logger.error(f"关闭字幕窗口时出错: {e}")
 
-        logger.info("字幕执行器已断开连接")
+        # 最多等待1秒让线程自行结束
+        if self.subtitle_thread and self.subtitle_thread.is_alive():
+            logger.info("等待字幕线程结束...")
+            self.subtitle_thread.join(timeout=1.0)
+            if self.subtitle_thread.is_alive():
+                logger.warning("字幕线程未能正常结束，但将继续关闭流程")
+
+        logger.info("字幕执行器已完全断开连接")
 
     async def _handle_output(self, neurotransmitter: Neurotransmitter):
         """
@@ -84,32 +97,52 @@ class SubtitleActuator:
         """
         运行字幕窗口
         """
-        # 创建字幕
-        self.subtitle = MultiMessageSubtitle(
-            text="等待消息...",
-            theme="dark",
-            font_family="Microsoft YaHei",
-            font_size=24,
-            text_color="#FFFFFF",
-            bg_color="#333333",
-            opacity=0.7,
-            animation_speed=10,
-            border_radius=10,
-            padding=15,
-            show_history=self.show_history,
-        )
+        try:
+            # 创建字幕
+            self.subtitle = MultiMessageSubtitle(
+                text="等待消息...",
+                theme="dark",
+                font_family="Microsoft YaHei",
+                font_size=24,
+                text_color="#FFFFFF",
+                bg_color="#333333",
+                opacity=0.7,
+                animation_speed=10,
+                border_radius=10,
+                padding=15,
+                show_history=self.show_history,
+            )
 
-        # 设置初始位置（屏幕底部）
-        screen_width = self.subtitle.root.winfo_screenwidth()
-        screen_height = self.subtitle.root.winfo_screenheight()
-        subtitle_width = 600
-        subtitle_height = 200
-        x_pos = (screen_width - subtitle_width) // 2
-        y_pos = screen_height - subtitle_height - 50
-        self.subtitle.root.geometry(f"{subtitle_width}x{subtitle_height}+{x_pos}+{y_pos}")
+            # 设置初始位置（屏幕底部）
+            screen_width = self.subtitle.root.winfo_screenwidth()
+            screen_height = self.subtitle.root.winfo_screenheight()
+            subtitle_width = 600
+            subtitle_height = 200
+            x_pos = (screen_width - subtitle_width) // 2
+            y_pos = screen_height - subtitle_height - 50
+            self.subtitle.root.geometry(f"{subtitle_width}x{subtitle_height}+{x_pos}+{y_pos}")
 
-        # 运行字幕
-        self.subtitle.run()
+            # 添加周期性检查，当running变为False时退出循环
+            def check_running():
+                if not self.running and self.subtitle and self.subtitle.root:
+                    try:
+                        self.subtitle.root.quit()
+                        return  # 不再继续调度
+                    except Exception as e:
+                        logger.error(f"退出字幕循环时出错: {e}")
+
+                # 如果仍在运行，继续检查
+                if self.subtitle and self.subtitle.root:
+                    self.subtitle.root.after(100, check_running)
+
+            # 开始检查循环
+            self.subtitle.root.after(100, check_running)
+
+            # 运行字幕
+            self.subtitle.run()
+
+        except Exception as e:
+            logger.error(f"字幕线程出错: {e}", exc_info=True)
 
     async def _process_messages(self):
         """

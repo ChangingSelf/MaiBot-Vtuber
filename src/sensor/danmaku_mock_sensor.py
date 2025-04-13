@@ -48,5 +48,10 @@ class DanmakuMockSensor(Sensor):
             )
             await asyncio.sleep(10)
 
+    async def disconnect(self):
+        """停止模拟消息生成"""
+        logger.info("正在关闭弹幕模拟传感器...")
+        self.running = False
+
 
 danmaku_mock_sensor = DanmakuMockSensor(synapse)
