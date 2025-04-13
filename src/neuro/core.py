@@ -149,14 +149,14 @@ class NeuroCore:
         if message_segment.type == "text":
             message_text = message_segment.data
             process_message = False
-            hotkeys = []
+            hotkey = ""
 
             # 尝试将整个消息解析为JSON对象
             try:
                 # 解析消息内容
                 response_json = json.loads(message_text)
 
-                # 提取回复文本和热键列表
+                # 提取回复文本和热键
                 if isinstance(response_json, dict):
                     if "reply" in response_json:
                         message_text = response_json["reply"]
@@ -165,10 +165,13 @@ class NeuroCore:
                         logger.warning("JSON中缺少'reply'字段，丢弃消息")
                         return
 
-                    if "hotkeys" in response_json and isinstance(response_json["hotkeys"], list):
-                        hotkeys = response_json["hotkeys"]
-                        # 使用ensure_ascii=False确保中文正确显示
-                        logger.info(f"检测到热键: {json.dumps(hotkeys, ensure_ascii=False)}")
+                    if "hotkey" in response_json and isinstance(response_json["hotkey"], str):
+                        hotkey = response_json["hotkey"]
+                        if hotkey:
+                            # 使用ensure_ascii=False确保中文正确显示
+                            logger.info(f"检测到热键: {hotkey}")
+                        else:
+                            logger.info("热键为空字符串")
                     else:
                         logger.info("JSON中无热键或热键格式不正确")
                 else:
@@ -200,8 +203,8 @@ class NeuroCore:
             except Exception as e:
                 logger.error(f"发布消息到神经突触失败: {e}")
 
-            # 触发热键
-            for hotkey in hotkeys:
+            # 触发热键（如果不为空）
+            if hotkey:
                 try:
                     # 确保热键名称正确显示
                     logger.info(f"触发热键: {hotkey}")
@@ -250,8 +253,13 @@ class NeuroCore:
             + """。必须以标准json格式返回一个json对象，不允许返回其他任何内容，示例如下：
             \{
                 "reply": "回复内容",
-                "hotkeys": ["热键1", "热键2"]
+                "hotkey": "热键名称"
             \}
+            
+            注意事项：
+            1. 必须只使用上面提供的热键列表中的热键，不要发明不存在的热键
+            2. 如果没有合适的热键，返回空字符串
+            3. 不要用markdown代码块包裹
             """
         )
 
