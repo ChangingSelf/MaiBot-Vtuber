@@ -6,6 +6,8 @@ import asyncio
 import time
 from .synapse import Synapse, synapse, Neurotransmitter
 from ..actuator.subtitle_actuator import SubtitleActuator
+from ..actuator.vts_client import VtubeStudioClient
+import json
 
 
 class NeuroCore:
@@ -38,6 +40,18 @@ class NeuroCore:
 
         # 连接字幕执行器
         await self.subtitle_actuator.connect()
+
+        # 创建VTS管理器实例
+        self.vts_client = VtubeStudioClient(
+            plugin_name=global_config.plugin_name,
+            developer=global_config.developer,
+        )
+
+        # 连接到VTS
+        connected = await self.vts_client.connect()
+        if not connected:
+            logger.error("无法连接到VTS，程序退出")
+            return
 
         await self.router.run()
 
@@ -133,15 +147,41 @@ class NeuroCore:
         user_info.user_nickname = "麦麦"
 
         if message_segment.type == "text":
-            logger.info(f"【麦麦】: {message_segment.data}")
+            message_text = message_segment.data
+            hotkeys = []
+
+            # 检查消息是否包含热键信息
+            if "======" in message_text:
+                # 分割消息内容和热键部分
+                parts = message_text.split("======")
+                if len(parts) == 2:
+                    message_text = parts[0].strip()
+                    try:
+                        # 解析热键JSON数组
+                        hotkey_json = parts[1].strip()
+                        hotkeys = json.loads(hotkey_json)
+                        logger.info(f"检测到热键: {hotkeys}")
+                    except Exception as e:
+                        logger.error(f"解析热键JSON失败: {e}")
+
+            logger.info(f"【麦麦】: {message_text}")
+
             # 发布神经递质到突触
             await self.synapse.publish_output(
                 Neurotransmitter(
-                    raw_message=message_segment.data,
+                    raw_message=message_text,
                     user_info=user_info,
                     group_info=group_info,
                 )
             )
+
+            # 触发热键
+            for hotkey in hotkeys:
+                try:
+                    logger.info(f"触发热键: {hotkey}")
+                    await self.vts_client.trigger_hotkey(hotkey)
+                except Exception as e:
+                    logger.error(f"触发热键失败: {e}")
         else:
             logger.info(f"收到[{message_segment.type}]类型的消息")
 
@@ -167,6 +207,9 @@ class NeuroCore:
 
     async def init_vts_prompt(self):
         """初始化vts提示词"""
+
+        hotkey_list = await self.vts_client.get_hotkey_list()
+
         return TemplateInfo(
             template_items={
                 "reasoning_prompt_main": """
@@ -176,7 +219,12 @@ class NeuroCore:
                     {schedule_prompt}
                     {chat_target}
                     {chat_talking_prompt}
-                    你是一个AI主播，正在bilibili直播间直播，现在弹幕中用户[{sender_name}]说的「{message_txt}」引起了你的注意，请你根据当前的直播内容{chat_target_2},以及之前的弹幕记录，给出日常且口语化的、适合主播回复观众的回复，说中文，不要刻意突出自身学科背景，尽量不要说你说过的话，请注意不要输出多余内容
+                    你是一个AI主播，正在bilibili直播间直播，现在弹幕中用户[{sender_name}]说的「{message_txt}」引起了你的注意，请你根据当前的直播内容{chat_target_2},以及之前的弹幕记录，给出日常且口语化的、适合主播回复观众的回复，说中文，不要刻意突出自身学科背景，尽量不要说你说过的话。你的Live2D皮套有如下热键：[
+                    """
+                + ",".join(hotkey_list)
+                + """
+                    ]，请根据热键触发对应的Live2D动作。请在回复末尾用json的数组格式添加你想要触发的热键名，例如["hotkey1", "hotkey2"]，和回复观众的话用======隔开。示例：
+                    "这个游戏我昨天才通关，好玩======["hotkey1", "hotkey2"]"
                 """,
             },
             template_name="qq123_default",
