@@ -9,9 +9,9 @@ logger = get_logger("main")
 
 async def boot():
     await asyncio.gather(
-        core.connect(),
-        core.process_input(),
-        danmaku_mock_sensor.connect(),
+        core.connect(),  # 建立与MaiMaiCore的连接
+        core.process_input(),  # 处理传输给MaiMaiCore的输入
+        danmaku_mock_sensor.connect(),  # 连接弹幕传感器
     )
 
 

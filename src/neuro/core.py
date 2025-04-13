@@ -8,7 +8,7 @@ from .synapse import Synapse, synapse, Neurotransmitter
 from ..actuator.subtitle_actuator import SubtitleActuator
 
 
-class Core:
+class NeuroCore:
     """
     神经中枢(Core)是神经系统的核心，负责处理和整合来自传感器的信息，并生成输出信号。它协调神经元之间的信息传递，确保神经系统正常运作。
     """
@@ -153,4 +153,4 @@ class Core:
                 logger.error(f"处理队列消息时出错: {e}", exc_info=True)
 
 
-core = Core(synapse)
+core = NeuroCore(synapse)
