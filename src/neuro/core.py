@@ -148,40 +148,66 @@ class NeuroCore:
 
         if message_segment.type == "text":
             message_text = message_segment.data
+            process_message = False
             hotkeys = []
 
-            # 检查消息是否包含热键信息
-            if "======" in message_text:
-                # 分割消息内容和热键部分
-                parts = message_text.split("======")
-                if len(parts) == 2:
-                    message_text = parts[0].strip()
-                    try:
-                        # 解析热键JSON数组
-                        hotkey_json = parts[1].strip()
-                        hotkeys = json.loads(hotkey_json)
-                        logger.info(f"检测到热键: {hotkeys}")
-                    except Exception as e:
-                        logger.error(f"解析热键JSON失败: {e}")
+            # 尝试将整个消息解析为JSON对象
+            try:
+                # 解析消息内容
+                response_json = json.loads(message_text)
+
+                # 提取回复文本和热键列表
+                if isinstance(response_json, dict):
+                    if "reply" in response_json:
+                        message_text = response_json["reply"]
+                        process_message = True
+                    else:
+                        logger.warning("JSON中缺少'reply'字段，丢弃消息")
+                        return
+
+                    if "hotkeys" in response_json and isinstance(response_json["hotkeys"], list):
+                        hotkeys = response_json["hotkeys"]
+                        # 使用ensure_ascii=False确保中文正确显示
+                        logger.info(f"检测到热键: {json.dumps(hotkeys, ensure_ascii=False)}")
+                    else:
+                        logger.info("JSON中无热键或热键格式不正确")
+                else:
+                    logger.warning("解析的JSON不是字典格式，丢弃消息")
+                    return
+            except json.JSONDecodeError:
+                # 不是合法的JSON，丢弃
+                logger.info("消息不是JSON格式，丢弃")
+                return
+            except Exception as e:
+                logger.error(f"解析消息JSON失败: {e}")
+                return
+
+            if not process_message:
+                logger.warning("消息处理失败，丢弃")
+                return
 
             logger.info(f"【麦麦】: {message_text}")
 
             # 发布神经递质到突触
-            await self.synapse.publish_output(
-                Neurotransmitter(
-                    raw_message=message_text,
-                    user_info=user_info,
-                    group_info=group_info,
+            try:
+                await self.synapse.publish_output(
+                    Neurotransmitter(
+                        raw_message=message_text,
+                        user_info=user_info,
+                        group_info=group_info,
+                    )
                 )
-            )
+            except Exception as e:
+                logger.error(f"发布消息到神经突触失败: {e}")
 
             # 触发热键
             for hotkey in hotkeys:
                 try:
+                    # 确保热键名称正确显示
                     logger.info(f"触发热键: {hotkey}")
                     await self.vts_client.trigger_hotkey(hotkey)
                 except Exception as e:
-                    logger.error(f"触发热键失败: {e}")
+                    logger.error(f"触发热键'{hotkey}'失败: {e}")
         else:
             logger.info(f"收到[{message_segment.type}]类型的消息")
 
@@ -210,22 +236,29 @@ class NeuroCore:
 
         hotkey_list = await self.vts_client.get_hotkey_list()
 
+        main_prompt = (
+            """
+            {relation_prompt_all}
+            {memory_prompt}
+            {prompt_info}
+            {schedule_prompt}
+            {chat_target}
+            {chat_talking_prompt}
+            你是一个AI主播，正在bilibili直播间直播，现在弹幕中用户[{sender_name}]说的「{message_txt}」引起了你的注意，请你根据当前的直播内容{chat_target_2},以及之前的弹幕记录，给出日常且口语化的、适合主播回复观众的回复，说中文，不要刻意突出自身学科背景，尽量不要说你说过的话。你的Live2D皮套有如下热键：
+            """
+            + json.dumps(hotkey_list, ensure_ascii=False)
+            + """。必须以标准json格式返回一个json对象，不允许返回其他任何内容，示例如下：
+            \{
+                "reply": "回复内容",
+                "hotkeys": ["热键1", "热键2"]
+            \}
+            """
+        )
+
         return TemplateInfo(
             template_items={
-                "reasoning_prompt_main": """
-                    {relation_prompt_all}
-                    {memory_prompt}
-                    {prompt_info}
-                    {schedule_prompt}
-                    {chat_target}
-                    {chat_talking_prompt}
-                    你是一个AI主播，正在bilibili直播间直播，现在弹幕中用户[{sender_name}]说的「{message_txt}」引起了你的注意，请你根据当前的直播内容{chat_target_2},以及之前的弹幕记录，给出日常且口语化的、适合主播回复观众的回复，说中文，不要刻意突出自身学科背景，尽量不要说你说过的话。你的Live2D皮套有如下热键：[
-                    """
-                + ",".join(hotkey_list)
-                + """
-                    ]，请根据热键触发对应的Live2D动作。请在回复末尾用json的数组格式添加你想要触发的热键名，例如["hotkey1", "hotkey2"]，和回复观众的话用======隔开。示例：
-                    "这个游戏我昨天才通关，好玩======["hotkey1", "hotkey2"]"
-                """,
+                "reasoning_prompt_main": main_prompt,
+                "heart_flow_prompt_normal": main_prompt,
             },
             template_name="qq123_default",
             template_default=False,
