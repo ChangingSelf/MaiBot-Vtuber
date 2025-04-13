@@ -90,6 +90,7 @@ live2d_actuator:
 # 配置MaiBot Core
 maibot_core_connector:
   ws_url: "ws://localhost:8000/ws" # 连接MaiBot Core的Websocket地址
+  platform: "MaiBot-Vtuber" # 平台标识
   heartbeat_interval: 30 # 心跳间隔，单位为秒
   max_reconnect_attempts: 10 # 最大重连次数
   reconnect_interval: 5.0 # 重连间隔，单位为秒

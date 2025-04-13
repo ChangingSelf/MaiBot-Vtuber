@@ -90,13 +90,83 @@ async def simulate_input(context: BrainContext) -> None:
     # 模拟弹幕输入
     logger.info("模拟弹幕输入...")
 
-    platform = context.config.get("system", {}).get("platform", "MaiBot-Vtuber")
+    # 从maibot_core_connector配置中获取平台标识，确保与连接器使用相同的平台
+    platform = context.config.get("maibot_core_connector", {}).get("platform", "MaiBot-Vtuber")
+    logger.debug(f"使用平台标识: {platform}")
 
     test_messages = [
-        {"user": "用户1", "content": "你好，MaiBot！", "platform": platform},
-        {"user": "用户2", "content": "这是一条测试弹幕", "platform": platform},
-        {"user": "用户3", "content": "我好开心啊！", "platform": platform},
-        {"user": "管理员", "content": "!status", "platform": platform},
+        {
+            "user_info": {
+                "user_id": "user1",
+                "user_nickname": "用户1",
+            },
+            "group_info": {
+                "group_id": "test_group",
+                "group_name": "测试群组",
+            },
+            "message_id": "msg1",
+            "raw_message": "你好，MaiBot！",
+            "message_type": "text",
+            "message_content": "你好，MaiBot！",
+            "content": "你好，MaiBot！",
+            "user": "用户1",
+            "time": int(asyncio.get_event_loop().time()),
+            "platform": platform,
+        },
+        {
+            "user_info": {
+                "user_id": "user2",
+                "user_nickname": "用户2",
+            },
+            "group_info": {
+                "group_id": "test_group",
+                "group_name": "测试群组",
+            },
+            "message_id": "msg2",
+            "raw_message": "这是一条测试弹幕",
+            "message_type": "text",
+            "message_content": "这是一条测试弹幕",
+            "content": "这是一条测试弹幕",
+            "user": "用户2",
+            "time": int(asyncio.get_event_loop().time()),
+            "platform": platform,
+        },
+        {
+            "user_info": {
+                "user_id": "user3",
+                "user_nickname": "用户3",
+            },
+            "group_info": {
+                "group_id": "test_group",
+                "group_name": "测试群组",
+            },
+            "message_id": "msg3",
+            "raw_message": "我好开心啊！",
+            "message_type": "text",
+            "message_content": "我好开心啊！",
+            "content": "我好开心啊！",
+            "user": "用户3",
+            "time": int(asyncio.get_event_loop().time()),
+            "platform": platform,
+        },
+        {
+            "user_info": {
+                "user_id": "admin",
+                "user_nickname": "管理员",
+            },
+            "group_info": None,
+            "message_id": "msg4",
+            "raw_message": "!status",
+            "message_type": "text",
+            "message_content": "!status",
+            "content": "!status",
+            "user": "管理员",
+            "time": int(asyncio.get_event_loop().time()),
+            "platform": platform,
+            "type": "command",
+            "command": "status",
+            "args": {},
+        },
     ]
 
     for msg in test_messages:
@@ -127,6 +197,7 @@ async def main() -> None:
 
         # 测试模式
         if args.test:
+            await asyncio.sleep(2)  # 等待连接完成
             await simulate_input(context)
             await asyncio.sleep(5)  # 等待测试完成
             # await context.stop()
