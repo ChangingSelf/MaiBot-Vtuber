@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 import logging
 import time
 
@@ -22,61 +22,117 @@ class SignalAdapter:
     """信号适配器 - 负责转换内部神经信号和外部消息格式"""
 
     @staticmethod
-    def to_neural_signal(message: Dict[str, Any]) -> Optional[NeuralSignal]:
-        """将外部消息转换为神经信号"""
+    def to_neural_signal(message: MessageBase) -> Optional[NeuralSignal]:
+        """将MessageBase对象转换为神经信号
+
+        Args:
+            message: MessageBase消息对象
+
+        Returns:
+            转换后的神经信号，如果转换失败则返回None
+        """
         try:
-            # 解析消息类型
-            msg_type = message.get("type", "unknown")
+            message_info = message.message_info
+            message_segment = message.message_segment
+
+            # 构建基本消息数据
+            message_data = {
+                # 基本信息
+                "platform": message_info.platform,
+                "message_id": message_info.message_id,
+                "time": message_info.time,
+                # 消息内容
+                "raw_message": message.raw_message,
+                "message_type": message_segment.type,
+                "message_content": message_segment.data,
+                "content": message_segment.data,
+            }
+
+            # 添加用户信息
+            if message_info.user_info:
+                message_data["user"] = message_info.user_info.user_nickname or "unknown"
+                message_data["user_id"] = message_info.user_info.user_id or ""
+                message_data["user_info"] = message_info.user_info.to_dict()
+            else:
+                message_data["user"] = "unknown"
+                message_data["user_id"] = ""
+
+            # 添加群组信息
+            if message_info.group_info:
+                message_data["group_info"] = message_info.group_info.to_dict()
+                message_data["group_id"] = message_info.group_info.group_id
+                message_data["group_name"] = message_info.group_info.group_name
+
+            # 判断消息类型
+            msg_type = "danmaku"  # 默认类型
+
+            # 检查是否为命令
+            if message_segment.type == "text" and message.raw_message and message.raw_message.startswith("!"):
+                msg_type = "command"
+                command_parts = message.raw_message[1:].split(maxsplit=1)
+                message_data["command"] = command_parts[0] if command_parts else ""
+                message_data["args"] = command_parts[1] if len(command_parts) > 1 else ""
+            # 检查其他特殊类型
+            elif message_segment.type != "text":
+                msg_type = message_segment.type
+
+            message_data["type"] = msg_type
+
+            logger.debug(f"消息内容: {message_data}")
 
             # 根据消息类型创建对应的神经信号
             if msg_type == "danmaku":
                 return DanmakuSignal(
                     source="external",
-                    platform=message.get("platform", "unknown"),
-                    user=message.get("user", "anonymous"),
-                    content=message.get("content", ""),
-                    raw_input=message,
+                    platform=message_data.get("platform", "unknown"),
+                    user=message_data.get("user", "anonymous"),
+                    content=message_data.get("content", ""),
+                    raw_input=message_data,
                 )
             elif msg_type == "command":
                 return CommandSignal(
                     source="external",
-                    command=message.get("command", ""),
-                    args=message.get("args", {}),
-                    user=message.get("user", "admin"),
-                    raw_input=message,
+                    command=message_data.get("command", ""),
+                    args=message_data.get("args", ""),
+                    user=message_data.get("user", "admin"),
+                    raw_input=message_data,
                 )
             elif msg_type == "subtitle":
                 return SubtitleSignal(
                     source="external",
-                    text=message.get("text", ""),
-                    duration=message.get("duration", 5.0),
-                    style=message.get("style", {}),
+                    text=message_data.get("text", ""),
+                    duration=message_data.get("duration", 5.0),
+                    style=message_data.get("style", {}),
                 )
             elif msg_type == "live2d":
                 return Live2DSignal(
                     source="external",
-                    expression=message.get("expression"),
-                    motion=message.get("motion"),
-                    parameters=message.get("parameters", {}),
-                    duration=message.get("duration", 3.0),
+                    expression=message_data.get("expression"),
+                    motion=message_data.get("motion"),
+                    parameters=message_data.get("parameters", {}),
+                    duration=message_data.get("duration", 3.0),
+                )
+            elif msg_type == "image":
+                return DanmakuSignal(
+                    source="external",
+                    platform=message_data.get("platform", "unknown"),
+                    user=message_data.get("user", "anonymous"),
+                    content=f"[图片]",
+                    raw_input=message_data,
                 )
             else:
-                # 如果是未知类型，尝试根据消息内容推断
-                if "content" in message and "user" in message:
-                    return DanmakuSignal(
-                        source="external",
-                        platform="unknown",
-                        user=message.get("user", "anonymous"),
-                        content=message.get("content", ""),
-                        raw_input=message,
-                    )
-
-                logger.warning(f"未知消息类型: {msg_type}, 消息内容: {message}")
-                return None
+                # 如果是未知类型，但有内容和用户信息，创建弹幕信号
+                return DanmakuSignal(
+                    source="external",
+                    platform=message_data.get("platform", "unknown"),
+                    user=message_data.get("user", "anonymous"),
+                    content=message_data.get("content", ""),
+                    raw_input=message_data,
+                )
 
         except Exception as e:
             logger.error(f"转换消息到神经信号时出错: {e}")
-            logger.debug(f"问题消息: {message}")
+            logger.debug(f"问题消息: {message.to_dict() if hasattr(message, 'to_dict') else message}")
             return None
 
     @staticmethod

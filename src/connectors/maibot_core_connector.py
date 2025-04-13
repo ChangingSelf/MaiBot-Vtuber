@@ -119,47 +119,26 @@ class MaiBotCoreConnector(Connector):
             raw_message_base_str: 接收到的原始消息
         """
         try:
+            # 安全地记录日志，避免切片错误
+            try:
+                log_message = (
+                    str(raw_message_base_str)[:100] + "..."
+                    if len(str(raw_message_base_str)) > 100
+                    else str(raw_message_base_str)
+                )
+                logger.debug(f"从MaiBot Core接收到消息: {log_message}")
+            except Exception as e:
+                logger.debug(f"记录消息日志时出错: {type(e).__name__}, 消息类型: {type(raw_message_base_str)}")
+
             # 解析消息
             raw_message_base: MessageBase = MessageBase.from_dict(raw_message_base_str)
-            message_info: BaseMessageInfo = raw_message_base.message_info
-            message_segment: Seg = raw_message_base.message_segment
-
-            logger.debug(f"从MaiBot Core接收到消息: {raw_message_base_str[:100]}...")
 
             # 更新统计信息
             self.stats["messages_received"] += 1
             self.stats["last_message_time"] = time.time()
 
-            # 将消息转换为神经信号
-            message_data = {
-                "raw_message": raw_message_base.raw_message,
-                "message_type": message_segment.type,
-                "message_content": message_segment.data,
-                "user_info": message_info.user_info.to_dict() if message_info.user_info else None,
-                "group_info": message_info.group_info.to_dict() if message_info.group_info else None,
-                "time": message_info.time,
-                "message_id": message_info.message_id,
-            }
-
-            # 将消息转换为神经信号并传递
-            await self.sense(message_data)
-
-        except Exception as e:
-            logger.error(f"处理消息时出错: {self.name}, 错误: {e}")
-            self.stats["errors"] += 1
-
-    async def sense(self, input_data: Dict[str, Any]) -> None:
-        """处理从MaiBot Core接收到的消息
-
-        Args:
-            input_data: 接收到的消息数据
-        """
-        if not self.is_active:
-            return
-
-        try:
-            # 将消息转换为神经信号
-            signal = self.signal_adapter.to_neural_signal(input_data)
+            # 直接使用SignalAdapter将MessageBase转换为神经信号
+            signal = self.signal_adapter.to_neural_signal(raw_message_base)
 
             if signal:
                 # 将信号传递到神经突触网络
@@ -167,10 +146,44 @@ class MaiBotCoreConnector(Connector):
                 logger.debug(f"从MaiBot Core接收到消息并转换为信号: {signal.id}, 类型: {signal.signal_type.name}")
                 self.stats["messages_processed"] += 1
             else:
-                logger.warning(f"无法将消息转换为神经信号: {input_data}")
+                # 安全地记录警告日志
+                logger.warning("无法将消息转换为神经信号")
+
         except Exception as e:
-            logger.error(f"处理接收到的消息时出错: {self.name}, 错误: {e}")
+            # 记录错误信息，但不尝试打印raw_message_base_str
+            logger.error(f"处理消息时出错: {self.name}, 错误类型: {type(e).__name__}, 错误信息: {str(e)}")
             self.stats["errors"] += 1
+
+    async def sense(self, input_data: Dict[str, Any]) -> None:
+        """实现抽象方法以符合Connector接口
+
+        注意：在MaiBotCoreConnector中，实际处理消息的是_process_message方法，
+        sense方法仅作为接口实现，通常不会被直接调用。
+        TODO 之后修
+
+        Args:
+            input_data: 接收到的消息数据
+        """
+        pass
+        # # 所有实际处理已在_process_message中完成
+        # # 此方法保留以满足Connector接口要求
+        # logger.debug(f"sense方法被调用，但不是MaiBotCore的主要处理路径: {self.name}")
+
+        # if not self.is_active:
+        #     return
+
+        # try:
+        #     # 将消息转换为神经信号
+        #     signal = self.signal_adapter.to_neural_signal(input_data)
+
+        #     if signal:
+        #         # 将信号传递到神经突触网络
+        #         await self._transmit_signal(signal)
+        #         logger.debug(f"通过sense方法处理消息: {signal.id}, 类型: {signal.signal_type.name}")
+        #         self.stats["messages_processed"] += 1
+        # except Exception as e:
+        #     logger.error(f"sense方法处理消息时出错: {self.name}, 错误: {e}")
+        #     self.stats["errors"] += 1
 
     async def respond(self, signal: NeuralSignal) -> None:
         """响应神经信号，将信号转换为消息并发送到MaiBot Core
