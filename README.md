@@ -1,5 +1,5 @@
 
-# MaiBurger
+# Amaidesu
 ### -project alphia
 <br />
 <div align="center">
@@ -20,5 +20,5 @@
 
 - 懒得写了
 
-- 想加入开发可以找913620659
+- 想加入开发~~~可以找~~~加入不了
 
