@@ -7,6 +7,33 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Ruff Format
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Format Code
         run: ruff format .
+
+      # - name: Commit and Push Changes (Optional) # 自动格式化后提交并推送更改
+      #   if: github.event_name == 'push'  # 仅在 Push 时提交更改
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: |
+      #     # 配置 Git 用户信息
+      #     git config --global user.name "github-actions[bot]"
+      #     git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      #     # 检查是否有格式化修改
+      #     if git diff --quiet; then
+      #       echo "No changes to commit."
+      #     else
+      #       # 提交并推送格式化后的代码
+      #       git add .
+      #       git commit -m "Auto-format code via Ruff"
+      #       git push origin HEAD:$GITHUB_REF
+      #     fi
 
