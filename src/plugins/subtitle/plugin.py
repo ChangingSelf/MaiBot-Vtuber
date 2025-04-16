@@ -1,4 +1,4 @@
-# VUP-NEXT Subtitle Plugin (Screen Display): src/plugins/subtitle/plugin.py
+# Amaidesu Subtitle Plugin (Screen Display): src/plugins/subtitle/plugin.py
 
 import asyncio
 import logging
@@ -16,7 +16,7 @@ except ImportError:
     tk = None # 标记 tkinter 不可用
 
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from core.amaidesu_core import AmaidesuCore
 
 # --- Helper Function ---
 def load_plugin_config() -> Dict[str, Any]:
@@ -38,9 +38,9 @@ class SubtitlePlugin(BasePlugin):
     Receives speech text from other services (like TTS) 
     and displays it in a dedicated, always-on-top window using Tkinter.
     """
-    _is_vup_next_plugin: bool = True
+    _is_amaidesu_plugin: bool = True
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.logger = logging.getLogger(__name__) 
         
@@ -85,7 +85,7 @@ class SubtitlePlugin(BasePlugin):
     def _run_gui(self):
         try:
             self.root = tk.Tk()
-            self.root.title("VUP-NEXT Subtitle")
+            self.root.title("Amaidesu Subtitle")
             self.root.protocol("WM_DELETE_WINDOW", self._on_closing) # 处理关闭按钮
 
             # --- 窗口属性 (模仿 voice_subtitle.py) ---
@@ -226,7 +226,7 @@ class SubtitlePlugin(BasePlugin):
             except Exception as e:
                  self.logger.warning(f"销毁 subtitle 窗口时出错: {e}", exc_info=True)
         self.root = None # 标记窗口已关闭
-        # 注意：这里不直接退出 VUP-NEXT，只是关闭字幕窗口
+        # 注意：这里不直接退出 Amaidesu，只是关闭字幕窗口
 
     # --- Plugin Lifecycle ---
     async def setup(self):

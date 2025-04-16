@@ -9,9 +9,9 @@ from maim_message import Router, RouteConfig, TargetConfig, MessageBase
 from src.utils.logger import logger
 
 
-class VupNextCore:
+class AmaidesuCore:
     """
-    VUP-NEXT 核心模块，负责与 MaiCore 的通信以及消息的分发。
+    Amaidesu 核心模块，负责与 MaiCore 的通信以及消息的分发。
     """
 
     def __init__(
@@ -24,19 +24,19 @@ class VupNextCore:
         http_callback_path: str = "/callback",
     ):
         """
-        初始化 VUP-NEXT Core。
+        初始化 Amaidesu Core。
 
         Args:
-            platform: 平台标识符 (例如 "vup_next_default")。
+            platform: 平台标识符 (例如 "amaidesu_default")。
             maicore_host: MaiCore WebSocket 服务器的主机地址。
             maicore_port: MaiCore WebSocket 服务器的端口。
             http_host: (可选) 监听 HTTP 回调的主机地址。如果为 None，则不启动 HTTP 服务器。
             http_port: (可选) 监听 HTTP 回调的端口。
             http_callback_path: (可选) 接收 HTTP 回调的路径。
         """
-        # 初始化 VupNextCore 自己的 logger
+        # 初始化 AmaidesuCore 自己的 logger
         self.logger = logger
-        self.logger.debug("VupNextCore 初始化开始")
+        self.logger.debug("AmaidesuCore 初始化开始")
 
         self.platform = platform
         self.ws_url = f"ws://{maicore_host}:{maicore_port}/ws"
@@ -63,7 +63,7 @@ class VupNextCore:
         self._setup_router()
         if self._http_host and self._http_port:
             self._setup_http_server()
-        self.logger.debug("VupNextCore 初始化完成")
+        self.logger.debug("AmaidesuCore 初始化完成")
 
     def _setup_router(self):
         """配置 maim_message Router。"""

@@ -8,7 +8,7 @@ import asyncio
 
 # Use absolute imports relative to the src directory
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from core.amaidesu_core import AmaidesuCore
 from src.utils.logger import logger
 
 
@@ -56,9 +56,9 @@ class PromptContextPlugin(BasePlugin):
     can retrieve the aggregated context.
     """
 
-    _is_vup_next_plugin: bool = True
+    _is_amaidesu_plugin: bool = True
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.logger = logger
         self.config = plugin_config.get("prompt_context", {})

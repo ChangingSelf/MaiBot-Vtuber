@@ -1,8 +1,8 @@
-# VUP-NEXT 配置文件
+# Amaidesu 配置文件
 
 [general]
-# VUP-NEXT 在 MaiCore 中注册的平台标识符
-platform_id = "vup_next_dev"
+# Amaidesu 在 MaiCore 中注册的平台标识符
+platform_id = "amaidesu_default"
 
 [maicore]
 # MaiCore WebSocket 服务器地址

@@ -1,4 +1,5 @@
-# VUP-NEXT STT Plugin Configuration: src/plugins/stt/config.toml
+# Amaidesu STT Plugin Configuration: src/plugins/stt/config.toml
+# -*- coding: utf-8 -*-
 
 [iflytek_asr]
 # 讯飞开放平台 ASR 配置
@@ -104,4 +105,4 @@ reasoning_prompt_main = '''
 '''
 
 # 附加配置
-# additional_config = { is_from_adapter = false, adapter_type = "vup_next_stt", original_type = "text", interaction_mode = "direct_command", maimcore_reply_probability_gain = 1 } # 添加 maimcore_reply_probability_gain
+# additional_config = { is_from_adapter = false, adapter_type = "amaidesu_stt", original_type = "text", interaction_mode = "direct_command", maimcore_reply_probability_gain = 1 } # 添加 maimcore_reply_probability_gain

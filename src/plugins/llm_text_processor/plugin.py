@@ -20,9 +20,9 @@ except ModuleNotFoundError:
         print("依赖缺失: 请运行 'pip install toml' 来加载 LLM 文本处理器插件配置。", file=sys.stderr)
         tomllib = None
 
-# --- VUP-NEXT Core Imports ---
+# --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from src.core.amaidesu_core import AmaidesuCore
 from src.utils.logger import logger
 
 # --- Plugin Configuration Loading ---
@@ -54,19 +54,19 @@ class LLMTextProcessorPlugin(BasePlugin):
     Plugin for processing text using LLM (Language Model).
     """
 
-    _is_vup_next_plugin: bool = True
+    _is_amaidesu_plugin: bool = True
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.logger = logger
-        self.config = plugin_config.get("llm_text_processor", {})
+        loaded_config = load_plugin_config()
+        self.config = loaded_config.get("llm_text_processor", {})
         self.enabled = self.config.get("enabled", True)
 
         if not self.enabled:
             self.logger.warning("LLMTextProcessorPlugin is disabled in the configuration.")
             return
 
-        # --- Initialize AsyncOpenAI Client ---
         try:
             self.client = AsyncOpenAI(
                 base_url=self.base_url,

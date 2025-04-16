@@ -1,4 +1,4 @@
-# VUP-NEXT STT Plugin: src/plugins/stt/plugin.py
+# Amaidesu STT Plugin: src/plugins/stt/plugin.py
 
 import asyncio
 import logging
@@ -51,9 +51,9 @@ except ModuleNotFoundError:
         print("依赖缺失: 请运行 'pip install toml' 来加载 STT 插件配置。", file=sys.stderr)
         tomllib = None
 
-# --- VUP-NEXT Core Imports ---
+# --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
 
 logger = logging.getLogger(__name__)
@@ -87,9 +87,9 @@ STATUS_LAST_FRAME = 2
 
 class STTPlugin(BasePlugin):
     """执行 VAD 和 iFlytek STT，并将结果（可选修正后）发送到 Core。"""
-    _is_vup_next_plugin: bool = True # Plugin marker
+    _is_amaidesu_plugin: bool = True # Plugin marker
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.config = load_plugin_config()
         self.enabled = True # Assume enabled unless dependencies fail
@@ -122,7 +122,7 @@ class STTPlugin(BasePlugin):
                 'enable_template_info': False,
                 'template_name': 'default',
                 'template_default': False,
-                'additional_config': { 'is_from_adapter': True, 'adapter_type': 'vup_next_stt', 'original_type': 'text', 'interaction_mode': 'direct_command' }
+                'additional_config': { 'is_from_adapter': True, 'adapter_type': 'amaidesu_stt', 'original_type': 'text', 'interaction_mode': 'direct_command' }
             }
         else:
              self.logger.info("已加载来自 stt/config.toml 的 [message_config]。")

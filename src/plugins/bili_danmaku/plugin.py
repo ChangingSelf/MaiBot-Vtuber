@@ -3,7 +3,7 @@
 import asyncio
 import time
 import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 # --- Dependency Check & TOML ---
 try:
@@ -19,12 +19,11 @@ except ModuleNotFoundError:
     except ImportError:
         tomllib = None
 
-# --- VUP-NEXT Core Imports ---
+# --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from src.core.amaidesu_core import AmaidesuCore
+from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
 from src.utils.logger import logger
-from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg
-from maim_message.message_base import TemplateInfo
 
 
 # --- Helper Function ---
@@ -54,14 +53,11 @@ def load_plugin_config() -> Dict[str, Any]:
 
 # --- Plugin Class ---
 class BiliDanmakuPlugin(BasePlugin):
-    """
-    Fetches Danmaku from a Bilibili live room via HTTP polling
-    and sends them to the VupNextCore.
-    """
+    """Bilibili 直播弹幕插件，连接到直播间并接收弹幕/礼物等事件。"""
 
-    _is_vup_next_plugin: bool = True
+    _is_amaidesu_plugin: bool = True
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.logger = logger
 

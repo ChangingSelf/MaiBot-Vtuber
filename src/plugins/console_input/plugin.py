@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from typing import Dict, Any, Optional, List
+from abc import ABC, abstractmethod
 
 # --- Dependency Check & TOML ---
 try:
@@ -15,9 +16,9 @@ except ModuleNotFoundError:
         print("依赖缺失: 请运行 'pip install toml' 来加载 Console Input 插件配置。", file=sys.stderr)
         tomllib = None
 
-# --- VUP-NEXT Core Imports ---
+# --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,11 @@ def load_plugin_config() -> Dict[str, Any]:
 
 
 class ConsoleInputPlugin(BasePlugin):
-    """从控制台读取输入并将其作为消息发送到 Core。"""
+    """通过控制台接收用户输入并发送消息的插件"""
 
-    _is_vup_next_plugin: bool = True  # Plugin marker
+    _is_amaidesu_plugin: bool = True  # Plugin marker
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.config = load_plugin_config()
         self.enabled = True

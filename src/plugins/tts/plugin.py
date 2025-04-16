@@ -1,4 +1,4 @@
-# VUP-NEXT TTS Plugin: src/plugins/tts/plugin.py
+# Amaidesu TTS Plugin: src/plugins/tts/plugin.py
 
 import asyncio
 import logging
@@ -40,9 +40,9 @@ except ModuleNotFoundError:
         tomllib = None
         dependencies_ok = False
 
-# --- VUP-NEXT Core Imports ---
+# --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
-from core.vup_next_core import VupNextCore
+from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase # Import MessageBase for type hint
 
 logger = logging.getLogger(__name__)
@@ -71,9 +71,9 @@ def load_plugin_config() -> Dict[str, Any]:
 
 class TTSPlugin(BasePlugin):
     """处理文本消息，执行 TTS 播放，可选 Cleanup LLM 和 UDP 广播。"""
-    _is_vup_next_plugin: bool = True # Plugin marker
+    _is_amaidesu_plugin: bool = True # Plugin marker
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         # Note: plugin_config from PluginManager is the global [plugins] config
         # We load our own specific config here.
         super().__init__(core, plugin_config)

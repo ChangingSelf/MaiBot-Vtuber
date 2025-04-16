@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional, Type
 
 # 避免循环导入，使用 TYPE_CHECKING
 if TYPE_CHECKING:
-    from .vup_next_core import VupNextCore
+    from .amaidesu_core import AmaidesuCore
 
 from src.utils.logger import logger
 
@@ -17,14 +17,14 @@ class BasePlugin:
     """所有插件的基础类，定义插件的基本接口。"""
 
     # 添加一个类级别的标记属性
-    _is_vup_next_plugin: bool = True
+    _is_amaidesu_plugin: bool = True
 
-    def __init__(self, core: "VupNextCore", plugin_config: Dict[str, Any]):
+    def __init__(self, core: "AmaidesuCore", plugin_config: Dict[str, Any]):
         """
         初始化插件。
 
         Args:
-            core: VupNextCore 的实例，用于插件与核心交互。
+            core: AmaidesuCore 的实例，用于插件与核心交互。
             plugin_config: 该插件在 config.toml 中的配置。
         """
         self.core = core
@@ -50,12 +50,12 @@ class BasePlugin:
 class PluginManager:
     """负责加载、管理和卸载插件。"""
 
-    def __init__(self, core: "VupNextCore", global_plugin_config: Dict[str, Any]):
+    def __init__(self, core: "AmaidesuCore", global_plugin_config: Dict[str, Any]):
         """
         初始化插件管理器。
 
         Args:
-            core: VupNextCore 实例。
+            core: AmaidesuCore 实例。
             global_plugin_config: config.toml 中 [plugins] 部分的配置。
         """
         self.core = core
@@ -118,7 +118,7 @@ class PluginManager:
                             f"在模块 '{module_import_path}' 中找到入口点 'plugin_entrypoint' 指向: {entrypoint}"
                         )
                         # 检查 entrypoint 是否是类，并且具有我们的标记属性
-                        if inspect.isclass(entrypoint) and getattr(entrypoint, "_is_vup_next_plugin", False):
+                        if inspect.isclass(entrypoint) and getattr(entrypoint, "_is_amaidesu_plugin", False):
                             plugin_class = entrypoint
                             self.logger.debug(f"入口点验证成功 (通过标记属性)，插件类为: {plugin_class.__name__}")
                         else:

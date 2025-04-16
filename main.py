@@ -15,7 +15,7 @@ except ModuleNotFoundError:
         sys.exit(1)
 
 # 从 src 目录导入核心类和插件管理器
-from src.core.vup_next_core import VupNextCore
+from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import PluginManager
 from src.utils.logger import logger
 
@@ -47,7 +47,7 @@ async def main():
     """应用程序主入口点。"""
 
     # 创建命令行参数解析器
-    parser = argparse.ArgumentParser(description="VUP-NEXT 应用程序")
+    parser = argparse.ArgumentParser(description="Amaidesu 应用程序")
     # 添加 --debug 参数，用于控制日志级别
     parser.add_argument("--debug", action="store_true", help="启用 DEBUG 级别日志输出")
     # 解析命令行参数
@@ -64,7 +64,7 @@ async def main():
         )
         logger.info("已启用 DEBUG 日志级别。")
 
-    logger.info("启动 VUP-NEXT 应用程序...")
+    logger.info("启动 Amaidesu 应用程序...")
 
     # --- 加载配置 ---
     config = load_config()
@@ -74,7 +74,7 @@ async def main():
     maicore_config = config.get("maicore", {})
     http_config = config.get("http_server", {})
 
-    platform_id = general_config.get("platform_id", "vup_next_default")
+    platform_id = general_config.get("platform_id", "amaidesu_default")
 
     maicore_host = maicore_config.get("host", "127.0.0.1")
     maicore_port = maicore_config.get("port", 8000)
@@ -86,7 +86,7 @@ async def main():
     http_callback_path = http_config.get("callback_path", "/maicore_callback")
 
     # --- 初始化核心 ---
-    core = VupNextCore(
+    core = AmaidesuCore(
         platform=platform_id,
         maicore_host=maicore_host,
         maicore_port=maicore_port,
@@ -100,7 +100,7 @@ async def main():
     logger.info("加载插件...")
     plugin_manager = PluginManager(core, config.get("plugins", {}))  # 传入插件全局配置
     # 构建插件目录的绝对或相对路径
-    # 这里假设 main.py 在 VUP-NEXT 根目录运行
+    # 这里假设 main.py 在 Amaidesu 根目录运行
     plugin_dir = os.path.join(os.path.dirname(__file__), "src", "plugins")
     await plugin_manager.load_plugins(plugin_dir)
     logger.info("插件加载完成。")
@@ -135,7 +135,7 @@ async def main():
 
     logger.info("正在关闭核心服务...")
     await core.disconnect()
-    logger.info("VUP-NEXT 应用程序已关闭。")
+    logger.info("Amaidesu 应用程序已关闭。")
 
 
 if __name__ == "__main__":
