@@ -1,0 +1,30 @@
+# src/plugins/bili_danmaku/config.toml
+
+[bili_danmaku] # 统一的插件配置段
+
+
+# --- 插件行为设置 ---
+room_id = 10055155
+poll_interval = 3
+
+# --- 消息构造默认值 ---
+# (会被实际弹幕信息覆盖)
+default_user_id = "bili_user" 
+default_user_nickname = "B站观众"
+user_cardname = ""      
+
+# 群组信息设置
+enable_group_info = true
+group_id = 0            
+group_name = "bili_live" 
+
+# 格式信息设置
+content_format = ["text"] 
+accept_format = ["text"]  
+
+# Template Info 设置 
+enable_template_info = false
+template_items = { reasoning_prompt_main = "..." }
+
+# 附加配置设置
+additional_config = { source_platform = "bilibili_live", source_plugin="bili_danmaku" } 

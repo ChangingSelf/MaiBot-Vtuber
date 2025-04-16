@@ -1,8 +1,8 @@
-# amaidesu 配置文件
+# VUP-NEXT 配置文件
 
 [general]
-# 在 MaiCore 中注册的平台标识符
-platform_id = "amaidesu"
+# VUP-NEXT 在 MaiCore 中注册的平台标识符
+platform_id = "vup_next_dev"
 
 [maicore]
 # MaiCore WebSocket 服务器地址
@@ -25,7 +25,9 @@ callback_path = "/maicore_callback"
 [plugins]
 enable_console_input = true
 enable_tts = true
-enable_stt = true
+enable_stt = false
 enable_llm_text_precessor = true
 enable_prompt_context = true
-enable_vtube_studio = true
+enable_vtube_studio = false
+enable_bilidanmaku = true
+enable_subtitle = true

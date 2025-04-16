@@ -7,6 +7,7 @@ import sys
 import socket
 import tempfile
 from typing import Dict, Any, Optional
+import numpy as np # 确保导入 numpy
 
 # --- Dependencies Check (Inform User) ---
 # Try importing required libraries and inform the user if they are missing.
@@ -215,7 +216,7 @@ class TTSPlugin(BasePlugin):
                 self.logger.warning(f"发送 TTS 内容到 UDP 监听器失败: {e}")
 
     async def _speak(self, text: str):
-        """执行 Edge TTS 合成和播放 (来自 tts_service.py)。"""
+        """执行 Edge TTS 合成和播放，并通知 Subtitle Service。"""
         if 'edge_tts' not in globals() or 'sf' not in globals() or 'sd' not in globals():
             self.logger.error("缺少必要的 TTS 或音频库 (edge_tts, soundfile, sounddevice)，无法播放。")
             return
@@ -224,7 +225,9 @@ class TTSPlugin(BasePlugin):
         async with self.tts_lock:
             self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
             tmp_filename = None
+            duration_seconds: Optional[float] = None # 初始化时长变量
             try:
+                # --- TTS 合成 ---
                 self.logger.info(f"TTS 正在合成: {text[:30]}...")
                 communicate = edge_tts.Communicate(text, self.voice)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=tempfile.gettempdir()) as tmp_file:
@@ -233,9 +236,31 @@ class TTSPlugin(BasePlugin):
                 await asyncio.to_thread(communicate.save_sync, tmp_filename)
                 self.logger.debug(f"音频已保存到临时文件: {tmp_filename}")
 
+                # --- 读取音频并计算时长 ---
                 audio_data, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype='float32')
                 self.logger.info(f"读取音频完成，采样率: {samplerate} Hz")
-                
+                if samplerate > 0 and isinstance(audio_data, np.ndarray):
+                    duration_seconds = len(audio_data) / samplerate
+                    self.logger.info(f"计算得到音频时长: {duration_seconds:.3f} 秒")
+                else:
+                     self.logger.warning("无法计算音频时长 (采样率或数据无效)")
+
+                # --- 通知 Subtitle Service (如果获取到时长) ---
+                if duration_seconds is not None and duration_seconds > 0:
+                    subtitle_service = self.core.get_service("subtitle_service")
+                    if subtitle_service:
+                        self.logger.debug("找到 subtitle_service，准备记录语音信息...")
+                        try:
+                            # 异步调用，不阻塞播放
+                            asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
+                        except AttributeError:
+                             self.logger.error("获取到的 'subtitle_service' 没有 'record_speech' 方法。")
+                        except Exception as e:
+                             self.logger.error(f"调用 subtitle_service.record_speech 时出错: {e}", exc_info=True)
+                    # else: # 可以选择性记录服务未找到
+                    #    self.logger.debug("未找到 subtitle_service。")
+
+                # --- 播放音频 --- 
                 self.logger.info(f"开始播放音频 (设备索引: {self.output_device_index})...")
                 await asyncio.to_thread(sd.play, audio_data, samplerate=samplerate, device=self.output_device_index, blocking=True)
                 self.logger.info("TTS 播放完成。")
@@ -248,11 +273,10 @@ class TTSPlugin(BasePlugin):
             finally:
                 if tmp_filename and os.path.exists(tmp_filename):
                     try:
-                        # Run os.remove in a thread to avoid blocking
-                        await asyncio.to_thread(os.remove, tmp_filename)
+                        os.remove(tmp_filename)
                         self.logger.debug(f"已删除临时文件: {tmp_filename}")
-                    except Exception as e:
-                        self.logger.warning(f"删除临时音频文件失败: {e}")
+                    except Exception as e_rem:
+                        self.logger.warning(f"删除临时文件 {tmp_filename} 时出错: {e_rem}")
                 self.logger.debug(f"释放 TTS 锁: '{text[:30]}...'")
 
 # --- Plugin Entry Point ---
