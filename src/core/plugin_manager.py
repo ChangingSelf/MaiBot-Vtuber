@@ -1,7 +1,6 @@
 import asyncio
 import importlib
 import inspect
-import logging
 import os
 import sys
 from typing import TYPE_CHECKING, Dict, Any, Optional, Type
@@ -10,15 +9,17 @@ from typing import TYPE_CHECKING, Dict, Any, Optional, Type
 if TYPE_CHECKING:
     from .vup_next_core import VupNextCore
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import logger
+
 
 # --- 插件基类 (可选但推荐) ---
 class BasePlugin:
     """所有插件的基础类，定义插件的基本接口。"""
+
     # 添加一个类级别的标记属性
     _is_vup_next_plugin: bool = True
 
-    def __init__(self, core: 'VupNextCore', plugin_config: Dict[str, Any]):
+    def __init__(self, core: "VupNextCore", plugin_config: Dict[str, Any]):
         """
         初始化插件。
 
@@ -28,7 +29,7 @@ class BasePlugin:
         """
         self.core = core
         self.plugin_config = plugin_config
-        self.logger = logging.getLogger(f"Plugin.{self.__class__.__name__}")
+        self.logger = logger
         self.logger.info(f"初始化插件: {self.__class__.__name__}")
 
     async def setup(self):
@@ -45,9 +46,11 @@ class BasePlugin:
         # 子类应在此处实现清理逻辑
         pass
 
+
 class PluginManager:
     """负责加载、管理和卸载插件。"""
-    def __init__(self, core: 'VupNextCore', global_plugin_config: Dict[str, Any]):
+
+    def __init__(self, core: "VupNextCore", global_plugin_config: Dict[str, Any]):
         """
         初始化插件管理器。
 
@@ -59,7 +62,7 @@ class PluginManager:
         self.global_plugin_config = global_plugin_config
         self.loaded_plugins: Dict[str, BasePlugin] = {}
         # 初始化 PluginManager 自己的 logger
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
         self.logger.debug("PluginManager 初始化完成")
 
     async def load_plugins(self, plugin_dir: str = "src/plugins"):
@@ -86,8 +89,8 @@ class PluginManager:
                 self.logger.debug(f"检测到潜在插件目录: {plugin_name}")
 
                 if not os.path.exists(plugin_module_file):
-                     self.logger.warning(f"在插件目录 '{plugin_name}' 中未找到主文件 'plugin.py'，跳过。")
-                     continue
+                    self.logger.warning(f"在插件目录 '{plugin_name}' 中未找到主文件 'plugin.py'，跳过。")
+                    continue
 
                 # --- 检查插件是否在配置中启用 ---
                 is_enabled_key = f"enable_{plugin_name}"
@@ -99,7 +102,7 @@ class PluginManager:
                     continue
 
                 # --- 加载插件模块 ---
-                module = None # 初始化为 None
+                module = None  # 初始化为 None
                 try:
                     module_import_path = f"plugins.{plugin_name}.plugin"
                     self.logger.debug(f"尝试导入模块: {module_import_path}")
@@ -108,19 +111,23 @@ class PluginManager:
 
                     # --- 查找并实例化插件类 (使用入口点) ---
                     plugin_class: Optional[Type[BasePlugin]] = None
-                    entrypoint = None # 初始化为 None
-                    if hasattr(module, 'plugin_entrypoint'):
-                        entrypoint = getattr(module, 'plugin_entrypoint')
-                        self.logger.debug(f"在模块 '{module_import_path}' 中找到入口点 'plugin_entrypoint' 指向: {entrypoint}")
+                    entrypoint = None  # 初始化为 None
+                    if hasattr(module, "plugin_entrypoint"):
+                        entrypoint = getattr(module, "plugin_entrypoint")
+                        self.logger.debug(
+                            f"在模块 '{module_import_path}' 中找到入口点 'plugin_entrypoint' 指向: {entrypoint}"
+                        )
                         # 检查 entrypoint 是否是类，并且具有我们的标记属性
-                        if inspect.isclass(entrypoint) and getattr(entrypoint, '_is_vup_next_plugin', False):
+                        if inspect.isclass(entrypoint) and getattr(entrypoint, "_is_vup_next_plugin", False):
                             plugin_class = entrypoint
                             self.logger.debug(f"入口点验证成功 (通过标记属性)，插件类为: {plugin_class.__name__}")
                         else:
-                            self.logger.warning(f"模块 '{module_import_path}' 中的 'plugin_entrypoint' ({entrypoint}) 不是有效的插件类 (缺少标记或不是类)。")
+                            self.logger.warning(
+                                f"模块 '{module_import_path}' 中的 'plugin_entrypoint' ({entrypoint}) 不是有效的插件类 (缺少标记或不是类)。"
+                            )
                     else:
-                         self.logger.warning(f"在模块 '{module_import_path}' 中未找到入口点 'plugin_entrypoint'。")
-                    
+                        self.logger.warning(f"在模块 '{module_import_path}' 中未找到入口点 'plugin_entrypoint'。")
+
                     if plugin_class:
                         plugin_specific_config = self.global_plugin_config.get(plugin_name, {})
                         self.logger.debug(f"为插件 '{plugin_class.__name__}' 加载特定配置: {plugin_specific_config}")
@@ -135,7 +142,9 @@ class PluginManager:
                         self.logger.warning(f"未能为模块 '{module_import_path}' 找到并验证有效的插件类。")
 
                 except ImportError as e:
-                    self.logger.error(f"导入插件模块 '{module_import_path if module else plugin_name}' 失败: {e}", exc_info=True)
+                    self.logger.error(
+                        f"导入插件模块 '{module_import_path if module else plugin_name}' 失败: {e}", exc_info=True
+                    )
                 except Exception as e:
                     self.logger.error(f"加载或设置插件 '{plugin_name}' 时发生错误: {e}", exc_info=True)
             # else: # 可以选择性地记录非插件目录的项
@@ -157,9 +166,9 @@ class PluginManager:
         if unload_tasks:
             results = await asyncio.gather(*unload_tasks, return_exceptions=True)
             for i, task in enumerate(unload_tasks):
-                 plugin_name = list(self.loaded_plugins.keys())[i]
-                 if isinstance(results[i], Exception):
-                      self.logger.error(f"清理插件 '{plugin_name}' 时出错: {results[i]}", exc_info=results[i])
-        
+                plugin_name = list(self.loaded_plugins.keys())[i]
+                if isinstance(results[i], Exception):
+                    self.logger.error(f"清理插件 '{plugin_name}' 时出错: {results[i]}", exc_info=results[i])
+
         self.loaded_plugins.clear()
-        self.logger.info("所有插件已卸载。") 
+        self.logger.info("所有插件已卸载。")

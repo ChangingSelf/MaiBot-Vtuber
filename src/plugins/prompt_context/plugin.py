@@ -1,38 +1,43 @@
 # src/plugins/prompt_context/plugin.py
 
 import logging
-import tomllib # 使用 tomllib (Python 3.11+) 或 toml
+import tomllib  # 使用 tomllib (Python 3.11+) 或 toml
 from typing import Any, Dict, List, Optional, TypedDict
 import os
+import asyncio
 
 # Use absolute imports relative to the src directory
 from core.plugin_manager import BasePlugin
 from core.vup_next_core import VupNextCore
+from src.utils.logger import logger
+
 
 # --- Helper Function ---
 def load_plugin_config() -> Dict[str, Any]:
     """Loads the plugin's configuration from config.toml."""
-    config_path = os.path.join(os.path.dirname(__file__), 'config.toml')
+    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
     try:
-        with open(config_path, 'rb') as f:
+        with open(config_path, "rb") as f:
             # Python 3.11+ use tomllib
-            if hasattr(tomllib, 'load'):
+            if hasattr(tomllib, "load"):
                 return tomllib.load(f)
             else:
                 # Fallback for older Python versions (requires toml package)
                 try:
                     import toml
-                    with open(config_path, 'r', encoding='utf-8') as rf:
-                         return toml.load(rf)
+
+                    with open(config_path, "r", encoding="utf-8") as rf:
+                        return toml.load(rf)
                 except ImportError:
-                     logging.error("Toml package not found. Please install it (`pip install toml`) for Python < 3.11.")
-                     return {}
+                    logging.error("Toml package not found. Please install it (`pip install toml`) for Python < 3.11.")
+                    return {}
                 except FileNotFoundError:
                     logging.warning(f"Configuration file not found at {config_path}")
                     return {}
     except Exception as e:
         logging.error(f"Error loading configuration from {config_path}: {e}", exc_info=True)
         return {}
+
 
 # --- Type Definition for Context Provider Data ---
 class ContextProviderData(TypedDict):
@@ -42,6 +47,7 @@ class ContextProviderData(TypedDict):
     tags: List[str]
     enabled: bool
 
+
 # --- Plugin Class ---
 class PromptContextPlugin(BasePlugin):
     """
@@ -49,26 +55,27 @@ class PromptContextPlugin(BasePlugin):
     Other plugins can register context providers, and message-sending plugins
     can retrieve the aggregated context.
     """
+
     _is_vup_next_plugin: bool = True
 
     def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logging.getLogger(__name__)
-        self.config = plugin_config.get('prompt_context', {})
-        self.formatting_config = plugin_config.get('formatting', {})
-        self.limits_config = plugin_config.get('limits', {})
+        self.logger = logger
+        self.config = plugin_config.get("prompt_context", {})
+        self.formatting_config = plugin_config.get("formatting", {})
+        self.limits_config = plugin_config.get("limits", {})
 
         # --- Store for Context Providers ---
         # Key: provider_name, Value: ContextProviderData
         self._context_providers: Dict[str, ContextProviderData] = {}
 
         # --- Configuration Values ---
-        self.enabled = self.config.get('enabled', True)
-        self.separator = self.formatting_config.get('separator', '\\n').replace('\\n', '\n')
-        self.add_provider_title = self.formatting_config.get('add_provider_title', False)
-        self.title_separator = self.formatting_config.get('title_separator', ': ')
-        self.default_max_length = self.limits_config.get('default_max_length', 1000)
-        self.default_priority = self.limits_config.get('default_priority', 100)
+        self.enabled = self.config.get("enabled", True)
+        self.separator = self.formatting_config.get("separator", "\\n").replace("\\n", "\n")
+        self.add_provider_title = self.formatting_config.get("add_provider_title", False)
+        self.title_separator = self.formatting_config.get("title_separator", ": ")
+        self.default_max_length = self.limits_config.get("default_max_length", 1000)
+        self.default_priority = self.limits_config.get("default_priority", 100)
 
         if not self.enabled:
             self.logger.warning("PromptContextPlugin is disabled in the configuration.")
@@ -95,7 +102,7 @@ class PromptContextPlugin(BasePlugin):
         context_info: str,
         priority: Optional[int] = None,
         tags: Optional[List[str]] = None,
-        enabled: bool = True
+        enabled: bool = True,
     ) -> bool:
         """
         Registers or updates a context provider.
@@ -125,14 +132,18 @@ class PromptContextPlugin(BasePlugin):
             "context_info": context_info,
             "priority": resolved_priority,
             "tags": resolved_tags,
-            "enabled": enabled
+            "enabled": enabled,
         }
         self._context_providers[provider_name] = provider_data
-        self.logger.info(f"Context provider '{provider_name}' registered/updated (Priority: {resolved_priority}, Enabled: {enabled}).")
+        self.logger.info(
+            f"Context provider '{provider_name}' registered/updated (Priority: {resolved_priority}, Enabled: {enabled})."
+        )
         self.logger.debug(f"'{provider_name}' context: '{context_info[:100]}...'")
         return True
 
-    def update_context_info(self, provider_name: str, context_info: Optional[str] = None, enabled: Optional[bool] = None) -> bool:
+    def update_context_info(
+        self, provider_name: str, context_info: Optional[str] = None, enabled: Optional[bool] = None
+    ) -> bool:
         """
         Updates specific fields of an existing context provider.
 
@@ -151,8 +162,8 @@ class PromptContextPlugin(BasePlugin):
             self.logger.warning(f"Cannot update context for non-existent provider: '{provider_name}'")
             return False
         if context_info is None and enabled is None:
-             self.logger.warning(f"No update specified for provider: '{provider_name}'")
-             return False
+            self.logger.warning(f"No update specified for provider: '{provider_name}'")
+            return False
 
         provider = self._context_providers[provider_name]
         updated = False
@@ -178,11 +189,7 @@ class PromptContextPlugin(BasePlugin):
             self.logger.warning(f"Attempted to unregister non-existent provider: '{provider_name}'")
             return False
 
-    def get_formatted_context(
-        self,
-        tags: Optional[List[str]] = None,
-        max_length: Optional[int] = None
-    ) -> str:
+    def get_formatted_context(self, tags: Optional[List[str]] = None, max_length: Optional[int] = None) -> str:
         """
         Retrieves and formats the aggregated context from enabled providers,
         sorted by priority and optionally filtered by tags.
@@ -204,7 +211,7 @@ class PromptContextPlugin(BasePlugin):
         for provider in self._context_providers.values():
             if not provider["enabled"]:
                 continue
-            if tags: # Check if all requested tags are present in the provider's tags
+            if tags:  # Check if all requested tags are present in the provider's tags
                 if not all(tag in provider["tags"] for tag in tags):
                     continue
             eligible_providers.append(provider)
@@ -219,47 +226,50 @@ class PromptContextPlugin(BasePlugin):
 
         for provider in eligible_providers:
             part = provider["context_info"]
-            if not part: # Skip empty context
+            if not part:  # Skip empty context
                 continue
 
             prefix = ""
             if self.add_provider_title:
                 prefix = f"{provider['provider_name']}{self.title_separator}"
-            
+
             full_part = prefix + part
             part_len = len(full_part)
-            
+
             # Check length before adding (including separator if not the first part)
             projected_length = current_length + part_len
-            if context_parts: # If not the first part, account for separator
-                 projected_length += separator_len
-            
+            if context_parts:  # If not the first part, account for separator
+                projected_length += separator_len
+
             if projected_length <= target_max_length:
                 context_parts.append(full_part)
                 current_length = projected_length
             else:
-                 # Try to add a truncated part if possible
-                 remaining_space = target_max_length - current_length
-                 if context_parts: # Account for separator space
-                      remaining_space -= separator_len
-                 
-                 if remaining_space > 3: # Need space for "..."
-                      truncated_part = full_part[:remaining_space - 3] + "..."
-                      context_parts.append(truncated_part)
-                      self.logger.warning(f"Context from '{provider['provider_name']}' was truncated due to max_length.")
-                 else:
-                      self.logger.warning(f"Context from '{provider['provider_name']}' was skipped entirely due to max_length.")
-                 # Stop adding more parts once truncated or skipped
-                 break 
+                # Try to add a truncated part if possible
+                remaining_space = target_max_length - current_length
+                if context_parts:  # Account for separator space
+                    remaining_space -= separator_len
+
+                if remaining_space > 3:  # Need space for "..."
+                    truncated_part = full_part[: remaining_space - 3] + "..."
+                    context_parts.append(truncated_part)
+                    self.logger.warning(f"Context from '{provider['provider_name']}' was truncated due to max_length.")
+                else:
+                    self.logger.warning(
+                        f"Context from '{provider['provider_name']}' was skipped entirely due to max_length."
+                    )
+                # Stop adding more parts once truncated or skipped
+                break
 
         # !!! 添加这两行日志 !!!
         self.logger.debug(f"Eligible providers for context: {[p['provider_name'] for p in eligible_providers]}")
         self.logger.debug(f"Final context parts before join: {context_parts}")
         return self.separator.join(context_parts)
 
+
 # --- Plugin Entry Point ---
 plugin_entrypoint = PromptContextPlugin
 
 # --- Load config globally for the plugin instance ---
 # (PluginManager usually handles passing config, but this ensures it's loaded once)
-# global_plugin_config = load_plugin_config() # Alternative if PM doesn't pass it 
+# global_plugin_config = load_plugin_config() # Alternative if PM doesn't pass it

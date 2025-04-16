@@ -1,23 +1,30 @@
 # src/plugins/bili_danmaku/plugin.py
 
 import asyncio
-import logging
-import tomllib
-import os
 import time
-from typing import Any, Dict, Optional, List
-from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg
-from maim_message.message_base import TemplateInfo  # 假设可以这样导入
+import os
+from typing import Dict, Any, Optional, List
 
-# 尝试导入 aiohttp
+# --- Dependency Check & TOML ---
 try:
     import aiohttp
 except ImportError:
-    aiohttp = None  # 标记不可用
+    aiohttp = None
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import toml as tomllib
+    except ImportError:
+        tomllib = None
+
+# --- VUP-NEXT Core Imports ---
 from core.plugin_manager import BasePlugin
 from core.vup_next_core import VupNextCore
-from maim_message import MessageBase, UserInfo, GroupInfo, FormatInfo, Seg
+from src.utils.logger import logger
+from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg
+from maim_message.message_base import TemplateInfo
 
 
 # --- Helper Function ---
@@ -35,13 +42,13 @@ def load_plugin_config() -> Dict[str, Any]:
                     with open(config_path, "r", encoding="utf-8") as rf:
                         return toml.load(rf)
                 except ImportError:
-                    logging.error("toml package needed for Python < 3.11.")
+                    logger.error("toml package needed for Python < 3.11.")
                     return {}
                 except FileNotFoundError:
-                    logging.warning(f"Config file not found: {config_path}")
+                    logger.warning(f"Config file not found: {config_path}")
                     return {}
     except Exception as e:
-        logging.error(f"Error loading config: {config_path}: {e}", exc_info=True)
+        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
         return {}
 
 
@@ -56,7 +63,7 @@ class BiliDanmakuPlugin(BasePlugin):
 
     def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
 
         # --- 显式加载自己目录下的 config.toml ---
         loaded_config = load_plugin_config()

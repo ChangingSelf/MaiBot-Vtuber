@@ -1,7 +1,6 @@
 # src/plugins/vtube_studio/plugin.py
 
 import asyncio
-import logging
 import tomllib
 import os
 from typing import Any, Dict, Optional
@@ -18,6 +17,7 @@ except ImportError:
 # 从 core 导入基类和核心类
 from core.plugin_manager import BasePlugin
 from core.vup_next_core import VupNextCore
+from src.utils.logger import logger
 
 
 # --- Helper Function ---
@@ -35,13 +35,13 @@ def load_plugin_config() -> Dict[str, Any]:
                     with open(config_path, "r", encoding="utf-8") as rf:
                         return toml.load(rf)
                 except ImportError:
-                    logging.error("toml package needed for Python < 3.11.")
+                    logger.error("toml package needed for Python < 3.11.")
                     return {}
                 except FileNotFoundError:
-                    logging.warning(f"Config file not found: {config_path}")
+                    logger.warning(f"Config file not found: {config_path}")
                     return {}
     except Exception as e:
-        logging.error(f"Error loading config: {config_path}: {e}", exc_info=True)
+        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
         return {}
 
 
@@ -56,7 +56,7 @@ class VTubeStudioPlugin(BasePlugin):
 
     def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
         self.config = plugin_config.get("vtube_studio", {})
         self.enabled = self.config.get("enabled", True)
 
@@ -64,6 +64,9 @@ class VTubeStudioPlugin(BasePlugin):
         self.vts: Optional[pyvts.vts] = None
         self._connection_task: Optional[asyncio.Task] = None
         self._is_connected_and_authenticated = False
+        self._auth_token = None
+        self._auth_task = None
+        self._stop_event = asyncio.Event()
 
         # --- 依赖检查 ---
         if pyvts is None:
@@ -143,6 +146,7 @@ class VTubeStudioPlugin(BasePlugin):
             self.logger.info("Requesting authentication token (will prompt in VTS if needed)...")
             # 这会请求新token或检查/加载现有token
             await self.vts.request_authenticate_token()
+            self._auth_token = self.vts.token
             self.logger.info("Token request process completed.")
 
             # --- 然后再进行认证 ---
