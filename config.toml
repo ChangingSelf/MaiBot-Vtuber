@@ -24,10 +24,10 @@ callback_path = "/maicore_callback"
 
 [plugins]
 enable_console_input = true
-enable_tts = true
+enable_tts = false
 enable_stt = false
 enable_llm_text_precessor = true
 enable_prompt_context = true
-enable_vtube_studio = false
-enable_bilidanmaku = true
+enable_vtube_studio = true
+enable_bilidanmaku = false
 enable_subtitle = true

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
 
+
 def load_plugin_config() -> Dict[str, Any]:
     """Loads the plugin's specific config.toml file."""
     if tomllib is None:
@@ -44,9 +45,11 @@ def load_plugin_config() -> Dict[str, Any]:
         logger.error(f"加载 Console Input 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
     return {}
 
+
 class ConsoleInputPlugin(BasePlugin):
     """从控制台读取输入并将其作为消息发送到 Core。"""
-    _is_vup_next_plugin: bool = True # Plugin marker
+
+    _is_vup_next_plugin: bool = True  # Plugin marker
 
     def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
@@ -58,36 +61,36 @@ class ConsoleInputPlugin(BasePlugin):
             self.logger.error("缺少 TOML 依赖，Console Input 插件禁用。")
             self.enabled = False
             return
-            
+
         # --- Load Message Config Defaults from plugin's config.toml ---
-        self.message_config = self.config.get('message_config', {}) # Expecting a [message_config] section
+        self.message_config = self.config.get("message_config", {})  # Expecting a [message_config] section
         if not self.message_config:
-             self.logger.warning("在 console_input/config.toml 中未找到 [message_config] 配置段，将使用硬编码默认值。")
-             # Define fallback defaults if message_config is missing
-             self.message_config = {
-                'user_id': 'console_user_fallback',
-                'user_nickname': '控制台',
-                'user_cardname': 'Fallback',
-                'enable_group_info': False,
-                'group_id': 0,
-                'group_name': 'default',
-                'content_format': ['text'],
-                'accept_format': ['text'],
-                'enable_template_info': False,
-                'template_name': 'default',
-                'template_default': False,
-                'additional_config': {}
+            self.logger.warning("在 console_input/config.toml 中未找到 [message_config] 配置段，将使用硬编码默认值。")
+            # Define fallback defaults if message_config is missing
+            self.message_config = {
+                "user_id": "console_user_fallback",
+                "user_nickname": "控制台",
+                "user_cardname": "Fallback",
+                "enable_group_info": False,
+                "group_id": 0,
+                "group_name": "default",
+                "content_format": ["text"],
+                "accept_format": ["text"],
+                "enable_template_info": False,
+                "template_name": "default",
+                "template_default": False,
+                "additional_config": {},
             }
         else:
-             self.logger.info("已加载来自 console_input/config.toml 的 [message_config]。")
+            self.logger.info("已加载来自 console_input/config.toml 的 [message_config]。")
 
         # --- Load Template Items Separately (if enabled and exists within message_config) ---
         self.template_items = None
-        if self.message_config.get('enable_template_info', False):
-             # Load template_items directly from the message_config dictionary
-             self.template_items = self.message_config.get('template_items', {})
-             if not self.template_items:
-                  self.logger.warning("配置启用了 template_info，但在 message_config 中未找到 template_items。")
+        if self.message_config.get("enable_template_info", False):
+            # Load template_items directly from the message_config dictionary
+            self.template_items = self.message_config.get("template_items", {})
+            if not self.template_items:
+                self.logger.warning("配置启用了 template_info，但在 message_config 中未找到 template_items。")
 
         self._input_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -119,9 +122,9 @@ class ConsoleInputPlugin(BasePlugin):
                 self.logger.warning("控制台输入任务在超时后仍未结束，将强制取消。")
                 self._input_task.cancel()
             except asyncio.CancelledError:
-                 self.logger.info("控制台输入任务已被取消。")
+                self.logger.info("控制台输入任务已被取消。")
             except Exception as e:
-                 self.logger.error(f"等待控制台输入任务结束时出错: {e}", exc_info=True)
+                self.logger.error(f"等待控制台输入任务结束时出错: {e}", exc_info=True)
         self.logger.info("Console Input 插件清理完成。")
         await super().cleanup()
 
@@ -135,21 +138,21 @@ class ConsoleInputPlugin(BasePlugin):
                 text = line.strip()
 
                 if not text:
-                    continue # Ignore empty lines
-                if text.lower() == 'exit()':
+                    continue  # Ignore empty lines
+                if text.lower() == "exit()":
                     self.logger.info("收到 'exit()' 命令，正在停止...")
                     self._stop_event.set()
                     break
-                if self._stop_event.is_set(): # Check again after potential blocking read
-                     break
+                if self._stop_event.is_set():  # Check again after potential blocking read
+                    break
 
                 # Create message using loaded config
                 message = self._create_console_message(text)
                 await self.core.send_to_maicore(message)
 
             except asyncio.CancelledError:
-                 self.logger.info("控制台输入循环被取消。")
-                 break
+                self.logger.info("控制台输入循环被取消。")
+                break
             except Exception as e:
                 self.logger.error(f"控制台输入循环出错: {e}", exc_info=True)
                 # Avoid busy-looping on persistent errors
@@ -159,35 +162,34 @@ class ConsoleInputPlugin(BasePlugin):
     def _create_console_message(self, text: str) -> MessageBase:
         """使用从 config.toml 加载的配置创建 MessageBase 对象。"""
         timestamp = time.time()
-        cfg = self.message_config # Use the loaded message config
+        cfg = self.message_config  # Use the loaded message config
 
-        # --- User Info --- 
-        user_id_from_config = cfg.get('user_id', 0) # Assume int from config, default to 0
+        # --- User Info ---
+        user_id_from_config = cfg.get("user_id", 0)  # Assume int from config, default to 0
         user_info = UserInfo(
             platform=self.core.platform,
-            user_id=user_id_from_config, 
-            user_nickname=cfg.get('user_nickname', 'ConsoleUser'),
-            user_cardname=cfg.get('user_cardname', '')
+            user_id=user_id_from_config,
+            user_nickname=cfg.get("user_nickname", "ConsoleUser"),
+            user_cardname=cfg.get("user_cardname", ""),
         )
 
-        # --- Group Info (Conditional) --- 
+        # --- Group Info (Conditional) ---
         group_info: Optional[GroupInfo] = None
-        if cfg.get('enable_group_info', False):
+        if cfg.get("enable_group_info", False):
             group_info = GroupInfo(
                 platform=self.core.platform,
-                group_id=cfg.get('group_id', 0),
-                group_name=cfg.get('group_name', 'default')
+                group_id=cfg.get("group_id", 0),
+                group_name=cfg.get("group_name", "default"),
             )
-            
-        # --- Format Info --- 
+
+        # --- Format Info ---
         format_info = FormatInfo(
-            content_format=cfg.get('content_format', ["text"]),
-            accept_format=cfg.get('accept_format', ["text"])
+            content_format=cfg.get("content_format", ["text"]), accept_format=cfg.get("accept_format", ["text"])
         )
 
         # --- Template Info (Conditional & Modification) ---
         final_template_info_value = None
-        if cfg.get('enable_template_info', False) and self.template_items:
+        if cfg.get("enable_template_info", False) and self.template_items:
             # 1. 获取原始模板项 (创建副本)
             modified_template_items = (self.template_items or {}).copy()
 
@@ -203,7 +205,7 @@ class ConsoleInputPlugin(BasePlugin):
                     self.logger.error(f"调用 prompt_context 服务时出错: {e}", exc_info=True)
 
             # 3. 修改主 Prompt (如果上下文非空且主 Prompt 存在)
-            main_prompt_key = "reasoning_prompt_main" # 假设主 Prompt 的键
+            main_prompt_key = "reasoning_prompt_main"  # 假设主 Prompt 的键
             if additional_context and main_prompt_key in modified_template_items:
                 original_prompt = modified_template_items[main_prompt_key]
                 modified_template_items[main_prompt_key] = original_prompt + "\n" + additional_context
@@ -213,38 +215,33 @@ class ConsoleInputPlugin(BasePlugin):
             final_template_info_value = {"template_items": modified_template_items}
         # else: # 不需要模板或模板项为空时，final_template_info_value 保持 None
 
-        # --- Additional Config --- 
-        additional_config = cfg.get('additional_config', {})
-        additional_config['source'] = 'console_input_plugin' 
-        additional_config['sender_name'] = user_info.user_nickname 
+        # --- Additional Config ---
+        additional_config = cfg.get("additional_config", {})
+        additional_config["source"] = "console_input_plugin"
+        additional_config["sender_name"] = user_info.user_nickname
+        additional_config["maimcore_reply_probability_gain"] = 1
 
-        # --- Base Message Info --- 
+        # --- Base Message Info ---
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             # Consider casting time to int for consistency, but optional for now
-            message_id=f"console_{int(timestamp * 1000)}_{hash(text) % 10000}", 
+            message_id=f"console_{int(timestamp * 1000)}_{hash(text) % 10000}",
             time=timestamp,
             user_info=user_info,
             group_info=group_info,
             # 使用可能已修改的 template_info
-            template_info=final_template_info_value, 
+            template_info=final_template_info_value,
             format_info=format_info,
-            additional_config=additional_config
+            additional_config=additional_config,
         )
 
-        # --- Message Segment --- 
+        # --- Message Segment ---
         # Segment type is usually fixed for console input
-        message_segment = Seg(
-            type="text", 
-            data=text
-        )
+        message_segment = Seg(type="text", data=text)
 
-        # --- Final MessageBase --- 
-        return MessageBase(
-            message_info=message_info,
-            message_segment=message_segment,
-            raw_message=text
-        )
+        # --- Final MessageBase ---
+        return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=text)
+
 
 # --- Plugin Entry Point ---
-plugin_entrypoint = ConsoleInputPlugin 
+plugin_entrypoint = ConsoleInputPlugin
