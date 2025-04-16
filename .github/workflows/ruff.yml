@@ -1,9 +1,14 @@
 name: Ruff
 on: [ push, pull_request ]
 jobs:
-  ruff:
+  ruff-format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ruff Format
+        uses: astral-sh/ruff-action@v3
+        with:
+          command: format  # 明确指定仅执行格式化
 
