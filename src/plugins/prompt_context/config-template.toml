@@ -1,0 +1,19 @@
+# src/plugins/prompt_context/config.toml
+
+[prompt_context]
+# 是否启用此插件
+enabled = true
+
+[formatting]
+# 连接不同提供者上下文信息时使用的分隔符 (\n 表示换行)
+separator = "\n" 
+# 是否在每个提供者的信息前添加其名称作为标题 (例如 "vts_actions: ...")
+add_provider_title = false
+# 标题和内容之间的分隔符
+title_separator = ": "
+
+[limits]
+# 获取上下文时的默认最大字符数限制
+default_max_length = 1000
+# 默认优先级，用于未指定优先级的提供者
+default_priority = 100 

@@ -1,109 +1,147 @@
 import asyncio
-from src.sensor.danmaku_live_sensor import danmaku_live_sensor
-from src.sensor.danmaku_mock_sensor import danmaku_mock_sensor
-from src.utils.logger import get_logger
-import sys
+import logging
 import signal
+import sys
 import os
-from src.neuro.core import core
-import threading
+import argparse # 导入 argparse
 
-logger = get_logger("main")
-
-
-def run_danmaku_sensor():
-    """在单独线程中运行弹幕传感器"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+# 尝试导入 tomllib (Python 3.11+), 否则使用 toml
+try:
+    import tomllib
+except ModuleNotFoundError:
     try:
-        logger.info("弹幕传感器线程已启动")
-        loop.run_until_complete(danmaku_live_sensor.connect())
-        loop.run_forever()
+        import toml as tomllib # type: ignore
+    except ModuleNotFoundError:
+        print("错误：需要安装 TOML 解析库。请运行 'pip install toml'", file=sys.stderr)
+        sys.exit(1)
+
+# 从 src 目录导入核心类和插件管理器
+from src.core.vup_next_core import VupNextCore
+from src.core.plugin_manager import PluginManager
+
+# 配置日志 (移到 main 函数内部，根据参数设置)
+logger = logging.getLogger("VUP-NEXT-Main") # 获取 logger 实例可以提前
+
+# 获取 main.py 文件所在的目录
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def load_config(config_filename: str = "config.toml") -> dict:
+    """加载位于脚本同目录下的 TOML 配置文件。"""
+    config_path = os.path.join(_BASE_DIR, config_filename)
+    logger.debug(f"尝试加载配置文件: {config_path}")
+    try:
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+            logger.info(f"成功加载配置文件: {config_path}")
+            return config
+    except FileNotFoundError:
+        logger.error(f"错误：配置文件 '{config_path}' 未找到。请确保它在 main.py 文件的同级目录下。")
+        sys.exit(1)
+    except tomllib.TOMLDecodeError as e:
+        logger.error(f"错误：配置文件 '{config_path}' 格式无效: {e}")
+        sys.exit(1)
     except Exception as e:
-        logger.error(f"弹幕传感器线程异常: {str(e)}")
-    finally:
-        loop.close()
+        logger.error(f"加载配置文件 '{config_path}' 时发生未知错误: {e}", exc_info=True)
+        sys.exit(1)
 
+async def main():
+    """应用程序主入口点。"""
 
-async def boot():
-    # 启动弹幕传感器线程
-    # danmaku_thread = threading.Thread(target=run_danmaku_sensor, name="DanmakuSensor")
-    # danmaku_thread.daemon = True
-    # danmaku_thread.start()
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description="VUP-NEXT 应用程序")
+    # 添加 --debug 参数，用于控制日志级别
+    parser.add_argument("--debug", action="store_true", help="启用 DEBUG 级别日志输出")
+    # 解析命令行参数
+    args = parser.parse_args()
 
-    # 主线程运行核心任务
-    await asyncio.gather(
-        core.connect(),  # 建立与MaiMaiCore的连接
-        core.process_input(),  # 处理传输给MaiMaiCore的输入
-        danmaku_mock_sensor.connect(),  # 连接弹幕传感器
+    # --- 配置日志 ---
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout) # 默认输出到控制台
+        ]
     )
 
+    logger.info("启动 VUP-NEXT 应用程序...")
+    if args.debug:
+        logger.info("已启用 DEBUG 日志级别。")
 
-async def halt():
-    try:
-        logger.info("正在关闭系统...")
+    # --- 加载配置 ---
+    config = load_config()
 
-        # 先关闭传感器
-        # await danmaku_live_sensor.disconnect()
-        # logger.info("B站直播弹幕传感器已关闭")
+    # 从配置中提取参数，提供默认值或进行错误处理
+    general_config = config.get("general", {})
+    maicore_config = config.get("maicore", {})
+    http_config = config.get("http_server", {})
 
-        await danmaku_mock_sensor.disconnect()
-        logger.info("弹幕模拟传感器已关闭")
+    platform_id = general_config.get("platform_id", "vup_next_default")
 
-        # 关闭核心
-        await core.disconnect()
-        logger.info("核心已关闭")
+    maicore_host = maicore_config.get("host", "127.0.0.1")
+    maicore_port = maicore_config.get("port", 8000)
+    # maicore_token = maicore_config.get("token") # 如果需要 token
 
-        # 取消所有剩余任务
-        pending_tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+    http_enabled = http_config.get("enable", False)
+    http_host = http_config.get("host", "127.0.0.1") if http_enabled else None
+    http_port = http_config.get("port", 8080) if http_enabled else None
+    http_callback_path = http_config.get("callback_path", "/maicore_callback")
 
-        logger.info(f"正在取消 {len(pending_tasks)} 个剩余任务")
+    # --- 初始化核心 ---
+    core = VupNextCore(
+        platform=platform_id,
+        maicore_host=maicore_host,
+        maicore_port=maicore_port,
+        http_host=http_host, # 如果 http_enabled=False, 这里会是 None
+        http_port=http_port,
+        http_callback_path=http_callback_path
+        # maicore_token=maicore_token # 如果 core 需要 token
+    )
 
-        # 打印所有未完成任务的名称，帮助调试
-        for i, task in enumerate(pending_tasks):
-            logger.info(f"待取消任务 {i + 1}: {task.get_name()} - {task}")
+    # --- 插件加载 ---
+    logger.info("加载插件...")
+    plugin_manager = PluginManager(core, config.get("plugins", {})) # 传入插件全局配置
+    # 构建插件目录的绝对或相对路径
+    # 这里假设 main.py 在 VUP-NEXT 根目录运行
+    plugin_dir = os.path.join(os.path.dirname(__file__), "src", "plugins") 
+    await plugin_manager.load_plugins(plugin_dir)
+    logger.info("插件加载完成。")
 
-        # 给每个任务发送取消信号
-        for task in pending_tasks:
-            task.cancel()
+    # --- 连接核心服务 ---
+    await core.connect() # 连接 WebSocket 并启动 HTTP 服务器
 
-        # 设置超时等待所有任务完成
+    # --- 保持运行并处理退出信号 ---
+    stop_event = asyncio.Event()
+
+    def signal_handler():
+        logger.info("收到退出信号，开始关闭...")
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    # 在 Windows 上，SIGINT (Ctrl+C) 通常可用
+    # 在 Unix/Linux 上，可以添加 SIGTERM
+    for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            await asyncio.wait_for(asyncio.gather(*pending_tasks, return_exceptions=True), timeout=2.0)
-        except asyncio.TimeoutError:
-            logger.warning("部分任务取消超时，强制退出")
-            # 打印超时后仍未完成的任务
-            still_pending = [t for t in pending_tasks if not t.done()]
-            for i, task in enumerate(still_pending):
-                logger.warning(f"超时未取消任务 {i + 1}: {task.get_name()} - {task}")
+            loop.add_signal_handler(sig, signal_handler)
+        except NotImplementedError:
+            # Windows 可能不支持 add_signal_handler
+            # 使用 signal.signal 作为备选方案
+            signal.signal(sig, lambda signum, frame: signal_handler())
 
-        logger.info("所有任务已关闭")
+    logger.info("应用程序正在运行。按 Ctrl+C 退出。")
+    await stop_event.wait()
 
-    except Exception as e:
-        logger.error(f"关闭系统失败: {e}")
-        import traceback
+    # --- 执行清理 ---
+    logger.info("正在卸载插件...")
+    await plugin_manager.unload_plugins() # 在断开连接前卸载插件
 
-        logger.error(traceback.format_exc())
-
+    logger.info("正在关闭核心服务...")
+    await core.disconnect()
+    logger.info("VUP-NEXT 应用程序已关闭。")
 
 if __name__ == "__main__":
-    # 设置信号处理
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
     try:
-        loop.run_until_complete(boot())
-        loop.run_forever()
+        asyncio.run(main())
     except KeyboardInterrupt:
-        logger.warning("收到中断信号，正在关闭...")
-        loop.run_until_complete(halt())
-        loop.close()
-        logger.info("程序已完全退出，强制结束所有进程")
-        # 强制结束程序
-        os._exit(0)  # 使用os._exit强制退出，不会等待其他线程
-    except Exception as e:
-        logger.error(f"主程序异常: {str(e)}")
-        if loop and not loop.is_closed():
-            loop.run_until_complete(halt())
-            loop.close()
-        os._exit(1)
+        # 在 asyncio.run 之外捕获 KeyboardInterrupt (尽管上面的信号处理应该先触发)
+        logger.info("检测到 KeyboardInterrupt，强制退出。") 

@@ -1,0 +1,31 @@
+# amaidesu 配置文件
+
+[general]
+# 在 MaiCore 中注册的平台标识符
+platform_id = "amaidesu"
+
+[maicore]
+# MaiCore WebSocket 服务器地址
+host = "127.0.0.1"
+# MaiCore WebSocket 服务器端口
+port = 8000
+# token = "your_maicore_token_if_needed" # 如果 MaiCore 需要认证，取消注释并设置
+
+[http_server]
+# 是否启用本地 HTTP 回调服务器
+enable = true
+# 监听的主机地址
+host = "127.0.0.1"
+# 监听的端口
+port = 8080
+# MaiCore 或其他服务访问的回调路径
+callback_path = "/maicore_callback"
+
+
+[plugins]
+enable_console_input = true
+enable_tts = true
+enable_stt = true
+enable_llm_text_precessor = true
+enable_prompt_context = true
+enable_vtube_studio = true

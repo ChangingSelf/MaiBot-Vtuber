@@ -1,0 +1,25 @@
+# src/plugins/vtube_studio/config.toml
+
+[vtube_studio]
+# 是否启用此插件
+enabled = true
+
+# pyvts 连接和认证所需信息
+plugin_name = "VUP_NEXT_VTS_Connector"
+developer = "mai-devs" # 建议修改为你自己的名字
+# 存储 VTS API 认证 token 的文件路径 (相对于 VUP-NEXT 主程序运行目录)
+authentication_token_path = "./src/plugins/vtube_studio/vts_token.txt" 
+# (可选) VTube Studio API 的地址和端口，如果不是默认值
+vts_host = "localhost"
+vts_port = 8001
+
+# Prompt 上下文相关配置
+register_hotkeys_context = true # 是否将可用热键注册到 PromptContext
+hotkeys_context_priority = 50   # 热键上下文的优先级
+hotkeys_context_prefix = "你可以触发以下模型热键：" # 添加到 Prompt 的热键列表前缀
+hotkey_format = "'%s' (ID: %s)" # 单个热键的格式 (名称, ID)
+hotkeys_separator = ", " # 热键之间的分隔符
+
+# (未来可以添加更多，比如注册表情等)
+# register_expressions_context = true
+# expressions_context_priority = 60 
