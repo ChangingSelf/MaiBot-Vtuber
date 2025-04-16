@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import sys
-import socket  # For type hints/exceptions if needed
 import base64
 import hashlib
 import hmac
@@ -55,7 +54,7 @@ except ModuleNotFoundError:
 # --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
 logger = logging.getLogger(__name__)
 
@@ -757,7 +756,7 @@ class STTPlugin(BasePlugin):
                 final_text = "[识别被取消]"
             except Exception as e:
                 self.logger.error(f"发送结束帧或获取讯飞结果时出错 (原因: {reason}): {e}", exc_info=True)
-                final_text = f"[识别错误]"
+                final_text = "[识别错误]"
             finally:
                 await self._close_iflytek_connection(ws, receiver_task, reason, close_session=False)
         else:

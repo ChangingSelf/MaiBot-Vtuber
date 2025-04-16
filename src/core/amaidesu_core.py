@@ -1,5 +1,5 @@
 import asyncio
-from typing import Callable, Dict, Any, Optional, Type
+from typing import Callable, Dict, Any, Optional
 
 # 注意：需要安装 aiohttp
 # pip install aiohttp

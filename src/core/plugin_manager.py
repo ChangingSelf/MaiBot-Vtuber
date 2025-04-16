@@ -113,7 +113,7 @@ class PluginManager:
                     plugin_class: Optional[Type[BasePlugin]] = None
                     entrypoint = None  # 初始化为 None
                     if hasattr(module, "plugin_entrypoint"):
-                        entrypoint = getattr(module, "plugin_entrypoint")
+                        entrypoint = module.plugin_entrypoint
                         self.logger.debug(
                             f"在模块 '{module_import_path}' 中找到入口点 'plugin_entrypoint' 指向: {entrypoint}"
                         )

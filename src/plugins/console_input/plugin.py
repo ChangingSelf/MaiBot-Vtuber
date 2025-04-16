@@ -3,8 +3,7 @@ import logging
 import os
 import sys
 import time
-from typing import Dict, Any, Optional, List
-from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
 
 # --- Dependency Check & TOML ---
 try:
@@ -19,7 +18,7 @@ except ModuleNotFoundError:
 # --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
 logger = logging.getLogger(__name__)
 

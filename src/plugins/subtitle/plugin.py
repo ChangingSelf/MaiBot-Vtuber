@@ -1,6 +1,5 @@
 # Amaidesu Subtitle Plugin (Screen Display): src/plugins/subtitle/plugin.py
 
-import asyncio
 import logging
 import tomllib
 import os

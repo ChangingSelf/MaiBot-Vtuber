@@ -11,4 +11,5 @@ jobs:
         uses: astral-sh/ruff-action@v3
         with:
           command: format  # 明确指定仅执行格式化
+          args: .
 

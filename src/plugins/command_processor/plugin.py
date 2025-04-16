@@ -5,7 +5,7 @@ import logging
 import re
 import tomllib
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore

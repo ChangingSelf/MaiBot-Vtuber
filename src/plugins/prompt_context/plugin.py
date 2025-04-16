@@ -4,7 +4,6 @@ import logging
 import tomllib  # 使用 tomllib (Python 3.11+) 或 toml
 from typing import Any, Dict, List, Optional, TypedDict
 import os
-import asyncio
 
 # Use absolute imports relative to the src directory
 from core.plugin_manager import BasePlugin
