@@ -8,8 +8,5 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Ruff Format
-        uses: astral-sh/ruff-action@v3
-        with:
-          command: format  # 明确指定仅执行格式化
-          args: .
+        run: ruff format .
 
