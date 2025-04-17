@@ -97,3 +97,4 @@ class MyPlugin(BasePlugin):
 python main.py --debug
 ```
 
+### 如果你需要更多帮助-查阅[help.md](https://github.com/ChangingSelf/Amaidesu/blob/main/help.md)
