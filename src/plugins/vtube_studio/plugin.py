@@ -146,7 +146,7 @@ class VTubeStudioPlugin(BasePlugin):
             self.logger.info("Requesting authentication token (will prompt in VTS if needed)...")
             # 这会请求新token或检查/加载现有token
             await self.vts.request_authenticate_token()
-            self._auth_token = self.vts.token
+            # self._auth_token = self.vts.token # 会报错
             self.logger.info("Token request process completed.")
 
             # --- 然后再进行认证 ---
@@ -189,37 +189,55 @@ class VTubeStudioPlugin(BasePlugin):
                     await self.vts.close()
                     self.logger.debug("Closed VTS connection due to auth failure.")
 
+    async def get_hotkey_list(self) -> Optional[list[Dict[str, Any]]]:
+        """Requests the list of available hotkeys from VTube Studio.
+
+        Returns:
+            A list of hotkey dictionaries (containing 'name', 'hotkeyID', etc.) 
+            if successful, None otherwise.
+        """
+        if not self._is_connected_and_authenticated or not self.vts:
+            self.logger.warning("Cannot get hotkey list: Not connected or authenticated.")
+            return None
+
+        try:
+            self.logger.warning("Requesting VTube Studio hotkey list...")
+            response = await self.vts.request(self.vts.vts_request.requestHotKeyList())
+
+            if response and response.get("data") and "availableHotkeys" in response["data"]:
+                hotkeys = response["data"]["availableHotkeys"]
+                self.logger.warning(f"Received {len(hotkeys)} hotkeys from VTS.")
+                return hotkeys
+            else:
+                self.logger.warning(f"Could not get hotkey list from VTS or invalid response format: {response}")
+                return None
+        except Exception as e:
+            self.logger.error(f"Error requesting hotkey list from VTS: {e}", exc_info=True)
+            return None
+
     async def _register_hotkeys_context(self):
         """获取 VTS 热键并将其使用说明注册到 PromptContextPlugin。"""
-        if not self._is_connected_and_authenticated or not self.vts:
-            self.logger.warning("无法注册热键上下文：未连接或未认证。")
-            return
-
         prompt_ctx_service = self.core.get_service("prompt_context")
         if not prompt_ctx_service:
             self.logger.warning("未找到 PromptContext 服务。无法注册热键。")
             return
-
+        
+        hotkeys = None # Initialize hotkeys variable
         try:
-            self.logger.info("请求 VTube Studio 的热键列表...")
-            response = await self.vts.request(self.vts.vts_request.requestHotKeyList())
+            # Call the new method to get the hotkey list
+            hotkeys = await self.get_hotkey_list()
 
             instructional_text = "对于每一次回复，请在回复文本末尾添加指令标记来表达你现在的情感。对于日常聊天，进行情感与动作的表现是被鼓励的，通过热键名称可以看出该热键对应的情感。格式为 `%{vts_trigger_hotkey:热键名称}%`，例如 `%{vts_trigger_hotkey:微笑}%`。"
             hotkey_list_text = ""
 
-            if response and response.get("data") and "availableHotkeys" in response["data"]:
-                hotkeys = response["data"]["availableHotkeys"]
-                if hotkeys:
-                    # formatted_hotkeys = [
-                    #     f"名称 '{hk.get('name', 'Unnamed')}' 对应的 热键ID 是 '{hk.get('hotkeyID', 'N/A')}'"
-                    #     for hk in hotkeys
-                    # ]
-                    formatted_hotkeys = [hotkey["name"] for hotkey in hotkeys]
+            if hotkeys is not None: # Check if get_hotkey_list was successful
+                if hotkeys: # Check if the list is not empty
+                    formatted_hotkeys = [hotkey.get("name", "Unknown Hotkey") for hotkey in hotkeys] # Safer access with .get()
                     hotkey_list_text = "可用的热键有：\n- " + "\n- ".join(formatted_hotkeys)
                 else:
                     hotkey_list_text = "当前模型没有可用的热键。"
             else:
-                self.logger.warning(f"无法从 VTS 获取热键列表或响应格式无效: {response}")
+                # get_hotkey_list already logged the error
                 hotkey_list_text = "无法获取当前可用的热键信息。"
 
             # 组合最终的上下文信息
