@@ -193,7 +193,7 @@ class VTubeStudioPlugin(BasePlugin):
         """Requests the list of available hotkeys from VTube Studio.
 
         Returns:
-            A list of hotkey dictionaries (containing 'name', 'hotkeyID', etc.) 
+            A list of hotkey dictionaries (containing 'name', 'hotkeyID', etc.)
             if successful, None otherwise.
         """
         if not self._is_connected_and_authenticated or not self.vts:
@@ -221,8 +221,8 @@ class VTubeStudioPlugin(BasePlugin):
         if not prompt_ctx_service:
             self.logger.warning("未找到 PromptContext 服务。无法注册热键。")
             return
-        
-        hotkeys = None # Initialize hotkeys variable
+
+        hotkeys = None  # Initialize hotkeys variable
         try:
             # Call the new method to get the hotkey list
             hotkeys = await self.get_hotkey_list()
@@ -230,9 +230,11 @@ class VTubeStudioPlugin(BasePlugin):
             instructional_text = "对于每一次回复，请在回复文本末尾添加指令标记来表达你现在的情感。对于日常聊天，进行情感与动作的表现是被鼓励的，通过热键名称可以看出该热键对应的情感。格式为 `%{vts_trigger_hotkey:热键名称}%`，例如 `%{vts_trigger_hotkey:微笑}%`。"
             hotkey_list_text = ""
 
-            if hotkeys is not None: # Check if get_hotkey_list was successful
-                if hotkeys: # Check if the list is not empty
-                    formatted_hotkeys = [hotkey.get("name", "Unknown Hotkey") for hotkey in hotkeys] # Safer access with .get()
+            if hotkeys is not None:  # Check if get_hotkey_list was successful
+                if hotkeys:  # Check if the list is not empty
+                    formatted_hotkeys = [
+                        hotkey.get("name", "Unknown Hotkey") for hotkey in hotkeys
+                    ]  # Safer access with .get()
                     hotkey_list_text = "可用的热键有：\n- " + "\n- ".join(formatted_hotkeys)
                 else:
                     hotkey_list_text = "当前模型没有可用的热键。"

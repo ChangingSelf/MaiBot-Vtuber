@@ -259,7 +259,7 @@ class BiliDanmakuPlugin(BasePlugin):
         additional_config["source"] = "bili_danmaku_plugin"
         additional_config["sender_name"] = nickname
         additional_config["bili_uid"] = str(user_id) if item.get("uid") else None
-        additional_config["maimcore_reply_probability_gain"] = 0.5
+        additional_config["maimcore_reply_probability_gain"] = 1
 
         # --- Base Message Info ---
         final_template_info_value = None
