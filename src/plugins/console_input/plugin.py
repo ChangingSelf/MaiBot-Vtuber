@@ -147,7 +147,7 @@ class ConsoleInputPlugin(BasePlugin):
                     break
 
                 # Create message using loaded config
-                message = self._create_console_message(text)
+                message = await self._create_console_message(text)
                 await self.core.send_to_maicore(message)
 
             except asyncio.CancelledError:
@@ -159,7 +159,7 @@ class ConsoleInputPlugin(BasePlugin):
                 await asyncio.sleep(1)
         self.logger.info("控制台输入循环结束。")
 
-    def _create_console_message(self, text: str) -> MessageBase:
+    async def _create_console_message(self, text: str) -> MessageBase:
         """使用从 config.toml 加载的配置创建 MessageBase 对象。"""
         timestamp = time.time()
         cfg = self.message_config  # Use the loaded message config
@@ -198,7 +198,7 @@ class ConsoleInputPlugin(BasePlugin):
             prompt_ctx_service = self.core.get_service("prompt_context")
             if prompt_ctx_service:
                 try:
-                    additional_context = prompt_ctx_service.get_formatted_context()
+                    additional_context = await prompt_ctx_service.get_formatted_context()
                     if additional_context:
                         self.logger.debug(f"获取到聚合 Prompt 上下文: '{additional_context[:100]}...'")
                 except Exception as e:
