@@ -4,7 +4,7 @@ import logging
 import tomllib  # 使用 tomllib (Python 3.11+) 或 toml
 from typing import Any, Dict, List, Optional, TypedDict
 import os
-import asyncio # 引入 asyncio
+import asyncio  # 引入 asyncio
 
 # Use absolute imports relative to the src directory
 from core.plugin_manager import BasePlugin
@@ -190,11 +190,7 @@ class PromptContextPlugin(BasePlugin):
             self.logger.warning(f"Attempted to unregister non-existent provider: '{provider_name}'")
             return False
 
-    async def get_formatted_context(
-        self,
-        tags: Optional[List[str]] = None,
-        max_length: Optional[int] = None
-    ) -> str:
+    async def get_formatted_context(self, tags: Optional[List[str]] = None, max_length: Optional[int] = None) -> str:
         """
         Retrieves and formats the aggregated context from enabled providers,
         sorted by priority and optionally filtered by tags.
@@ -242,56 +238,60 @@ class PromptContextPlugin(BasePlugin):
                 try:
                     # 检查是否是协程函数 (更健壮的方式)
                     if asyncio.iscoroutinefunction(raw_context_info):
-                        context_value = await raw_context_info() 
-                    else: # 如果不是 async def 但可调用 (虽然我们期望是 async)
+                        context_value = await raw_context_info()
+                    else:  # 如果不是 async def 但可调用 (虽然我们期望是 async)
                         # 可以在这里决定是否支持同步 callable，或者直接报错/跳过
-                        self.logger.warning(f"Context provider '{provider_name}' is callable but not an async function. Skipping.") 
-                        continue 
+                        self.logger.warning(
+                            f"Context provider '{provider_name}' is callable but not an async function. Skipping."
+                        )
+                        continue
                 except Exception as e:
                     self.logger.error(f"Error calling context provider '{provider_name}': {e}", exc_info=True)
                     # 出错时可以跳过这个 provider
-                    continue 
+                    continue
             elif isinstance(raw_context_info, str):
                 context_value = raw_context_info
             else:
-                self.logger.warning(f"Provider '{provider_name}' has unexpected context_info type: {type(raw_context_info)}. Skipping.")
+                self.logger.warning(
+                    f"Provider '{provider_name}' has unexpected context_info type: {type(raw_context_info)}. Skipping."
+                )
                 continue
 
             # --- 使用获取到的 context_value 进行后续处理 ---
-            if not context_value: # Skip empty context (after potentially calling callable)
+            if not context_value:  # Skip empty context (after potentially calling callable)
                 self.logger.debug(f"Provider '{provider_name}' returned empty context. Skipping.")
                 continue
 
             prefix = ""
             if self.add_provider_title:
                 prefix = f"{provider_name}{self.title_separator}"
-            
+
             full_part = prefix + context_value
             part_len = len(full_part)
-            
+
             # Check length before adding (including separator if not the first part)
             projected_length = current_length + part_len
-            if context_parts: # If not the first part, account for separator
-                 projected_length += separator_len
-            
+            if context_parts:  # If not the first part, account for separator
+                projected_length += separator_len
+
             if projected_length <= target_max_length:
                 context_parts.append(full_part)
                 current_length = projected_length
             else:
-                 # Try to add a truncated part if possible
-                 remaining_space = target_max_length - current_length
-                 if context_parts: # Account for separator space
-                      remaining_space -= separator_len
-                 
-                 if remaining_space > 3: # Need space for "..."
-                      truncated_part = full_part[:remaining_space - 3] + "..."
-                      context_parts.append(truncated_part)
-                      self.logger.warning(f"Context from '{provider_name}' was truncated due to max_length.")
-                 else:
-                      # Not enough space even for truncated part, stop adding
-                      self.logger.warning(f"Context from '{provider_name}' skipped entirely due to max_length.")
-                      break # Stop processing further providers
-        
+                # Try to add a truncated part if possible
+                remaining_space = target_max_length - current_length
+                if context_parts:  # Account for separator space
+                    remaining_space -= separator_len
+
+                if remaining_space > 3:  # Need space for "..."
+                    truncated_part = full_part[: remaining_space - 3] + "..."
+                    context_parts.append(truncated_part)
+                    self.logger.warning(f"Context from '{provider_name}' was truncated due to max_length.")
+                else:
+                    # Not enough space even for truncated part, stop adding
+                    self.logger.warning(f"Context from '{provider_name}' skipped entirely due to max_length.")
+                    break  # Stop processing further providers
+
         self.logger.debug(f"Final context parts before join: {context_parts}")
         return self.separator.join(context_parts)
 
