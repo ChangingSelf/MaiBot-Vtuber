@@ -97,4 +97,14 @@ class MyPlugin(BasePlugin):
 python main.py --debug
 ```
 
+## 模拟MaiCore
+
+当你不方便部署麦麦时，可以用它启用一个ws服务端和一个控制台输入任务，便于模拟麦麦的回应来测试插件功能
+
+使用方法：
+
+```bash
+python mock_maicore.py
+```
+
 ### 如果你需要更多帮助-查阅[help.md](https://github.com/ChangingSelf/Amaidesu/blob/main/help.md)
