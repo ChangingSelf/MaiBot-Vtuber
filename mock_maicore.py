@@ -10,6 +10,15 @@ python mock_maicore.py
 ```
 """
 
+# ANSI 颜色代码
+COLOR_RESET = "\033[0m"
+COLOR_RED = "\033[91m"
+COLOR_GREEN = "\033[92m"
+COLOR_YELLOW = "\033[93m"
+COLOR_BLUE = "\033[94m"
+COLOR_MAGENTA = "\033[95m"
+COLOR_CYAN = "\033[96m"
+
 import asyncio
 import json
 import uuid
@@ -47,9 +56,13 @@ async def handle_websocket(request: web.Request):
 
                     message_base = MessageBase.from_dict(data)
                     if message_base.message_segment.type == "text":
-                        print(f"{message_base.message_info.platform} > {message_base.message_segment.data}")
+                        print(
+                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} > {message_base.message_segment.data}"
+                        )
                     else:
-                        print(f"{message_base.message_info.platform} > [{message_base.message_segment.type}类型的消息]")
+                        print(
+                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} > [{message_base.message_segment.type}类型的消息]"
+                        )
 
                 except Exception as e:
                     logger.error(f"处理接收到的消息时出错: {e}", exc_info=True)
@@ -134,7 +147,7 @@ async def console_input_loop():
     while True:
         try:
             # 使用 run_in_executor 在单独的线程中运行阻塞的 input()
-            line = await loop.run_in_executor(None, lambda: input("发送消息 > "))
+            line = await loop.run_in_executor(None, lambda: input(f"{COLOR_BLUE}mock_maicore{COLOR_RESET} > "))
             line = line.strip()
             if not line:
                 continue
@@ -167,7 +180,7 @@ async def console_input_loop():
 def load_config() -> dict:
     """加载配置文件并返回配置。"""
     try:
-        with open("config.toml", "rb") as f:  # tomllib 需要二进制模式打开文件
+        with open(CONFIG_FILE_PATH, "rb") as f:  # tomllib 需要二进制模式打开文件
             config = tomllib.load(f)  # 使用 tomllib.load
             return config
     except FileNotFoundError:
