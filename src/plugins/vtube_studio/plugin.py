@@ -8,11 +8,7 @@ import re
 
 from maim_message.message_base import MessageBase
 
-# 导入 pyvts 库
-try:
-    import pyvts
-except ImportError:
-    pyvts = None  # 标记 pyvts 不可用
+import pyvts
 
 # 从 core 导入基类和核心类
 from core.plugin_manager import BasePlugin
@@ -161,6 +157,14 @@ class VTubeStudioPlugin(BasePlugin):
                     await self._register_hotkeys_context()
                 # --- 在这里可以添加注册其他上下文的逻辑 (如表情) ---
                 # if self.register_expressions: ...
+
+                # 测试微笑
+                await self.smile(0)
+
+                # 测试闭眼
+                # await asyncio.sleep(5)
+                await self.close_eyes()
+
             else:
                 # 如果 token 流程没问题，这里应该不会失败，但还是处理一下
                 self.logger.error("Authentication failed even after token request process.")
@@ -372,6 +376,80 @@ class VTubeStudioPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"Error sending trigger hotkey request for '{hotkey_id}': {e}", exc_info=True)
             return False
+
+    async def get_parameter_value(self, parameter_name: str) -> bool:
+        """
+        获取 VTS 参数值
+        parameter : str
+            参数名称
+        """
+        if not self._is_connected_and_authenticated or not self.vts:
+            self.logger.warning(f"无法获取 '{parameter_name}' 参数值: 未连接或未认证。")
+            return False
+
+        try:
+            response = await self.vts.request(self.vts.vts_request.requestParameterValue(parameter_name))
+            if response and response.get("messageType") == "ParameterValueResponse":
+                self.logger.info(f"成功获取 '{parameter_name}' 参数值为 {response}")
+                return response.get("data", {}).get("value", 0)
+            else:
+                self.logger.warning(f"获取 '{parameter_name}' 参数值失败: {response}")
+                return False
+        except Exception as e:
+            self.logger.error(f"获取 '{parameter_name}' 参数值失败: {e}", exc_info=True)
+            return False
+
+    async def set_parameter_value(self, parameter_name: str, value: float, weight: float = 1) -> bool:
+        """
+        设置 VTS 参数值
+        parameter : str
+            参数名称
+        value : float
+            数据值，范围为 [-1000000, 1000000]
+        weight : float, optional
+            可以混合你的值与 VTS 面部跟踪参数，从 0 到 1,
+        """
+        if not self._is_connected_and_authenticated or not self.vts:
+            self.logger.warning(f"无法设置 '{parameter_name}' 参数值: 未连接或未认证。")
+            return False
+
+        try:
+            response = await self.vts.request(
+                self.vts.vts_request.requestSetParameterValue(parameter_name, value, weight)
+            )
+            if response and response.get("messageType") == "InjectParameterDataResponse":
+                self.logger.info(f"成功设置 '{parameter_name}' 参数值为 {value}")
+                return True
+            else:
+                self.logger.warning(f"设置 '{parameter_name}' 参数值失败: {response}")
+                return False
+        except Exception as e:
+            self.logger.error(f"设置 '{parameter_name}' 参数值失败: {e}", exc_info=True)
+            return False
+
+    async def close_eyes(self) -> bool:
+        """
+        闭眼
+        """
+        # 并行闭上左右眼
+        return await asyncio.gather(
+            self.set_parameter_value("EyeOpenLeft", 0), self.set_parameter_value("EyeOpenRight", 0)
+        )
+
+    async def open_eyes(self) -> bool:
+        """
+        睁眼
+        """
+        # 并行睁开左右眼
+        return await asyncio.gather(
+            self.set_parameter_value("EyeOpenLeft", 1), self.set_parameter_value("EyeOpenRight", 1)
+        )
+
+    async def smile(self, value: float = 1) -> bool:
+        """
+        微笑控制,1 为嘻嘻,0 为不嘻嘻
+        """
+        return await self.set_parameter_value("MouthSmile", value)
 
     # --- 未来可以添加处理 VTS 事件的方法 ---
     # async def handle_vts_event(self, event_data): ...
