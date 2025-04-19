@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # --- Dependency Check & TOML ---
 try:
@@ -84,6 +84,19 @@ class ConsoleInputPlugin(BasePlugin):
         else:
             self.logger.info("已加载来自 console_input/config.toml 的 [message_config]。")
 
+        # --- Prompt Context Tags ---
+        # Read from message_config section
+        self.context_tags: Optional[List[str]] = self.message_config.get("context_tags")
+        if not isinstance(self.context_tags, list):
+            if self.context_tags is not None:
+                 self.logger.warning(f"Config 'context_tags' in [message_config] is not a list ({type(self.context_tags)}), will fetch all context.")
+            self.context_tags = None # None tells get_formatted_context to get all
+        elif not self.context_tags:
+            self.logger.info("'context_tags' in [message_config] is empty, will fetch all context.")
+            self.context_tags = None # Treat empty list same as None
+        else:
+             self.logger.info(f"Will fetch context with tags: {self.context_tags}")
+
         # --- Load Template Items Separately (if enabled and exists within message_config) ---
         self.template_items = None
         if self.message_config.get("enable_template_info", False):
@@ -147,7 +160,7 @@ class ConsoleInputPlugin(BasePlugin):
                     break
 
                 # Create message using loaded config
-                message = self._create_console_message(text)
+                message = await self._create_console_message(text)
                 await self.core.send_to_maicore(message)
 
             except asyncio.CancelledError:
@@ -159,7 +172,7 @@ class ConsoleInputPlugin(BasePlugin):
                 await asyncio.sleep(1)
         self.logger.info("控制台输入循环结束。")
 
-    def _create_console_message(self, text: str) -> MessageBase:
+    async def _create_console_message(self, text: str) -> MessageBase:
         """使用从 config.toml 加载的配置创建 MessageBase 对象。"""
         timestamp = time.time()
         cfg = self.message_config  # Use the loaded message config
@@ -198,7 +211,8 @@ class ConsoleInputPlugin(BasePlugin):
             prompt_ctx_service = self.core.get_service("prompt_context")
             if prompt_ctx_service:
                 try:
-                    additional_context = prompt_ctx_service.get_formatted_context()
+                    # 使用 self.context_tags 获取上下文
+                    additional_context = await prompt_ctx_service.get_formatted_context(tags=self.context_tags)
                     if additional_context:
                         self.logger.debug(f"获取到聚合 Prompt 上下文: '{additional_context[:100]}...'")
                 except Exception as e:

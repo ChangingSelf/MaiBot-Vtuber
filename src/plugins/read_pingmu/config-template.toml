@@ -1,0 +1,28 @@
+# 插件配置
+[screen_monitor]
+enabled = true
+
+# 截图频率（秒）
+screenshot_interval_seconds = 5 # 建议不要设置太低
+
+# --- OpenAI 兼容 API 配置 ---
+# !!! 必须填入你的 API Key !!!
+api_key = ""   
+
+# !!! 必须填入你的服务商提供的 OpenAI 兼容 Base URL !!!
+# 例如 SiliconFlow: "https://api.siliconflow.cn/v1"
+openai_compatible_base_url = "https://api.siliconflow.cn/v1"
+
+# 使用的模型名称 (请根据你的服务商和所选模型调整)
+# 例如 SiliconFlow: "deepseek-ai/deepseek-vl2"
+model_name = "deepseek-ai/deepseek-vl2" 
+
+# 发送给 VL 模型的指令 (Prompt)
+vl_prompt = "请用一句话全面的描述目前屏幕上的的内容和活动窗口标题。output in chinese!!!"
+
+# HTTP 请求超时（秒）
+request_timeout = 15
+
+# --- Prompt 上下文配置 ---
+context_provider_name = "screen_content_latest"
+context_priority = 20

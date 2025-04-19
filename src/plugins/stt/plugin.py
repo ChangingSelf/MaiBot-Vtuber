@@ -15,7 +15,7 @@ import numpy as np
 from datetime import datetime
 from time import mktime
 from urllib.parse import urlencode, quote
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, List
 
 # --- Dependencies Check & TOML ---
 try:
@@ -97,6 +97,7 @@ class STTPlugin(BasePlugin):
         super().__init__(core, plugin_config)
         self.config = load_plugin_config()
         self.enabled = True  # Assume enabled unless dependencies fail
+        self.logger = logging.getLogger(__name__)
 
         # --- Basic Dependency Check ---
         if torch is None or sd is None or aiohttp is None or tomllib is None:
@@ -135,6 +136,19 @@ class STTPlugin(BasePlugin):
             }
         else:
             self.logger.info("已加载来自 stt/config.toml 的 [message_config]。")
+
+        # --- Prompt Context Tags ---
+        # Read from message_config section
+        self.context_tags: Optional[List[str]] = self.message_config.get("context_tags")
+        if not isinstance(self.context_tags, list):
+            if self.context_tags is not None:
+                 self.logger.warning(f"Config 'context_tags' in [message_config] is not a list ({type(self.context_tags)}), will fetch all context.")
+            self.context_tags = None # None tells get_formatted_context to get all
+        elif not self.context_tags:
+            self.logger.info("'context_tags' in [message_config] is empty, will fetch all context.")
+            self.context_tags = None # Treat empty list same as None
+        else:
+             self.logger.info(f"Will fetch context with tags: {self.context_tags}")
 
         # --- Load Template Items Separately (if enabled and exists within message_config) ---
         # STT typically doesn't need its own main prompt template
@@ -288,7 +302,7 @@ class STTPlugin(BasePlugin):
                             self.logger.warning("配置启用了 STT 修正，但未找到 'stt_correction' 服务。")
 
                     # --- 发送消息到 Core ---
-                    message_to_send = self._create_stt_message(final_text)
+                    message_to_send = await self._create_stt_message(final_text)
                     # Add debug log for the message object being sent
                     self.logger.debug(f"准备发送 STT 消息对象: {repr(message_to_send)}")
                     await self.core.send_to_maicore(message_to_send)
@@ -300,7 +314,7 @@ class STTPlugin(BasePlugin):
         finally:
             self.logger.info("STT 流水线任务结束。")
 
-    def _create_stt_message(self, text: str) -> MessageBase:
+    async def _create_stt_message(self, text: str) -> MessageBase:
         """使用从 config.toml 加载的 [message_config] 创建 MessageBase 对象。"""
         timestamp = time.time()
         cfg = self.message_config  # Use the loaded message config
@@ -340,9 +354,8 @@ class STTPlugin(BasePlugin):
             prompt_ctx_service = self.core.get_service("prompt_context")
             if prompt_ctx_service:
                 try:
-                    # 调用服务获取格式化后的上下文
-                    additional_context = prompt_ctx_service.get_formatted_context()
-                    self.logger.debug(f"Fetched context from service: '{additional_context}'")
+                    # 调用服务获取格式化后的上下文，使用 self.context_tags
+                    additional_context = await prompt_ctx_service.get_formatted_context(tags=self.context_tags)
                     if additional_context:
                         self.logger.debug(f"获取到聚合 Prompt 上下文: '{additional_context[:100]}...'")
                 except Exception as e:

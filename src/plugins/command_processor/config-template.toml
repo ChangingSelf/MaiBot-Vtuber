@@ -1,0 +1,17 @@
+# src/plugins/command_processor/config.toml
+
+[command_processor]
+# 是否启用此插件
+enabled = true
+
+# 用于查找指令标记的正则表达式
+# 默认查找 %{...}% 格式，并捕获括号内的内容
+# 注意 TOML 中反斜杠需要转义
+command_pattern = "%\\{([^%{}]+)\\}" 
+
+# (可选) 定义已知指令的前缀和对应的服务/方法
+# 这部分也可以硬编码在插件里，或者通过更动态的服务发现机制
+# known_commands = {
+#     "vts_trigger_hotkey": {"service": "vts_control", "method": "trigger_hotkey"},
+#     # "play_music": {"service": "music_player", "method": "play"} 
+# } 
