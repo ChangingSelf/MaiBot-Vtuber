@@ -455,6 +455,80 @@ class VTubeStudioPlugin(BasePlugin):
         """
         return await self.set_parameter_value("MouthSmile", value)
 
+    async def load_item(
+        self,
+        file_name: str = "some_item_name.jpg",
+        position_x: float = 0,
+        position_y: float = 0.5,
+        size: float = 0.33,
+        rotation: float = 90,
+        fade_time: float = 0.5,
+        order: int = 4,
+        fail_if_order_taken: bool = False,
+        smoothing: float = 0,
+        censored: bool = False,
+        flipped: bool = False,
+        locked: bool = False,
+        unload_when_plugin_disconnects: bool = True,
+        custom_data_base64: str = "",
+        custom_data_ask_user_first: bool = True,
+        custom_data_skip_asking_user_if_whitelisted: bool = True,
+        custom_data_ask_timer: int = -1,
+    ) -> Optional[str]:
+        """
+        加载挂件
+        """
+        data = {
+            "fileName": file_name,  # 就算用的是base64，但也要指定文件名
+            "positionX": position_x,  # 屏幕范围为 [-1, 1]，0 为屏幕中心，合法范围为[-1000, 1000]
+            "positionY": position_y,  # 屏幕范围为 [-1, 1]，0 为屏幕中心，合法范围为[-1000, 1000]
+            "size": size,  # 范围为 [0, 1]
+            "rotation": rotation,  # 范围为 [0, 360]
+            "fadeTime": fade_time,  # 范围为 [0, 2]
+            "order": order,  # 范围为 [0, 100]
+            "failIfOrderTaken": fail_if_order_taken,
+            "smoothing": smoothing,
+            "censored": censored,
+            "flipped": flipped,
+            "locked": locked,
+            "unloadWhenPluginDisconnects": unload_when_plugin_disconnects,
+            "customDataBase64": custom_data_base64,
+            "customDataAskUserFirst": custom_data_ask_user_first,
+            "customDataSkipAskingUserIfWhitelisted": custom_data_skip_asking_user_if_whitelisted,
+            "customDataAskTimer": custom_data_ask_timer,
+        }
+
+        response = await self.vts.request(self.vts.vts_request.BaseRequest(message_type="ItemLoadRequest", data=data))
+        if response and response.get("messageType") == "ItemLoadResponse":
+            self.logger.info(f"成功加载挂件: {response}")
+            return response.get("data", {}).get("itemInstanceID", None)
+
+        if response and response.get("messageType") == "ItemLoadValuesInvalid":
+            self.logger.error(f"加载挂件失败，参数错误: {response}")
+            return None
+        elif response and response.get("messageType") == "RequestRequiresPermission":
+            self.logger.error(f"加载挂件失败，未取得权限: {response}")
+            return None
+        else:
+            self.logger.error(f"加载挂件失败: {response}")
+            return None
+
+    async def unload_item(self, item_instance_id: str) -> bool:
+        """
+        卸载挂件
+        """
+        response = await self.vts.request(
+            self.vts.vts_request.BaseRequest(
+                message_type="ItemUnloadRequest", data={"itemInstanceID": item_instance_id}
+            )
+        )
+        if response and response.get("messageType") == "ItemUnloadResponse":
+            self.logger.info(f"成功卸载挂件: {response}")
+            return True
+        else:
+            self.logger.error(f"卸载挂件失败: {response}")
+            return False
+
     # --- 未来可以添加处理 VTS 事件的方法 ---
     # async def handle_vts_event(self, event_data): ...
 
