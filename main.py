@@ -3,6 +3,7 @@ import signal
 import sys
 import os
 import argparse  # 导入 argparse
+import shutil # <<<<<<<<<<<<<<<<<<<< Added import
 
 # 尝试导入 tomllib (Python 3.11+), 否则使用 toml
 try:
@@ -42,6 +43,61 @@ def load_config(config_filename: str = "config.toml") -> dict:
         logger.error(f"加载配置文件 '{config_path}' 时发生未知错误: {e}", exc_info=True)
         sys.exit(1)
 
+# <<<<<<<<<<<<<<<<<<<< Added block
+# --- 新增：检查并设置插件配置文件的函数 ---
+def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
+    """
+    检查插件目录中的 config.toml。如果不存在但存在 config-template.toml，则复制模板。
+    返回 True 如果有任何文件被复制，否则返回 False。
+    """
+    config_copied = False
+    logger.info("开始检查插件配置文件...")
+    try:
+        # 确保插件基础目录存在
+        if not os.path.isdir(plugin_base_dir):
+             logger.error(f"指定的插件目录 '{plugin_base_dir}' 不存在或不是一个目录。")
+             return False # 无法继续
+
+        # 遍历插件基础目录中的所有项目
+        for item_name in os.listdir(plugin_base_dir):
+            plugin_dir_path = os.path.join(plugin_base_dir, item_name)
+
+            # 检查是否是目录，并且不是像 __pycache__ 这样的特殊目录
+            if os.path.isdir(plugin_dir_path) and not item_name.startswith("__"):
+                config_path = os.path.join(plugin_dir_path, "config.toml")
+                template_path = os.path.join(plugin_dir_path, "config-template.toml")
+
+                logger.debug(f"检查插件目录: {item_name}")
+
+                template_exists = os.path.exists(template_path)
+                config_exists = os.path.exists(config_path)
+
+                if template_exists and not config_exists:
+                    try:
+                        # 使用 copy2 保留元数据（如修改时间），虽然对 toml 可能不重要
+                        shutil.copy2(template_path, config_path)
+                        logger.info(f"在 '{item_name}' 中: config.toml 不存在，已从 config-template.toml 复制。")
+                        config_copied = True # 标记发生了复制
+                    except Exception as e:
+                        # 如果复制失败，记录错误，但不阻止检查其他插件
+                        logger.error(f"在 '{item_name}' 中: 从模板复制配置文件失败: {e}")
+                elif not template_exists and not config_exists:
+                     # 这种情况可能正常（插件不需要配置），或者是个问题（缺少模板）
+                     # 可以选择性地添加更详细的日志
+                     logger.debug(f"在 '{item_name}' 中: 未找到 config.toml 或 config-template.toml。")
+                elif template_exists and config_exists:
+                    # 配置文件已存在，无需操作
+                    logger.debug(f"在 '{item_name}' 中: config.toml 已存在。")
+                # else: # config_exists and not template_exists - 也无需操作
+
+    except Exception as e:
+        logger.error(f"检查插件配置时发生意外错误: {e}", exc_info=True)
+        # 出现意外错误时，最好也阻止正常启动，因为它可能表明环境问题
+        return False # 返回 False (或可以考虑返回 True 以强制退出)
+
+    logger.info("插件配置文件检查完成。")
+    return config_copied
+# >>>>>>>>>>>>>>>>>>>> Added block
 
 async def main():
     """应用程序主入口点。"""
@@ -66,8 +122,27 @@ async def main():
 
     logger.info("启动 Amaidesu 应用程序...")
 
-    # --- 加载配置 ---
+    # --- 加载主配置 ---
     config = load_config()
+
+    # <<<<<<<<<<<<<<<<<<<< Added block
+    # --- 检查并设置插件配置 ---
+    plugin_dir = os.path.join(_BASE_DIR, "src", "plugins")
+    configs_were_copied = check_and_setup_plugin_configs(plugin_dir)
+
+    if configs_were_copied:
+        # 如果有任何配置文件是从模板复制的，打印提示并退出
+        logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        logger.warning("!! 已根据模板创建了部分插件的 config.toml 文件。          !!")
+        logger.warning("!! 请检查 src/plugins/ 下各插件目录中的 config.toml 文件， !!")
+        logger.warning("!! 特别是 API 密钥、房间号、设备名称等需要您修改的配置。   !!")
+        logger.warning("!! 修改完成后，请重新运行程序。                           !!")
+        logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        sys.exit(0) # 正常退出，让用户去修改配置
+    else:
+        # 如果所有配置文件都已存在，或者无需创建，则继续
+        logger.info("所有必要的插件配置文件已存在或已处理。继续正常启动...")
+    # >>>>>>>>>>>>>>>>>>>> Added block
 
     # 从配置中提取参数，提供默认值或进行错误处理
     general_config = config.get("general", {})
@@ -101,7 +176,6 @@ async def main():
     plugin_manager = PluginManager(core, config.get("plugins", {}))  # 传入插件全局配置
     # 构建插件目录的绝对或相对路径
     # 这里假设 main.py 在 Amaidesu 根目录运行
-    plugin_dir = os.path.join(os.path.dirname(__file__), "src", "plugins")
     await plugin_manager.load_plugins(plugin_dir)
     logger.info("插件加载完成。")
 

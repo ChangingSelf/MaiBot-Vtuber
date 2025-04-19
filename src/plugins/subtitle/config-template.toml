@@ -1,0 +1,16 @@
+
+[subtitle_display] 
+enabled = true
+
+# --- 窗口样式 ---
+window_width = 800      # 窗口宽度 (像素)
+window_height = 100     # 窗口高度 (像素)
+window_offset_y = 100   # 窗口底部距离屏幕底部的距离 (像素)
+font_family = "Microsoft YaHei UI" # 字体 (确保系统支持)
+font_size = 28          # 字号
+font_weight = "bold"    # 字重 (normal, bold)
+text_color = "white"    # 文字颜色 (CSS 颜色名或 #RRGGBB)
+bg_color = "black"      # 背景色 (用于透明效果，通常设为黑色或一个不常用的颜色)
+
+# --- 行为 ---
+fade_delay_seconds = 5  # 语音停止后多少秒开始清除文字 (设置为 0 永不清除) 

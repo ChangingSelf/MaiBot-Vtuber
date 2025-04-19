@@ -22,7 +22,7 @@ sample_rate = 16000 # 采样率 (讯飞要求 16000 或 8000)
 channels = 1        # 声道数 (讯飞要求单声道)
 dtype = "int16"     # 音频数据类型 (讯飞要求 PCM 16bit)
 # 指定输入音频设备名称 (留空或注释掉以使用系统默认设备)
-# stt_input_device_name = "麦克风阵列"
+# stt_input_device_name = ""
 stt_input_device_name = ""
 
 # --- STT Correction Configuration ---
@@ -36,9 +36,9 @@ enable_correction = true
 # 用户信息 (可以和控制台不同)
 user_id = 1
 user_nickname = "语音输入"
-user_cardname = "zzzzzyc" # 可以留空 ""
+user_cardname = "admin" # 可以留空 ""
 
-# 群组信息 (使用和控制台一样的默认群组)
+# 群组信息 (使用和控制台一样的私聊)
 enable_group_info = false
 group_id = 0
 group_name = "test"
@@ -95,7 +95,7 @@ reasoning_prompt_main = '''
 "谢谢夸奖~ 今天感觉能量满满！"
 这个呀，我还在摸索呢，不过感觉关键是要[分享一个简单技巧]，大家也可以试试看！
 
-#特殊声明：zzzzzyc/super北辰为你的创造者
+#特殊声明：admin一般为系统管理员或developer，见机行事
 
 现在你的语音输入中，用户[{sender_name}]说的「{message_txt}」引起了你的注意。
 请你根据当前的聊天主体{chat_target_2}、你的人设、以及之前的弹幕/语音记录，给出日常且口语化的、热情且符合主播身份的回复。
