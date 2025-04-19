@@ -1,0 +1,17 @@
+# src/plugins/sticker/config.toml
+
+[sticker]
+# 是否启用此插件
+enabled = true
+
+# 冷却时间
+cool_down_seconds = 10
+
+# 每次显示持续时长
+display_duration_seconds = 3
+
+
+sticker_size = 0.33    # 表情贴纸大小
+sticker_rotation = 0   # 表情贴纸旋转角度
+sticker_position_x = 0 # 表情贴纸位置x
+sticker_position_y = 0 # 表情贴纸位置y

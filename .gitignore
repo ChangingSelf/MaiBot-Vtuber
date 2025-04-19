@@ -178,4 +178,4 @@ maim_message/
 token.txt
 vts_token.txt
 **/config.toml
-src/plugins/console_input/config.toml
+data/
