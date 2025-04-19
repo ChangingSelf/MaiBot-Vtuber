@@ -16,6 +16,9 @@
     content_format = ["text"]
     accept_format = ["text"]
 
+    # Prompt Context 相关设置
+    context_tags = [] # 指定要从 prompt_context 获取的标签列表，空列表表示获取所有
+
     # --- 模板信息 ---
     enable_template_info = true
     template_name = "console_te"
@@ -62,6 +65,8 @@
     例如 (根据上面的输入)：
     "谢谢夸奖~ 今天感觉能量满满！"
     这个呀，我还在摸索呢，不过感觉关键是要[分享一个简单技巧]，大家也可以试试看！
+
+   #特殊声明：admin一般为系统管理员或developer，见机行事
 
 
     现在你的调试控制台中，用户[{sender_name}]说的「{message_txt}」引起了你的注意。

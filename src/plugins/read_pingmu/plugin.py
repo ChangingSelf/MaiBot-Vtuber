@@ -67,9 +67,9 @@ class ScreenMonitorPlugin(BasePlugin):
     !!! 警告：存在隐私风险和 API 成本 !!!
     """
 
-    _is_vup_next_plugin: bool = True
+    _is_amaidesucore_plugin: bool = True
 
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         # 移除 self.logger 的初始化
 
@@ -136,6 +136,11 @@ class ScreenMonitorPlugin(BasePlugin):
 
         logger.info(f"ScreenMonitorPlugin 初始化完成。截图间隔: {self.interval}s, 模型: {self.model_name}")
 
+    async def _context_provider_wrapper(self) -> str:
+        """Async wrapper method to provide the latest description for context."""
+        # This simply calls the existing method that gets the description safely
+        return await self.get_latest_description()
+
     async def setup(self):
         await super().setup()
         if not self.enabled:
@@ -143,12 +148,12 @@ class ScreenMonitorPlugin(BasePlugin):
 
         # --- 移除 aiohttp Session 创建 ---
 
-        # 注册 Prompt 上下文提供者 (保持不变)
+        # 注册 Prompt 上下文提供者
         prompt_ctx_service = self.core.get_service("prompt_context")
         if prompt_ctx_service:
             prompt_ctx_service.register_context_provider(
                 provider_name=self.context_provider_name,
-                context_info=self.get_latest_description,  # 传递异步方法引用
+                context_info=self._context_provider_wrapper,
                 priority=self.context_priority,
                 tags=["screen", "context", "vision", "dynamic"],
             )

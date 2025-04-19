@@ -16,6 +16,9 @@
     content_format = ["text"]
     accept_format = ["text"]
 
+    # Prompt Context 相关设置
+    context_tags = [] # 指定要从 prompt_context 获取的标签列表，空列表表示获取所有
+
     # --- 模板信息 ---
     enable_template_info = true
     template_name = "console_te"

@@ -3,7 +3,7 @@
 import asyncio
 import time
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # --- Dependency Check & TOML ---
 try:
@@ -89,11 +89,32 @@ class BiliDanmakuPlugin(BasePlugin):
         self.poll_interval = max(1, self.config.get("poll_interval", 3))
         self.api_url = f"https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory?roomid={self.room_id}"
 
+        # --- Prompt Context Tags ---
+        self.context_tags: Optional[List[str]] = self.config.get("context_tags") # 读取 tags 配置
+        # 如果配置值为 null 或者不是列表，则视为 None (获取所有)
+        if not isinstance(self.context_tags, list):
+             if self.context_tags is not None:
+                 self.logger.warning(f"Config 'context_tags' is not a list ({type(self.context_tags)}), will fetch all context.")
+             self.context_tags = None # None tells get_formatted_context to get all
+        elif not self.context_tags: # Handle empty list case explicitly if needed
+            self.logger.info("'context_tags' is empty, will fetch all context.")
+            self.context_tags = None # Treat empty list same as None for get_formatted_context
+        else:
+            self.logger.info(f"Will fetch context with tags: {self.context_tags}")
+
         # --- 状态变量 ---
         self._latest_timestamp: float = time.time()  # 初始化为当前时间
         self._session: Optional[aiohttp.ClientSession] = None
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
+
+        # --- Load Template Items Separately (if enabled and exists within config) ---
+        self.template_items = None
+        if self.config.get("enable_template_info", False): # Use the flag from bili_danmaku config
+            # Load template_items directly from the loaded config dictionary
+            self.template_items = self.config.get("template_items", {})
+            if not self.template_items:
+                self.logger.warning("BiliDanmaku 配置启用了 template_info，但在 config.toml 中未找到 template_items。")
 
         self.logger.info(f"BiliDanmakuPlugin 初始化完成 (房间: {self.room_id}, 间隔: {self.poll_interval}s)。")
 
@@ -193,7 +214,7 @@ class BiliDanmakuPlugin(BasePlugin):
                         self.logger.info(f"收到 {len(new_danmakus)} 条新弹幕")
                         for item in new_danmakus:
                             try:
-                                message = self._create_danmaku_message(item)
+                                message = await self._create_danmaku_message(item)
                                 if message:
                                     await self.core.send_to_maicore(message)
                             except Exception as e:
@@ -218,7 +239,7 @@ class BiliDanmakuPlugin(BasePlugin):
             # 捕获更广泛的异常，例如 JSON 解码错误
             self.logger.exception(f"处理 Bilibili 弹幕时发生未知错误: {e}")  # 使用 exception 记录 traceback
 
-    def _create_danmaku_message(self, item: Dict[str, Any]) -> Optional[MessageBase]:
+    async def _create_danmaku_message(self, item: Dict[str, Any]) -> Optional[MessageBase]:
         """根据弹幕数据和配置创建 MessageBase 对象"""
         text = item.get("text", "")
         nickname = item.get("nickname", "未知用户")
@@ -261,33 +282,44 @@ class BiliDanmakuPlugin(BasePlugin):
         additional_config["bili_uid"] = str(user_id) if item.get("uid") else None
         additional_config["maimcore_reply_probability_gain"] = 1
 
-        # --- Base Message Info ---
+        # --- Template Info (Conditional & Modification) --- Aligning with ConsoleInput ---
         final_template_info_value = None
-        # 获取 prompt_context 服务并添加上下文
-        prompt_ctx_service = self.core.get_service("prompt_context")
-        if prompt_ctx_service:
-            try:
-                # 获取带有指定标签的上下文
-                additional_context = prompt_ctx_service.get_formatted_context(
-                    tags=["vts", "action", "hotkey", "instruction"]
-                )
-                if additional_context:
-                    self.logger.debug(f"获取到VTS Prompt 上下文: '{additional_context[:100]}...'")
-                    # 创建模板项
-                    template_items = {"reasoning_prompt_main": additional_context}
-                    final_template_info_value = TemplateInfo(
-                        template_items=template_items,
-                    )
-            except Exception as e:
-                self.logger.error(f"调用 prompt_context 服务时出错: {e}", exc_info=True)
+        if self.config.get("enable_template_info", False) and self.template_items:
+            # 1. 获取原始模板项 (创建副本)
+            modified_template_items = (self.template_items or {}).copy()
 
+            # 2. --- 获取并追加 Prompt 上下文 ---
+            additional_context = ""
+            prompt_ctx_service = self.core.get_service("prompt_context")
+            if prompt_ctx_service:
+                try:
+                    # 获取上下文，使用 self.context_tags
+                    additional_context = await prompt_ctx_service.get_formatted_context(tags=self.context_tags)
+                    if additional_context:
+                        self.logger.debug(f"获取到聚合 Prompt 上下文: '{additional_context[:100]}...'")
+                except Exception as e:
+                    self.logger.error(f"调用 prompt_context 服务时出错: {e}", exc_info=True)
+
+            # 3. 修改主 Prompt (如果上下文非空且主 Prompt 存在)
+            main_prompt_key = "reasoning_prompt_main"  # 假设主 Prompt 的键
+            if additional_context and main_prompt_key in modified_template_items:
+                original_prompt = modified_template_items[main_prompt_key]
+                # 追加上下文
+                modified_template_items[main_prompt_key] = original_prompt + "\n" + additional_context
+                self.logger.debug(f"已将聚合上下文追加到 '{main_prompt_key}'。")
+
+            # 4. 使用修改后的模板项构建最终结构 (使用字典而非 TemplateInfo类)
+            final_template_info_value = {"template_items": modified_template_items}
+        # else: # 不需要模板或模板项为空时，final_template_info_value 保持 None
+
+        # --- Base Message Info ---
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             message_id=f"bili_{self.room_id}_{int(timestamp)}_{hash(text + str(user_id)) % 10000}",
             time=int(timestamp),
             user_info=user_info,
             group_info=group_info,
-            template_info=final_template_info_value,
+            template_info=final_template_info_value, # Use the potentially modified dict
             format_info=format_info,
             additional_config=additional_config,
         )

@@ -67,6 +67,29 @@ class LLMTextProcessorPlugin(BasePlugin):
             self.logger.warning("LLMTextProcessorPlugin is disabled in the configuration.")
             return
 
+        # --- Read configuration values from self.config --- 
+        self.base_url = self.config.get("base_url")
+        self.api_key = self.config.get("api_key")
+        self.model_name = self.config.get("model_name", "default-model") # Provide a default
+        self.timeout = self.config.get("timeout", 10) # Provide a default
+        self.max_retries = self.config.get("max_retries", 2) # Provide a default
+        self.cleanup_prompt = self.config.get("cleanup_prompt_template", "") # Load cleanup prompt
+        self.correction_prompt = self.config.get("correction_prompt_template", "") # Load correction prompt
+        
+        # --- Validate essential config ---
+        if not self.base_url:
+            self.logger.error("Missing 'base_url' in llm_text_processor config. Plugin disabled.")
+            self.enabled = False
+            return
+        if not self.api_key:
+            self.logger.warning("Missing 'api_key' in llm_text_processor config. Set to '-' if no key is needed.")
+            # Decide if this is an error or just a warning depending on API requirements
+            # If API always needs a key (even dummy), uncomment below
+            # self.enabled = False 
+            # return 
+
+        # --- Initialize OpenAI Client ---
+        self.client: Optional[AsyncOpenAI] = None # Ensure client is initialized to None
         try:
             self.client = AsyncOpenAI(
                 base_url=self.base_url,
@@ -78,7 +101,7 @@ class LLMTextProcessorPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"初始化 LLM 客户端失败: {e}", exc_info=True)
             self.enabled = False
-            self.client = None
+            # No need to set self.client to None here, it's already None if init fails
 
     async def setup(self):
         """Register the plugin instance as both services."""

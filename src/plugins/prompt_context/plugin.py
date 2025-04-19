@@ -99,7 +99,7 @@ class PromptContextPlugin(BasePlugin):
     def register_context_provider(
         self,
         provider_name: str,
-        context_info: str,
+        context_info: Any,
         priority: Optional[int] = None,
         tags: Optional[List[str]] = None,
         enabled: bool = True,
@@ -139,7 +139,16 @@ class PromptContextPlugin(BasePlugin):
         self.logger.info(
             f"Context provider '{provider_name}' registered/updated (Priority: {resolved_priority}, Enabled: {enabled})."
         )
-        self.logger.debug(f"'{provider_name}' context: '{context_info[:100]}...'")
+
+        # Modified debug log to handle callables
+        if callable(context_info):
+            context_repr = f"<callable: {getattr(context_info, '__name__', repr(context_info))}>"
+        elif isinstance(context_info, str):
+            context_repr = f"'{context_info[:100]}...'"
+        else:
+            context_repr = repr(context_info)
+        self.logger.debug(f"'{provider_name}' context: {context_repr}")
+
         return True
 
     def update_context_info(

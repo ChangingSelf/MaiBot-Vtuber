@@ -1,12 +1,12 @@
 # 统一的 LLM 文本处理器插件配置
-
+[llm_text_processor]
 # --- LLM 服务连接 (兼容 OpenAI API) ---
 # 用于文本清理和 STT 修正
-base_url = "http://YOUR_LLM_SERVER:3000/v1" # 你的 LLM API 基础 URL
+base_url = "http://YOUR_LLM_SERVER/v1" # 你的 LLM API 基础 URL
 api_key = "YOUR_API_KEY_HERE"               # 你的 LLM API 密钥 (如果不需要，请使用 "-")
-model_name = "qwen-max"                     # LLM 模型名称
+model_name = "qwen-turbo"                     # LLM 模型名称
 timeout = 3                                 # API 调用超时时间 (秒)
-max_retries = 2                             # 失败时最大重试次数
+max_retries = 0                             # 失败时最大重试次数
 
 # --- 文本清理相关 --- 
 cleanup_prompt_template = """
