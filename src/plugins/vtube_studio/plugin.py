@@ -431,19 +431,23 @@ class VTubeStudioPlugin(BasePlugin):
         """
         闭眼
         """
-        # 并行闭上左右眼
-        return await asyncio.gather(
-            self.set_parameter_value("EyeOpenLeft", 0), self.set_parameter_value("EyeOpenRight", 0)
-        )
+        # 并行闭上左右眼好像会有问题
+        # return await asyncio.gather(
+        #     self.set_parameter_value("EyeOpenLeft", 0), self.set_parameter_value("EyeOpenRight", 0)
+        # )
+        await self.set_parameter_value("EyeOpenLeft", 0)
+        await self.set_parameter_value("EyeOpenRight", 0)
 
     async def open_eyes(self) -> bool:
         """
         睁眼
         """
         # 并行睁开左右眼
-        return await asyncio.gather(
-            self.set_parameter_value("EyeOpenLeft", 1), self.set_parameter_value("EyeOpenRight", 1)
-        )
+        # return await asyncio.gather(
+        #     self.set_parameter_value("EyeOpenLeft", 1), self.set_parameter_value("EyeOpenRight", 1)
+        # )
+        await self.set_parameter_value("EyeOpenLeft", 1)
+        await self.set_parameter_value("EyeOpenRight", 1)
 
     async def smile(self, value: float = 1) -> bool:
         """
