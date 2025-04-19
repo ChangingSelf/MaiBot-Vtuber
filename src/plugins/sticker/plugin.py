@@ -4,7 +4,10 @@ import tomllib
 import os
 from typing import Any, Dict, Optional
 import aiohttp
-import time  # 添加 time 模块导入
+import time
+from PIL import Image
+import io
+import base64
 
 from maim_message.message_base import MessageBase
 
@@ -59,14 +62,52 @@ class StickerPlugin(BasePlugin):
         self.sticker_rotation = self.config.get("sticker_rotation", 90)
         self.sticker_position_x = self.config.get("sticker_position_x", 0)
         self.sticker_position_y = self.config.get("sticker_position_y", 0)
+        # 添加图片处理配置
+        self.image_width = self.config.get("image_width", 256)
+        self.image_height = self.config.get("image_height", 256)
         # 添加冷却时间配置和上次触发时间记录
-        self.cool_down_seconds = self.config.get("cool_down_seconds", 5)  # 从配置读取冷却时间，默认为 5 秒
-        self.last_trigger_time: float = 0.0  # 初始化上次触发时间
-        self.display_duration_seconds = self.config.get(
-            "display_duration_seconds", 3
-        )  # 从配置读取显示时长，默认为 3 秒
+        self.cool_down_seconds = self.config.get("cool_down_seconds", 5)
+        self.last_trigger_time: float = 0.0
+        self.display_duration_seconds = self.config.get("display_duration_seconds", 3)
 
         self.logger.info("表情贴纸插件初始化完成")
+
+    def resize_image_base64(self, base64_str: str) -> str:
+        """将base64图片调整为配置中指定的大小，保持原始比例"""
+        try:
+            # 解码base64
+            image_data = base64.b64decode(base64_str)
+            # 转换为PIL图像
+            image = Image.open(io.BytesIO(image_data))
+            original_width, original_height = image.size
+
+            # 计算新的尺寸
+            if self.image_width > 0 and self.image_height > 0:
+                # 如果同时设置了宽高，强制调整为指定大小
+                target_size = (self.image_width, self.image_height)
+            elif self.image_width > 0:
+                # 只设置了宽度，保持比例
+                ratio = self.image_width / original_width
+                new_height = int(original_height * ratio)
+                target_size = (self.image_width, new_height)
+            elif self.image_height > 0:
+                # 只设置了高度，保持比例
+                ratio = self.image_height / original_height
+                new_width = int(original_width * ratio)
+                target_size = (new_width, self.image_height)
+            else:
+                # 没有设置任何限制，返回原始图片
+                return base64_str
+
+            # 调整大小
+            image = image.resize(target_size, Image.Resampling.LANCZOS)
+            # 转换回base64
+            buffered = io.BytesIO()
+            image.save(buffered, format="PNG")
+            return base64.b64encode(buffered.getvalue()).decode("utf-8")
+        except Exception as e:
+            self.logger.error(f"调整图片大小时出错: {e}")
+            return base64_str  # 如果处理失败，返回原始base64
 
     async def setup(self):
         await super().setup()
@@ -106,6 +147,8 @@ class StickerPlugin(BasePlugin):
         # --- 冷却时间检查结束 ---
 
         image_base64 = message.message_segment.data
+        # 调整图片大小
+        resized_image_base64 = self.resize_image_base64(image_base64)
 
         vts_control_service = self.core.get_service("vts_control")
         if not vts_control_service:
@@ -113,7 +156,7 @@ class StickerPlugin(BasePlugin):
             return
 
         item_instance_id = await vts_control_service.load_item(
-            custom_data_base64=image_base64,
+            custom_data_base64=resized_image_base64,
             position_x=self.sticker_position_x,
             position_y=self.sticker_position_y,
             size=self.sticker_size,
