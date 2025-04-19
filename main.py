@@ -97,6 +97,40 @@ def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
 
     logger.info("插件配置文件检查完成。")
     return config_copied
+
+# --- 新增：检查并设置主配置文件的函数 ---
+def check_and_setup_main_config(base_dir: str) -> bool:
+    """
+    检查主 config.toml。如果不存在但存在 config-template.toml，则复制模板。
+    返回 True 如果文件被复制，否则返回 False。
+    """
+    config_path = os.path.join(base_dir, "config.toml")
+    template_path = os.path.join(base_dir, "config-template.toml")
+    config_copied = False
+
+    logger.info("开始检查主配置文件...")
+
+    template_exists = os.path.exists(template_path)
+    config_exists = os.path.exists(config_path)
+
+    if template_exists and not config_exists:
+        try:
+            shutil.copy2(template_path, config_path)
+            logger.info(f"主配置文件 config.toml 不存在，已从 config-template.toml 复制。")
+            config_copied = True
+        except Exception as e:
+            logger.error(f"从模板复制主配置文件失败: {e}")
+            # 如果主配置复制失败，应该阻止启动
+            return False # 返回 False 可能不直观，但 load_config 会处理 FileNotFoundError
+    elif not config_exists:
+        # 如果 config.toml 不存在，并且模板也不存在，load_config 会处理错误并退出
+        logger.debug("主配置文件 config.toml 不存在，且模板文件 config-template.toml 也不存在。")
+        # 让 load_config 去处理 FileNotFoundError
+    else:
+        logger.debug("主配置文件 config.toml 已存在。")
+
+    logger.info("主配置文件检查完成。")
+    return config_copied
 # >>>>>>>>>>>>>>>>>>>> Added block
 
 async def main():
@@ -122,15 +156,24 @@ async def main():
 
     logger.info("启动 Amaidesu 应用程序...")
 
+    # --- 检查并设置主配置 ---
+    main_config_copied = check_and_setup_main_config(_BASE_DIR)
+    if main_config_copied:
+        logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        logger.warning("!! 主配置文件 config.toml 已根据模板创建。                 !!")
+        logger.warning("!! 请检查根目录下的 config.toml 文件，并根据需要进行修改。   !!")
+        logger.warning("!! 修改完成后，请重新运行程序。                           !!")
+        logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        sys.exit(0) # 正常退出，让用户去修改配置
+
     # --- 加载主配置 ---
     config = load_config()
 
-    # <<<<<<<<<<<<<<<<<<<< Added block
     # --- 检查并设置插件配置 ---
     plugin_dir = os.path.join(_BASE_DIR, "src", "plugins")
-    configs_were_copied = check_and_setup_plugin_configs(plugin_dir)
+    plugin_configs_copied = check_and_setup_plugin_configs(plugin_dir)
 
-    if configs_were_copied:
+    if plugin_configs_copied:
         # 如果有任何配置文件是从模板复制的，打印提示并退出
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         logger.warning("!! 已根据模板创建了部分插件的 config.toml 文件。          !!")
@@ -142,7 +185,6 @@ async def main():
     else:
         # 如果所有配置文件都已存在，或者无需创建，则继续
         logger.info("所有必要的插件配置文件已存在或已处理。继续正常启动...")
-    # >>>>>>>>>>>>>>>>>>>> Added block
 
     # 从配置中提取参数，提供默认值或进行错误处理
     general_config = config.get("general", {})
