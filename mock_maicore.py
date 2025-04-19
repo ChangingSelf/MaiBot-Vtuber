@@ -23,6 +23,9 @@ import asyncio
 import json
 import uuid
 import time
+import os
+import random
+import base64
 from typing import Set
 
 from maim_message.message_base import BaseMessageInfo, FormatInfo, Seg, UserInfo
@@ -34,6 +37,7 @@ from aiohttp import web, WSMsgType
 CONFIG_FILE_PATH = "config.toml"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+EMOJI_PATH = "data/emoji"
 
 # 存储所有连接的 WebSocket 客户端
 clients: Set[web.WebSocketResponse] = set()
@@ -103,7 +107,27 @@ async def broadcast_message(message: MessageBase):
             )
 
 
-def build_message(content: str) -> MessageBase:
+def get_random_emoji() -> str:
+    """从表情包目录中随机选择一个表情包并转换为base64"""
+    try:
+        emoji_files = [f for f in os.listdir(EMOJI_PATH) if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
+        if not emoji_files:
+            logger.warning("表情包目录为空")
+            return None
+
+        random_emoji = random.choice(emoji_files)
+        emoji_path = os.path.join(EMOJI_PATH, random_emoji)
+
+        with open(emoji_path, "rb") as f:
+            image_data = f.read()
+            base64_data = base64.b64encode(image_data).decode("utf-8")
+            return base64_data
+    except Exception as e:
+        logger.error(f"处理表情包时出错: {e}")
+        return None
+
+
+def build_message(content: str, message_type: str = "text") -> MessageBase:
     """构建MessageBase"""
     msg_id = str(uuid.uuid4())
     now = time.time()
@@ -120,8 +144,8 @@ def build_message(content: str) -> MessageBase:
     group_info = None
 
     format_info = FormatInfo(
-        content_format=["text"],
-        accept_format=["text"],
+        content_format=["text", "emoji"],
+        accept_format=["text", "emoji"],
     )
 
     message_info = BaseMessageInfo(
@@ -135,7 +159,10 @@ def build_message(content: str) -> MessageBase:
         additional_config={},
     )
 
-    message_segment = Seg(type="text", data=content)
+    if message_type == "emoji":
+        message_segment = Seg(type="emoji", data=content)
+    else:
+        message_segment = Seg(type="text", data=content)
 
     return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=content)
 
@@ -157,6 +184,17 @@ async def console_input_loop():
                 tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
                 [task.cancel() for task in tasks]
                 break
+
+            # 处理sendEmoji命令
+            if line == "sendRandomEmoji":
+                emoji_data = get_random_emoji()
+                if emoji_data:
+                    message_to_send = build_message(emoji_data, "emoji")
+                    logger.debug(f"准备从控制台发送表情消息: {message_to_send}")
+                    await broadcast_message(message_to_send)
+                else:
+                    logger.warning("无法发送表情消息：没有可用的表情包")
+                continue
 
             # 构造消息字典
             message_to_send = build_message(line)

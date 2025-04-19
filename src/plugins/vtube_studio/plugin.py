@@ -457,7 +457,7 @@ class VTubeStudioPlugin(BasePlugin):
 
     async def load_item(
         self,
-        file_name: str = "some_item_name.jpg",
+        file_name: str = "filename.png",
         position_x: float = 0,
         position_y: float = 0.5,
         size: float = 0.33,
@@ -471,8 +471,8 @@ class VTubeStudioPlugin(BasePlugin):
         locked: bool = False,
         unload_when_plugin_disconnects: bool = True,
         custom_data_base64: str = "",
-        custom_data_ask_user_first: bool = True,
-        custom_data_skip_asking_user_if_whitelisted: bool = True,
+        custom_data_ask_user_first: bool = False,
+        custom_data_skip_asking_user_if_whitelisted: bool = False,
         custom_data_ask_timer: int = -1,
     ) -> Optional[str]:
         """
@@ -499,29 +499,33 @@ class VTubeStudioPlugin(BasePlugin):
         }
 
         response = await self.vts.request(self.vts.vts_request.BaseRequest(message_type="ItemLoadRequest", data=data))
-        if response and response.get("messageType") == "ItemLoadResponse":
-            self.logger.info(f"成功加载挂件: {response}")
-            return response.get("data", {}).get("itemInstanceID", None)
-
-        if response and response.get("messageType") == "ItemLoadValuesInvalid":
-            self.logger.error(f"加载挂件失败，参数错误: {response}")
-            return None
-        elif response and response.get("messageType") == "RequestRequiresPermission":
-            self.logger.error(f"加载挂件失败，未取得权限: {response}")
-            return None
-        else:
+        if not response or response.get("messageType") != "ItemLoadResponse":
             self.logger.error(f"加载挂件失败: {response}")
             return None
 
-    async def unload_item(self, item_instance_id: str) -> bool:
+        self.logger.info(f"成功加载挂件: {response}")
+        return response.get("data", {}).get("instanceID", None)
+
+    async def unload_item(
+        self,
+        item_instance_id_list: list[str] = [],
+        file_name_list: list[str] = [],
+        unload_all_in_scene: bool = False,
+        unload_all_loaded_by_this_plugin: bool = False,
+        allow_unloading_items_loaded_by_user_or_other_plugins: bool = True,
+    ) -> bool:
         """
         卸载挂件
         """
-        response = await self.vts.request(
-            self.vts.vts_request.BaseRequest(
-                message_type="ItemUnloadRequest", data={"itemInstanceID": item_instance_id}
-            )
-        )
+        data = {
+            "unloadAllInScene": unload_all_in_scene,
+            "unloadAllLoadedByThisPlugin": unload_all_loaded_by_this_plugin,
+            "allowUnloadingItemsLoadedByUserOrOtherPlugins": allow_unloading_items_loaded_by_user_or_other_plugins,
+            "instanceIDs": item_instance_id_list,
+            "fileNames": file_name_list,
+        }
+
+        response = await self.vts.request(self.vts.vts_request.BaseRequest(message_type="ItemUnloadRequest", data=data))
         if response and response.get("messageType") == "ItemUnloadResponse":
             self.logger.info(f"成功卸载挂件: {response}")
             return True
