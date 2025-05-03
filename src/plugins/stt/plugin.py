@@ -519,7 +519,8 @@ class STTPlugin(BasePlugin):
                         self.logger.error(f"VAD 推理错误: {vad_err}", exc_info=True)
                         continue
 
-                now = time.monotonic()
+                    now = time.monotonic()
+                    is_speech = speech_prob > self.vad_threshold
 
                     if is_speech:
                         silence_blocks = 0

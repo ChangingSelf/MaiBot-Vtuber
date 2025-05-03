@@ -90,15 +90,17 @@ class BiliDanmakuPlugin(BasePlugin):
         self.api_url = f"https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory?roomid={self.room_id}"
 
         # --- Prompt Context Tags ---
-        self.context_tags: Optional[List[str]] = self.config.get("context_tags") # 读取 tags 配置
+        self.context_tags: Optional[List[str]] = self.config.get("context_tags")  # 读取 tags 配置
         # 如果配置值为 null 或者不是列表，则视为 None (获取所有)
         if not isinstance(self.context_tags, list):
-             if self.context_tags is not None:
-                 self.logger.warning(f"Config 'context_tags' is not a list ({type(self.context_tags)}), will fetch all context.")
-             self.context_tags = None # None tells get_formatted_context to get all
-        elif not self.context_tags: # Handle empty list case explicitly if needed
+            if self.context_tags is not None:
+                self.logger.warning(
+                    f"Config 'context_tags' is not a list ({type(self.context_tags)}), will fetch all context."
+                )
+            self.context_tags = None  # None tells get_formatted_context to get all
+        elif not self.context_tags:  # Handle empty list case explicitly if needed
             self.logger.info("'context_tags' is empty, will fetch all context.")
-            self.context_tags = None # Treat empty list same as None for get_formatted_context
+            self.context_tags = None  # Treat empty list same as None for get_formatted_context
         else:
             self.logger.info(f"Will fetch context with tags: {self.context_tags}")
 
@@ -110,7 +112,7 @@ class BiliDanmakuPlugin(BasePlugin):
 
         # --- Load Template Items Separately (if enabled and exists within config) ---
         self.template_items = None
-        if self.config.get("enable_template_info", False): # Use the flag from bili_danmaku config
+        if self.config.get("enable_template_info", False):  # Use the flag from bili_danmaku config
             # Load template_items directly from the loaded config dictionary
             self.template_items = self.config.get("template_items", {})
             if not self.template_items:
@@ -319,7 +321,7 @@ class BiliDanmakuPlugin(BasePlugin):
             time=int(timestamp),
             user_info=user_info,
             group_info=group_info,
-            template_info=final_template_info_value, # Use the potentially modified dict
+            template_info=final_template_info_value,  # Use the potentially modified dict
             format_info=format_info,
             additional_config=additional_config,
         )

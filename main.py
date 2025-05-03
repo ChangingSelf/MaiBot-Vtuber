@@ -3,7 +3,7 @@ import signal
 import sys
 import os
 import argparse  # 导入 argparse
-import shutil # <<<<<<<<<<<<<<<<<<<< Added import
+import shutil  # <<<<<<<<<<<<<<<<<<<< Added import
 
 # 尝试导入 tomllib (Python 3.11+), 否则使用 toml
 try:
@@ -43,6 +43,7 @@ def load_config(config_filename: str = "config.toml") -> dict:
         logger.error(f"加载配置文件 '{config_path}' 时发生未知错误: {e}", exc_info=True)
         sys.exit(1)
 
+
 # <<<<<<<<<<<<<<<<<<<< Added block
 # --- 新增：检查并设置插件配置文件的函数 ---
 def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
@@ -55,8 +56,8 @@ def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
     try:
         # 确保插件基础目录存在
         if not os.path.isdir(plugin_base_dir):
-             logger.error(f"指定的插件目录 '{plugin_base_dir}' 不存在或不是一个目录。")
-             return False # 无法继续
+            logger.error(f"指定的插件目录 '{plugin_base_dir}' 不存在或不是一个目录。")
+            return False  # 无法继续
 
         # 遍历插件基础目录中的所有项目
         for item_name in os.listdir(plugin_base_dir):
@@ -77,14 +78,14 @@ def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
                         # 使用 copy2 保留元数据（如修改时间），虽然对 toml 可能不重要
                         shutil.copy2(template_path, config_path)
                         logger.info(f"在 '{item_name}' 中: config.toml 不存在，已从 config-template.toml 复制。")
-                        config_copied = True # 标记发生了复制
+                        config_copied = True  # 标记发生了复制
                     except Exception as e:
                         # 如果复制失败，记录错误，但不阻止检查其他插件
                         logger.error(f"在 '{item_name}' 中: 从模板复制配置文件失败: {e}")
                 elif not template_exists and not config_exists:
-                     # 这种情况可能正常（插件不需要配置），或者是个问题（缺少模板）
-                     # 可以选择性地添加更详细的日志
-                     logger.debug(f"在 '{item_name}' 中: 未找到 config.toml 或 config-template.toml。")
+                    # 这种情况可能正常（插件不需要配置），或者是个问题（缺少模板）
+                    # 可以选择性地添加更详细的日志
+                    logger.debug(f"在 '{item_name}' 中: 未找到 config.toml 或 config-template.toml。")
                 elif template_exists and config_exists:
                     # 配置文件已存在，无需操作
                     logger.debug(f"在 '{item_name}' 中: config.toml 已存在。")
@@ -93,10 +94,11 @@ def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
     except Exception as e:
         logger.error(f"检查插件配置时发生意外错误: {e}", exc_info=True)
         # 出现意外错误时，最好也阻止正常启动，因为它可能表明环境问题
-        return False # 返回 False (或可以考虑返回 True 以强制退出)
+        return False  # 返回 False (或可以考虑返回 True 以强制退出)
 
     logger.info("插件配置文件检查完成。")
     return config_copied
+
 
 # --- 新增：检查并设置主配置文件的函数 ---
 def check_and_setup_main_config(base_dir: str) -> bool:
@@ -121,7 +123,7 @@ def check_and_setup_main_config(base_dir: str) -> bool:
         except Exception as e:
             logger.error(f"从模板复制主配置文件失败: {e}")
             # 如果主配置复制失败，应该阻止启动
-            return False # 返回 False 可能不直观，但 load_config 会处理 FileNotFoundError
+            return False  # 返回 False 可能不直观，但 load_config 会处理 FileNotFoundError
     elif not config_exists:
         # 如果 config.toml 不存在，并且模板也不存在，load_config 会处理错误并退出
         logger.debug("主配置文件 config.toml 不存在，且模板文件 config-template.toml 也不存在。")
@@ -131,7 +133,10 @@ def check_and_setup_main_config(base_dir: str) -> bool:
 
     logger.info("主配置文件检查完成。")
     return config_copied
+
+
 # >>>>>>>>>>>>>>>>>>>> Added block
+
 
 async def main():
     """应用程序主入口点。"""
@@ -164,7 +169,7 @@ async def main():
         logger.warning("!! 请检查根目录下的 config.toml 文件，并根据需要进行修改。   !!")
         logger.warning("!! 修改完成后，请重新运行程序。                           !!")
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        sys.exit(0) # 正常退出，让用户去修改配置
+        sys.exit(0)  # 正常退出，让用户去修改配置
 
     # --- 加载主配置 ---
     config = load_config()
@@ -181,7 +186,7 @@ async def main():
         logger.warning("!! 特别是 API 密钥、房间号、设备名称等需要您修改的配置。   !!")
         logger.warning("!! 修改完成后，请重新运行程序。                           !!")
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        sys.exit(0) # 正常退出，让用户去修改配置
+        sys.exit(0)  # 正常退出，让用户去修改配置
     else:
         # 如果所有配置文件都已存在，或者无需创建，则继续
         logger.info("所有必要的插件配置文件已存在或已处理。继续正常启动...")
