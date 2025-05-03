@@ -33,3 +33,5 @@ enable_bili_danmaku = false
 enable_subtitle = true
 enable_dg-lab-do = false
 enable_read_pingmu = true
+enable_emotion_judge = false
+enable_sticker = false

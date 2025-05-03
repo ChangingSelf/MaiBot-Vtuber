@@ -15,7 +15,7 @@ import numpy as np
 from datetime import datetime
 from time import mktime
 from urllib.parse import urlencode, quote
-from typing import Dict, Any, Optional, AsyncGenerator, List
+from typing import Dict, Any, Optional, List, Tuple
 
 # --- Dependencies Check & TOML ---
 try:
@@ -23,14 +23,6 @@ try:
 except ImportError:
     print("依赖缺失: 请运行 'pip install torch' 来使用 VAD 功能。", file=sys.stderr)
     torch = None
-try:
-    # Attempt to load VAD model to check torch availability
-    if torch:
-        torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad", trust_repo=True)
-except Exception:
-    print("依赖缺失或加载失败: Silero VAD 模型无法加载。", file=sys.stderr)
-    # VAD won't work
-    pass
 try:
     import sounddevice as sd
 except ImportError:
@@ -41,7 +33,6 @@ try:
 except ImportError:
     print("依赖缺失: 请运行 'pip install aiohttp' 来与讯飞 API 通信。", file=sys.stderr)
     aiohttp = None
-
 try:
     import tomllib
 except ModuleNotFoundError:
@@ -87,9 +78,17 @@ STATUS_FIRST_FRAME = 0
 STATUS_CONTINUE_FRAME = 1
 STATUS_LAST_FRAME = 2
 
+# 默认 WebSocket 地址
+DEFAULT_IFLYTEK_HOST = "iat-api.xfyun.cn"
+DEFAULT_IFLYTEK_PATH = "/v2/iat"
+
 
 class STTPlugin(BasePlugin):
-    """执行 VAD 和 iFlytek STT，并将结果（可选修正后）发送到 Core。"""
+    """
+    语音转文字 (Speech-to-Text) 插件，使用讯飞流式 API 和本地 VAD。
+    使用 sounddevice 捕获音频，通过 VAD 判断话语起止，实时发送到讯飞，
+    并将最终识别结果包装成 MessageBase 发送回 Core。
+    """
 
     _is_amaidesu_plugin: bool = True  # Plugin marker
 
@@ -137,8 +136,7 @@ class STTPlugin(BasePlugin):
         else:
             self.logger.info("已加载来自 stt/config.toml 的 [message_config]。")
 
-        # --- Prompt Context Tags ---
-        # Read from message_config section
+        # --- Prompt Context Tags (from message_config) ---
         self.context_tags: Optional[List[str]] = self.message_config.get("context_tags")
         if not isinstance(self.context_tags, list):
             if self.context_tags is not None:
@@ -152,11 +150,9 @@ class STTPlugin(BasePlugin):
         else:
             self.logger.info(f"Will fetch context with tags: {self.context_tags}")
 
-        # --- Load Template Items Separately (if enabled and exists within message_config) ---
-        # STT typically doesn't need its own main prompt template
+        # --- Template Items (from message_config, for _create_stt_message) ---
         self.template_items = None
         if self.message_config.get("enable_template_info", False):
-            # Load template_items directly from the message_config dictionary
             self.template_items = self.message_config.get("template_items", {})
             if not self.template_items:
                 self.logger.warning("配置启用了 template_info，但在 message_config 中未找到 template_items。")
@@ -174,6 +170,7 @@ class STTPlugin(BasePlugin):
         if self.vad_enabled:
             try:
                 self.logger.info("加载 Silero VAD 模型... (trust_repo=True)")
+                # This loads the VAD model itself
                 self.vad_model, self.vad_utils = torch.hub.load(
                     repo_or_dir="snakers4/silero-vad",
                     model="silero_vad",
@@ -181,13 +178,17 @@ class STTPlugin(BasePlugin):
                     onnx=False,
                     trust_repo=True,
                 )
+                # Unpack utils if needed later, but might not be necessary for basic VAD
+                # (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = self.vad_utils
                 self.logger.info("Silero VAD 模型加载成功。")
             except Exception as e:
                 self.logger.error(f"加载 Silero VAD 模型失败: {e}", exc_info=True)
-                self.logger.warning("VAD 功能将不可用。")
+                self.logger.warning("VAD 功能将不可用，禁用 STT 插件。")
                 self.vad_enabled = False
+                self.enabled = False
         else:
-            self.logger.info("VAD 在配置中被禁用。")
+            self.logger.info("VAD 在配置中被禁用，无法运行真流式 STT，禁用插件。")
+            self.enabled = False
 
         # --- Audio Config ---
         self.sample_rate = self.audio_config.get("sample_rate", 16000)
@@ -203,11 +204,11 @@ class STTPlugin(BasePlugin):
         self.speech_buffer_duration = 0.2
         self.speech_buffer_frames = int(self.speech_buffer_duration * self.sample_rate / self.block_size_samples)
         self.min_silence_duration_ms = int(self.vad_config.get("silence_seconds", 1.0) * 1000)
-        self.min_speech_duration_ms = 250
-        self.max_record_seconds = self.vad_config.get("max_record_seconds", 15.0)
+        # self.min_speech_duration_ms = 250 # Not used in this streaming logic
+        # self.max_record_seconds = self.vad_config.get("max_record_seconds", 15.0) # Not used
         self.vad_threshold = self.vad_config.get("vad_threshold", 0.5)
 
-        # --- Control Flow ---
+        # --- Control Flow & State ---
         self._stt_task: Optional[asyncio.Task] = None
         self.stop_event = asyncio.Event()
 
@@ -222,12 +223,14 @@ class STTPlugin(BasePlugin):
             devices = sd.query_devices()
             if device_name:
                 for i, device in enumerate(devices):
-                    if device_name.lower() in device["name"].lower() and device[f"{kind}_channels"] > 0:
+                    if device_name.lower() in device["name"].lower() and device[f"max_{kind}_channels"] > 0:
                         self.logger.info(f"找到 {kind} 设备 '{device['name']}' (匹配 '{device_name}')，索引: {i}")
                         return i
                 self.logger.warning(f"未找到名称包含 '{device_name}' 的 {kind} 设备，将使用默认设备。")
+
             default_device_indices = sd.default.device
             default_index = default_device_indices[0] if kind == "input" else default_device_indices[1]
+
             if default_index == -1:
                 self.logger.warning(f"未找到默认 {kind} 设备。将尝试使用 None (由 sounddevice 选择)。")
                 return None
@@ -238,37 +241,63 @@ class STTPlugin(BasePlugin):
             return None
 
     async def setup(self):
-        """启动 STT 监听任务。"""
+        """启动 STT 音频捕获和处理任务。"""
         await super().setup()
         if not self.enabled:
-            self.logger.warning("STT 插件未启用或初始化失败，不启动监听任务。")
-            return
-        if not self.vad_enabled:
-            self.logger.warning("VAD 未启用或加载失败，STT 插件无法运行（目前依赖VAD）。")
+            self.logger.warning("STT 插件未启用或初始化失败，不启动。")
             return
 
         self.logger.info(
-            "启动 STT 音频监听和处理任务..."
+            "启动 STT (真流式) 音频处理任务..."
             + (f" (设备: {self.input_device_index})" if self.input_device_index is not None else " (默认设备)")
         )
         self.stop_event.clear()
-        self._stt_task = asyncio.create_task(self._run_stt_pipeline(), name="STT_Pipeline")
+        try:
+            if not self._session or self._session.closed:
+                self._session = aiohttp.ClientSession()
+                self.logger.info("已为 STT 创建 aiohttp ClientSession。")
+            self._stt_task = asyncio.create_task(self._stt_worker(), name="STT_Worker")
+        except Exception as e:
+            self.logger.error(f"启动 STT worker 或创建 session 时出错: {e}", exc_info=True)
+            if self._session and not self._session.closed:
+                await self._session.close()
+                self._session = None
+            self.enabled = False
 
     async def cleanup(self):
-        """停止 STT 任务。"""
+        """停止 STT 任务并清理资源。"""
         self.logger.info("请求停止 STT 插件...")
         self.stop_event.set()
-        if self._stt_task and not self._stt_task.done():
-            self.logger.info("正在等待 STT 任务结束 (最多 5 秒)...")
+
+        stt_task_to_wait = self._stt_task
+        self._stt_task = None
+
+        if stt_task_to_wait and not stt_task_to_wait.done():
+            self.logger.info("正在等待 STT worker 任务结束 (最多 5 秒)...")
             try:
-                await asyncio.wait_for(self._stt_task, timeout=5.0)
+                await asyncio.wait_for(stt_task_to_wait, timeout=5.0)
+                self.logger.info("STT worker 任务正常结束。")
             except asyncio.TimeoutError:
                 self.logger.warning("STT 任务在超时后仍未结束，将强制取消。")
                 self._stt_task.cancel()
             except asyncio.CancelledError:
                 self.logger.info("STT 任务已被取消。")
             except Exception as e:
-                self.logger.error(f"等待 STT 任务结束时出错: {e}", exc_info=True)
+                self.logger.error(f"等待 STT worker 任务结束时出错: {e}", exc_info=True)
+
+        self.logger.debug("清理 WebSocket 连接和 aiohttp session...")
+        await self._close_iflytek_connection(send_last_frame=False)
+
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self.logger.info("Aiohttp session 已关闭。")
+            self._session = None
+
+        self._active_ws = None
+        self._active_receiver_task = None
+        self._is_speaking = False
+        self._silence_started_time = None
+
         self.logger.info("STT 插件清理完成。")
         await super().cleanup()
 
@@ -490,7 +519,7 @@ class STTPlugin(BasePlugin):
                         self.logger.error(f"VAD 推理错误: {vad_err}", exc_info=True)
                         continue
 
-                    is_speech = speech_prob > self.vad_threshold
+                now = time.monotonic()
 
                     if is_speech:
                         silence_blocks = 0
@@ -602,49 +631,32 @@ class STTPlugin(BasePlugin):
             self.logger.error(f"启动或运行音频流时出错: {e}", exc_info=True)
             yield f"[音频流错误: {e}]"
         finally:
-            self.logger.info("停止音频流并清理 STT transcribe_stream...")
+            self.logger.info("STT worker loop finishing. Cleaning up resources...")
+            # Stop audio stream
             if stream is not None:
                 try:
                     stream.stop()
                     stream.close()
                     self.logger.debug("Sounddevice stream stopped and closed.")
                 except Exception as sd_err:
-                    self.logger.error(f"停止 sounddevice 流时出错: {sd_err}", exc_info=True)
-            await self._close_iflytek_connection(ws, receiver_task, "stream_end", close_session=False)
-            if session and not session.closed:
-                try:
-                    await session.close()
-                    self.logger.info("Aiohttp session closed in finally block.")
-                except Exception as session_err:
-                    self.logger.error(f"关闭 aiohttp session 时出错: {session_err}", exc_info=True)
-            self.logger.info("STT transcribe_stream 清理完成。")
+                    self.logger.error(f"Error stopping sounddevice stream: {sd_err}", exc_info=True)
+            # Ensure connection is closed
+            await self._close_iflytek_connection(send_last_frame=False)
+            self.logger.info("STT worker finished.")
 
-    def _build_iflytek_auth_url(self) -> str:
-        """Generates the authenticated WebSocket URL for iFlytek ASR."""
-        cfg = self.iflytek_config
-        url = f"wss://{cfg['host']}{cfg['path']}"
-        now = datetime.now()
-        date = datetime.utcfromtimestamp(mktime(now.timetuple())).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        signature_origin = f"host: {cfg['host']}\ndate: {date}\nGET {cfg['path']} HTTP/1.1"
-        signature_sha = hmac.new(
-            cfg["api_secret"].encode("utf-8"), signature_origin.encode("utf-8"), digestmod=hashlib.sha256
-        ).digest()
-        signature_sha_base64 = base64.b64encode(signature_sha).decode(encoding="utf-8")
-        authorization_origin = f'api_key="{cfg["api_key"]}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha_base64}"'
-        authorization = base64.b64encode(authorization_origin.encode("utf-8")).decode(encoding="utf-8")
-        v = {"authorization": authorization, "date": date, "host": cfg["host"]}
-        signed_url = url + "?" + urlencode(v, quote_via=quote)
-        self.logger.debug(f"生成讯飞认证 URL (结尾): ...?{urlencode(v, quote_via=quote)[-20:]}")
-        return signed_url
-
-    async def _iflytek_receiver(self, ws: aiohttp.ClientWebSocketResponse, result_future: asyncio.Future):
-        """Receives messages from iFlytek WebSocket and sets the final result."""
+    # --- Iflytek Receiver (Modified in previous step) ---
+    async def _iflytek_receiver(self, ws: aiohttp.ClientWebSocketResponse):
+        """
+        Receives messages from iFlytek WebSocket, processes results,
+        and sends the final text back to Core via send_to_maicore.
+        """
         full_text = ""
         self.logger.debug("讯飞接收器任务启动。")
         try:
             async for msg in ws:
                 if self.stop_event.is_set():
                     break
+
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     try:
                         resp = json.loads(msg.data)
@@ -658,12 +670,16 @@ class STTPlugin(BasePlugin):
                         status = data.get("status", -1)
                         result = data.get("result", {})
                         text_segment = ""
+                        # Extract text segments correctly
                         if "ws" in result:
                             for w in result["ws"]:
                                 for cw in w.get("cw", []):
                                     text_segment += cw.get("w", "")
+
                         if text_segment:
                             full_text += text_segment
+                            # self.logger.debug(f"Intermediate text: '{text_segment}' (Total: '{full_text}')") # Optional: verbose
+
                         if status == STATUS_LAST_FRAME:
                             self.logger.info("讯飞收到结束帧信号 (status=2)。")
                             if not result_future.done():
@@ -691,9 +707,7 @@ class STTPlugin(BasePlugin):
         except asyncio.CancelledError:
             self.logger.info("讯飞接收器任务被取消。")
         except Exception as e:
-            self.logger.exception("讯飞接收器任务异常。")
-            if not result_future.done():
-                result_future.set_exception(e)
+            self.logger.exception(f"讯飞接收器任务异常: {e}")
         finally:
             if not result_future.done():
                 self.logger.warning("接收器任务意外退出。设置部分结果。")
@@ -816,5 +830,5 @@ class STTPlugin(BasePlugin):
         self.logger.debug(f"讯飞连接清理完成 (原因: {reason})。")
 
 
-# --- Plugin Entry Point ---
+# --- Plugin Entry Point --- (Keep as is)
 plugin_entrypoint = STTPlugin

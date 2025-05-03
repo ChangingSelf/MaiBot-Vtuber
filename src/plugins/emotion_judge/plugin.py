@@ -2,8 +2,8 @@
 import tomllib
 import os
 from typing import Any, Dict, Optional
-import aiohttp
-import time  # 添加 time 模块导入
+import time
+from openai import AsyncOpenAI
 
 from maim_message.message_base import MessageBase
 
@@ -59,6 +59,9 @@ class EmotionJudgePlugin(BasePlugin):
         # 添加冷却时间配置和上次触发时间记录
         self.cool_down_seconds = self.config.get("cool_down_seconds", 5)  # 从配置读取冷却时间，默认为 5 秒
         self.last_trigger_time: float = 0.0  # 初始化上次触发时间
+
+        # 初始化 OpenAI 客户端
+        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
         self.logger.info("EmotionJudgePlugin initialized.")
 
@@ -131,16 +134,10 @@ class EmotionJudgePlugin(BasePlugin):
             self.logger.warning("EmotionJudgePlugin 未启用或缺少 API Key，跳过情感判断。")
             return None
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-
-        # 构建符合 SiliconFlow API 的请求体
-        # 参考: https://siliconflow.cn/zh-cn/doc/concepts
-
         hotkey_list = await self._get_hotkey_list()
+        if not hotkey_list:
+            self.logger.warning("无法获取热键列表，跳过情感判断。")
+            return None
 
         hotkey_name_list = []
         for hotkey in hotkey_list:
@@ -150,58 +147,46 @@ class EmotionJudgePlugin(BasePlugin):
         # 将热键列表转换为字符串，以便拼接到 prompt 中
         hotkey_list_str = "\n".join(hotkey_name_list)  # 使用换行符分隔
 
-        payload = {
-            "model": self.model.get("name", "Qwen/Qwen2.5-7B-Instruct"),  # 从配置读取模型名称，提供默认值
-            "messages": [
-                {
-                    "role": "system",
-                    "content": self.model.get(
-                        "system_prompt",
-                        "你是一个主播的助手，根据主播的文本内容，判断主播的情感状态，确定触发哪一个Live2D热键以帮助主播更好地表达情感。只输出热键名称，不要包含其他任何文字或解释。以下为热键列表：\n",
-                    )
-                    + hotkey_list_str,
-                },
-                {"role": "user", "content": text},
-            ],
-            "max_tokens": self.model.get("max_tokens", 10),  # 限制输出长度
-            "temperature": self.model.get("temperature", 0.3),  # 控制随机性
-            # 可以根据需要添加其他参数，如 top_p, stop 等
-        }
-        self.logger.debug(f"发送请求到 LLM API: 参数: {payload}")
-
-        api_url = f"{self.base_url.rstrip('/')}/chat/completions"
-
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, headers=headers, json=payload) as response:
-                    response.raise_for_status()  # Raises HTTPError for bad responses (4XX or 5XX)
-                    result = await response.json()
+            response = await self.client.chat.completions.create(
+                model=self.model.get("name", "Qwen/Qwen2.5-7B-Instruct"),
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self.model.get(
+                            "system_prompt",
+                            "你是一个主播的助手，根据主播的文本内容，判断主播的情感状态，确定触发哪一个Live2D热键以帮助主播更好地表达情感。只输出热键名称，不要包含其他任何文字或解释。以下为热键列表：\n",
+                        )
+                        + hotkey_list_str,
+                    },
+                    {"role": "user", "content": text},
+                ],
+                max_tokens=self.model.get("max_tokens", 10),
+                temperature=self.model.get("temperature", 0.3),
+            )
 
-                    if result and "choices" in result and result["choices"]:
-                        # 提取 LLM 返回的情感标签
-                        emotion = result["choices"][0].get("message", {}).get("content", "").strip()
-                        # 简单的后处理，去除可能的引号
-                        emotion = emotion.strip("'\"")
-                        self.logger.info(f"文本 '{text[:30]}...' 的情感判断结果: {emotion}")
+            if response.choices and response.choices[0].message:
+                # 提取 LLM 返回的情感标签
+                emotion = response.choices[0].message.content.strip()
+                # 简单的后处理，去除可能的引号
+                emotion = emotion.strip("'\"")
+                self.logger.info(f"文本 '{text[:30]}...' 的情感判断结果: {emotion}")
 
-                        # 根据情感结果触发热键
-                        if emotion:  # 确保 emotion 非空
-                            await self._trigger_hotkey(emotion)
-                            # --- 更新上次触发时间 ---
-                            self.last_trigger_time = time.monotonic()
-                            self.logger.info(f"热键 '{emotion}' 已触发，冷却时间开始。")
-                            # --- 更新结束 ---
+                # 根据情感结果触发热键
+                if emotion:  # 确保 emotion 非空
+                    await self._trigger_hotkey(emotion)
+                    # --- 更新上次触发时间 ---
+                    self.last_trigger_time = time.monotonic()
+                    self.logger.info(f"热键 '{emotion}' 已触发，冷却时间开始。")
+                    # --- 更新结束 ---
 
-                        return emotion
-                    else:
-                        self.logger.warning(f"LLM API 返回了无效的响应结构: {result}")
-                        return None
+                return emotion
+            else:
+                self.logger.warning("OpenAI API 返回了无效的响应结构")
+                return None
 
-        except aiohttp.ClientError as e:
-            self.logger.error(f"调用 LLM API 时发生网络错误: {e}", exc_info=True)
-            return None
         except Exception as e:
-            self.logger.error(f"处理 LLM 响应时发生错误: {e}", exc_info=True)
+            self.logger.error(f"调用 OpenAI API 时发生错误: {e}", exc_info=True)
             return None
 
     async def _get_hotkey_list(self) -> Optional[str]:
