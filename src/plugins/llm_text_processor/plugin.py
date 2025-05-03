@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from typing import Dict, Any, Optional
+import traceback
 
 # --- Dependency Check & TOML ---
 try:
@@ -67,15 +68,15 @@ class LLMTextProcessorPlugin(BasePlugin):
             self.logger.warning("LLMTextProcessorPlugin is disabled in the configuration.")
             return
 
-        # --- Read configuration values from self.config --- 
+        # --- Read configuration values from self.config ---
         self.base_url = self.config.get("base_url")
         self.api_key = self.config.get("api_key")
-        self.model_name = self.config.get("model_name", "default-model") # Provide a default
-        self.timeout = self.config.get("timeout", 10) # Provide a default
-        self.max_retries = self.config.get("max_retries", 2) # Provide a default
-        self.cleanup_prompt = self.config.get("cleanup_prompt_template", "") # Load cleanup prompt
-        self.correction_prompt = self.config.get("correction_prompt_template", "") # Load correction prompt
-        
+        self.model_name = self.config.get("model_name", "default-model")  # Provide a default
+        self.timeout = self.config.get("timeout", 10)  # Provide a default
+        self.max_retries = self.config.get("max_retries", 2)  # Provide a default
+        self.cleanup_prompt = self.config.get("cleanup_prompt_template", "")  # Load cleanup prompt
+        self.correction_prompt = self.config.get("correction_prompt_template", "")  # Load correction prompt
+
         # --- Validate essential config ---
         if not self.base_url:
             self.logger.error("Missing 'base_url' in llm_text_processor config. Plugin disabled.")
@@ -85,11 +86,11 @@ class LLMTextProcessorPlugin(BasePlugin):
             self.logger.warning("Missing 'api_key' in llm_text_processor config. Set to '-' if no key is needed.")
             # Decide if this is an error or just a warning depending on API requirements
             # If API always needs a key (even dummy), uncomment below
-            # self.enabled = False 
-            # return 
+            # self.enabled = False
+            # return
 
         # --- Initialize OpenAI Client ---
-        self.client: Optional[AsyncOpenAI] = None # Ensure client is initialized to None
+        self.client: Optional[AsyncOpenAI] = None  # Ensure client is initialized to None
         try:
             self.client = AsyncOpenAI(
                 base_url=self.base_url,
@@ -177,7 +178,7 @@ class LLMTextProcessorPlugin(BasePlugin):
                 retries += 1
                 self.logger.warning(f"LLM 连接错误 (尝试 {retries}/{self.max_retries}): {e}")
                 if retries > self.max_retries:
-                    self.logger.error("LLM 连接错误达到最大重试次数。")
+                    self.logger.error(f"LLM 连接错误达到最大重试次数。{traceback.format_exc()}")
                     return None
                 await asyncio.sleep(1 * retries)  # Exponential backoff
             except RateLimitError as e:

@@ -142,13 +142,15 @@ class STTPlugin(BasePlugin):
         self.context_tags: Optional[List[str]] = self.message_config.get("context_tags")
         if not isinstance(self.context_tags, list):
             if self.context_tags is not None:
-                 self.logger.warning(f"Config 'context_tags' in [message_config] is not a list ({type(self.context_tags)}), will fetch all context.")
-            self.context_tags = None # None tells get_formatted_context to get all
+                self.logger.warning(
+                    f"Config 'context_tags' in [message_config] is not a list ({type(self.context_tags)}), will fetch all context."
+                )
+            self.context_tags = None  # None tells get_formatted_context to get all
         elif not self.context_tags:
             self.logger.info("'context_tags' in [message_config] is empty, will fetch all context.")
-            self.context_tags = None # Treat empty list same as None
+            self.context_tags = None  # Treat empty list same as None
         else:
-             self.logger.info(f"Will fetch context with tags: {self.context_tags}")
+            self.logger.info(f"Will fetch context with tags: {self.context_tags}")
 
         # --- Load Template Items Separately (if enabled and exists within message_config) ---
         # STT typically doesn't need its own main prompt template
