@@ -87,9 +87,10 @@ class FunASRPlugin(BasePlugin):
         self.vad_config = self.config.get("vad", {})
         self.audio_config = self.config.get("audio", {})
         self.message_config = self.config.get("message_config", {})
+        self.enable_correction = self.config.get("enable_correction", True)
 
         # --- API Config Check ---
-        if not all(self.funasr_config.get(k) for k in ["url", "token"]):
+        if not all(self.funasr_config.get(k) for k in ["url"]):
             self.logger.error("FunASR API 配置不完整 (url, token)，插件禁用。")
             self.enabled = False
             return
@@ -197,7 +198,28 @@ class FunASRPlugin(BasePlugin):
 
                 if result and not result.startswith("["):
                     self.logger.info(f"FunASR 识别结果: '{result}'")
-                    message_to_send = await self._create_stt_message(result)
+                    final_text = result
+                    if self.enable_correction:
+                        correction_service = self.core.get_service("stt_correction")
+                        if correction_service:
+                            self.logger.debug("找到 stt_correction 服务，尝试修正文本...")
+                            try:
+                                corrected = await correction_service.correct_text(result)
+                                if corrected:
+                                    self.logger.info(f"修正后 STT 结果: '{corrected}'")
+                                    final_text = corrected
+                                else:
+                                    self.logger.info("STT 修正服务未返回有效结果，使用原始文本。")
+                            except AttributeError:
+                                self.logger.error("获取到的 'stt_correction' 服务没有 'correct_text' 方法。")
+                            except Exception as e:
+                                self.logger.error(f"调用 stt_correction 服务时出错: {e}", exc_info=True)
+                        else:
+                            self.logger.warning("配置启用了 STT 修正，但未找到 'stt_correction' 服务。")
+                    if "none" in final_text.lower():
+                        self.logger.info("FunASR 识别结果为 'none'，跳过发送。")
+                        continue
+                    message_to_send = await self._create_stt_message(final_text)
                     self.logger.debug(f"准备发送 STT 消息对象: {repr(message_to_send)}")
                     await self.core.send_to_maicore(message_to_send)
                 elif result:
@@ -287,7 +309,7 @@ class FunASRPlugin(BasePlugin):
     async def transcribe_stream(self) -> AsyncGenerator[str, None]:
         """捕获音频流，执行简单 VAD，发送到 FunASR，返回结果。"""
         loop = asyncio.get_event_loop()
-        q = asyncio.Queue(maxsize=100)
+        q = asyncio.Queue(maxsize=10000)
         audio_buffer = []
         is_recording = False
         silence_counter = 0
