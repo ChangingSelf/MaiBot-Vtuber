@@ -10,7 +10,7 @@ import hmac
 import json
 import ssl
 import time
-import collections # Keep collections for potential future use if needed
+import collections  # Keep collections for potential future use if needed
 import numpy as np
 from datetime import datetime
 from time import mktime
@@ -93,10 +93,10 @@ class STTPlugin(BasePlugin):
     _is_amaidesu_plugin: bool = True  # Plugin marker
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
-        super().__init__(core, plugin_config) # Initialize BasePlugin
-        self.config = load_plugin_config() # Load plugin-specific config
+        super().__init__(core, plugin_config)  # Initialize BasePlugin
+        self.config = load_plugin_config()  # Load plugin-specific config
         self.enabled = True  # Assume enabled unless dependencies fail
-        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}") # More specific logger
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")  # More specific logger
 
         # --- Basic Dependency Check ---
         if torch is None or sd is None or aiohttp is None or tomllib is None:
@@ -108,20 +108,22 @@ class STTPlugin(BasePlugin):
         self.iflytek_config = self.config.get("iflytek_asr", {})
         self.vad_config = self.config.get("vad", {})
         self.audio_config = self.config.get("audio", {})
-        self.message_config = self.config.get("message_config", {}) # Used by _create_stt_message
-        self.enable_correction = self.config.get("enable_correction", True) # For potential future use
+        self.message_config = self.config.get("message_config", {})  # Used by _create_stt_message
+        self.enable_correction = self.config.get("enable_correction", True)  # For potential future use
 
         # --- Prompt Context Tags (from message_config) ---
         self.context_tags: Optional[List[str]] = self.message_config.get("context_tags")
         if not isinstance(self.context_tags, list):
             if self.context_tags is not None:
-                 self.logger.warning(f"Config 'context_tags' in [message_config] is not a list ({type(self.context_tags)}), will fetch all context.")
+                self.logger.warning(
+                    f"Config 'context_tags' in [message_config] is not a list ({type(self.context_tags)}), will fetch all context."
+                )
             self.context_tags = None
         elif not self.context_tags:
             self.logger.info("'context_tags' in [message_config] is empty, will fetch all context.")
             self.context_tags = None
         else:
-             self.logger.info(f"Will fetch context with tags: {self.context_tags}")
+            self.logger.info(f"Will fetch context with tags: {self.context_tags}")
 
         # --- Template Items (from message_config, for _create_stt_message) ---
         self.template_items = None
@@ -139,7 +141,7 @@ class STTPlugin(BasePlugin):
         # --- VAD Model Loading ---
         self.vad_enabled = self.vad_config.get("enable", True)
         self.vad_model = None
-        self.vad_utils = None # Silero VAD specific utils, might not be needed directly
+        self.vad_utils = None  # Silero VAD specific utils, might not be needed directly
         if self.vad_enabled:
             try:
                 self.logger.info("加载 Silero VAD 模型... (trust_repo=True)")
@@ -148,7 +150,7 @@ class STTPlugin(BasePlugin):
                     repo_or_dir="snakers4/silero-vad",
                     model="silero_vad",
                     force_reload=False,
-                    onnx=False, # Assuming we want PyTorch version
+                    onnx=False,  # Assuming we want PyTorch version
                     trust_repo=True,
                 )
                 # Unpack utils if needed later, but might not be necessary for basic VAD
@@ -164,12 +166,14 @@ class STTPlugin(BasePlugin):
             self.enabled = False
 
         # --- Audio Config ---
-        self.sample_rate = self.audio_config.get("sample_rate", 16000) # Ensure this matches Iflytek's requirement (16k or 8k)
+        self.sample_rate = self.audio_config.get(
+            "sample_rate", 16000
+        )  # Ensure this matches Iflytek's requirement (16k or 8k)
         if self.sample_rate not in [8000, 16000]:
-             self.logger.warning(f"Sample rate {self.sample_rate} is not 8000 or 16000, using 16000.")
-             self.sample_rate = 16000
+            self.logger.warning(f"Sample rate {self.sample_rate} is not 8000 or 16000, using 16000.")
+            self.sample_rate = 16000
         self.channels = self.audio_config.get("channels", 1)
-        self.dtype_str = self.audio_config.get("dtype", "int16") # Iflytek expects int16 (L16)
+        self.dtype_str = self.audio_config.get("dtype", "int16")  # Iflytek expects int16 (L16)
         self.dtype = np.int16 if self.dtype_str == "int16" else np.float32
         self.input_device_name = self.audio_config.get("stt_input_device_name") or None
         self.input_device_index = self._find_device_index(self.input_device_name, kind="input")
@@ -182,13 +186,17 @@ class STTPlugin(BasePlugin):
             self.block_size_samples = 256
         else:
             # Should have been corrected earlier, but set a default just in case
-            self.logger.error(f"Unsupported sample rate {self.sample_rate} for VAD block size calculation. Falling back to 16kHz/512 samples.")
-            self.sample_rate = 16000 # Correct sample rate if inconsistent
+            self.logger.error(
+                f"Unsupported sample rate {self.sample_rate} for VAD block size calculation. Falling back to 16kHz/512 samples."
+            )
+            self.sample_rate = 16000  # Correct sample rate if inconsistent
             self.block_size_samples = 512
 
         # Calculate block_size_ms based on the required sample count
         self.block_size_ms = int(self.block_size_samples * 1000 / self.sample_rate)
-        self.logger.info(f"Using VAD block size: {self.block_size_samples} samples ({self.block_size_ms} ms) for sample rate {self.sample_rate}")
+        self.logger.info(
+            f"Using VAD block size: {self.block_size_samples} samples ({self.block_size_ms} ms) for sample rate {self.sample_rate}"
+        )
 
         # These might not be strictly needed anymore if processing chunk by chunk
         # self.speech_buffer_duration = 0.2
@@ -202,7 +210,7 @@ class STTPlugin(BasePlugin):
         # --- Control Flow & State ---
         self._stt_task: Optional[asyncio.Task] = None
         self.stop_event = asyncio.Event()
-        self._internal_audio_queue = asyncio.Queue(maxsize=100) # Internal queue for audio chunks
+        self._internal_audio_queue = asyncio.Queue(maxsize=100)  # Internal queue for audio chunks
 
         # WebSocket and Session state variables
         self._session: Optional[aiohttp.ClientSession] = None
@@ -236,10 +244,12 @@ class STTPlugin(BasePlugin):
 
             default_device_info = sd.query_devices(default_index)
             if default_device_info[f"max_{kind}_channels"] > 0:
-                 self.logger.info(f"使用默认 {kind} 设备索引: {default_index} ({default_device_info['name']})")
-                 return default_index
+                self.logger.info(f"使用默认 {kind} 设备索引: {default_index} ({default_device_info['name']})")
+                return default_index
             else:
-                self.logger.warning(f"默认设备 {default_index} ({default_device_info['name']}) 没有 {kind} 通道。尝试使用 None。")
+                self.logger.warning(
+                    f"默认设备 {default_index} ({default_device_info['name']}) 没有 {kind} 通道。尝试使用 None。"
+                )
                 return None
 
         except Exception as e:
@@ -287,9 +297,9 @@ class STTPlugin(BasePlugin):
                 self.logger.warning("STT worker 任务在超时后仍未结束，将强制取消。")
                 stt_task_to_wait.cancel()
                 try:
-                     await stt_task_to_wait
+                    await stt_task_to_wait
                 except asyncio.CancelledError:
-                     self.logger.info("STT worker 任务被成功取消。")
+                    self.logger.info("STT worker 任务被成功取消。")
             except asyncio.CancelledError:
                 self.logger.info("STT worker 任务已被取消 (在等待前)。")
             except Exception as e:
@@ -322,25 +332,25 @@ class STTPlugin(BasePlugin):
         # Check if existing connection is active and receiver is running
         if self._active_ws and not self._active_ws.closed:
             if self._active_receiver_task and not self._active_receiver_task.done():
-                 return True # Connection is valid
+                return True  # Connection is valid
             else:
-                 self.logger.warning("WebSocket 存在但接收器任务未运行，将尝试重新连接。")
-                 # Use the new close function to clean up
-                 await self._close_iflytek_connection(send_last_frame=False)
+                self.logger.warning("WebSocket 存在但接收器任务未运行，将尝试重新连接。")
+                # Use the new close function to clean up
+                await self._close_iflytek_connection(send_last_frame=False)
 
         # Ensure session exists
         if not self._session or self._session.closed:
-             self.logger.warning("Aiohttp session 已关闭或未初始化，正在重新创建。")
-             try:
-                 self._session = aiohttp.ClientSession()
-                 self.logger.info("已为 STT 创建新的 aiohttp session。")
-             except Exception as e:
-                 self.logger.error(f"创建 aiohttp session 失败: {e}", exc_info=True)
-                 return False # Cannot proceed
+            self.logger.warning("Aiohttp session 已关闭或未初始化，正在重新创建。")
+            try:
+                self._session = aiohttp.ClientSession()
+                self.logger.info("已为 STT 创建新的 aiohttp session。")
+            except Exception as e:
+                self.logger.error(f"创建 aiohttp session 失败: {e}", exc_info=True)
+                return False  # Cannot proceed
 
         # Attempt to establish new connection
         try:
-            auth_url = self._build_iflytek_auth_url() # Use existing auth URL builder
+            auth_url = self._build_iflytek_auth_url()  # Use existing auth URL builder
             self.logger.info("尝试连接到讯飞 WebSocket...")
             # Specify SSL context explicitly for wss
             ssl_context = ssl.create_default_context()
@@ -348,26 +358,28 @@ class STTPlugin(BasePlugin):
                 auth_url,
                 autoping=True,
                 heartbeat=30,
-                ssl=ssl_context # Use explicit SSL context
+                ssl=ssl_context,  # Use explicit SSL context
             )
             self.logger.info("成功连接到讯飞 WebSocket。")
 
             # Ensure previous receiver task is cancelled before starting new one
             if self._active_receiver_task and not self._active_receiver_task.done():
-                 self.logger.warning("发现残留的接收器任务，正在取消...")
-                 self._active_receiver_task.cancel()
-                 try:
-                      await asyncio.wait_for(self._active_receiver_task, timeout=1.0)
-                 except (asyncio.CancelledError, asyncio.TimeoutError):
-                      pass # Ignore errors during cleanup of old task
+                self.logger.warning("发现残留的接收器任务，正在取消...")
+                self._active_receiver_task.cancel()
+                try:
+                    await asyncio.wait_for(self._active_receiver_task, timeout=1.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass  # Ignore errors during cleanup of old task
 
             # Start the new receiver task
-            self._active_receiver_task = asyncio.create_task(self._iflytek_receiver(self._active_ws), name="IflytekReceiver")
+            self._active_receiver_task = asyncio.create_task(
+                self._iflytek_receiver(self._active_ws), name="IflytekReceiver"
+            )
             self.logger.info("已启动讯飞接收器任务。")
-            return True # Connection and receiver started successfully
+            return True  # Connection and receiver started successfully
 
-        except ValueError as e: # Catch config errors from auth URL build
-             self.logger.error(f"构建认证 URL 失败 (检查 API 配置): {e}")
+        except ValueError as e:  # Catch config errors from auth URL build
+            self.logger.error(f"构建认证 URL 失败 (检查 API 配置): {e}")
         except aiohttp.ClientConnectorError as e:
             self.logger.error(f"连接讯飞 WebSocket 失败: 连接错误 - {e}")
         except aiohttp.WSServerHandshakeError as e:
@@ -378,17 +390,17 @@ class STTPlugin(BasePlugin):
         # --- Cleanup partially created resources on failure --- (Corrected Structure)
         self.logger.debug("连接尝试失败，清理可能存在的局部资源...")
         if self._active_ws and not self._active_ws.closed:
-             try:
-                 await self._active_ws.close()
-                 self.logger.debug("在连接/启动接收器失败后关闭了部分创建的 WebSocket 连接。")
-             except Exception as close_err:
-                  self.logger.error(f"尝试关闭部分创建的 WebSocket 时出错: {close_err}")
+            try:
+                await self._active_ws.close()
+                self.logger.debug("在连接/启动接收器失败后关闭了部分创建的 WebSocket 连接。")
+            except Exception as close_err:
+                self.logger.error(f"尝试关闭部分创建的 WebSocket 时出错: {close_err}")
         self._active_ws = None
         if self._active_receiver_task and not self._active_receiver_task.done():
-             self._active_receiver_task.cancel()
+            self._active_receiver_task.cancel()
         self._active_receiver_task = None
 
-        return False # Explicitly return False indicating connection failure
+        return False  # Explicitly return False indicating connection failure
 
     # This is the NEW close function for the true streaming approach
     async def _close_iflytek_connection(self, send_last_frame: bool = True):
@@ -416,15 +428,15 @@ class STTPlugin(BasePlugin):
         try:
             if send_last_frame:
                 try:
-                    last_frame = self._build_iflytek_frame(STATUS_LAST_FRAME) # Build frame using instance method
+                    last_frame = self._build_iflytek_frame(STATUS_LAST_FRAME)  # Build frame using instance method
                     await asyncio.wait_for(ws_to_close.send_bytes(last_frame), timeout=2.0)
                     self.logger.debug("已发送结束帧 (STATUS_LAST_FRAME) 到讯飞。")
                 except ConnectionResetError:
-                     self.logger.warning("尝试发送结束帧时连接已重置。")
+                    self.logger.warning("尝试发送结束帧时连接已重置。")
                 except asyncio.TimeoutError:
-                     self.logger.warning("发送结束帧超时。")
+                    self.logger.warning("发送结束帧超时。")
                 except Exception as send_err:
-                     self.logger.error(f"发送结束帧时出错: {send_err}", exc_info=True)
+                    self.logger.error(f"发送结束帧时出错: {send_err}", exc_info=True)
 
             # Wait briefly for the receiver task
             if receiver_task_to_await and not receiver_task_to_await.done():
@@ -438,7 +450,7 @@ class STTPlugin(BasePlugin):
                 except asyncio.CancelledError:
                     self.logger.info("等待期间接收器任务已被取消。")
                 except Exception as e:
-                     self.logger.exception(f"等待接收器任务时出错: {e}")
+                    self.logger.exception(f"等待接收器任务时出错: {e}")
 
             # Close the WebSocket
             await ws_to_close.close()
@@ -447,11 +459,11 @@ class STTPlugin(BasePlugin):
         except asyncio.CancelledError:
             self.logger.info("连接关闭任务被取消。")
             if not ws_to_close.closed:
-                await ws_to_close.close() # Ensure close
+                await ws_to_close.close()  # Ensure close
         except Exception as e:
             self.logger.exception(f"关闭讯飞连接过程中出错: {e}")
         finally:
-             # Final safety net: ensure task is cancelled
+            # Final safety net: ensure task is cancelled
             if receiver_task_to_await and not receiver_task_to_await.done():
                 receiver_task_to_await.cancel()
 
@@ -462,13 +474,13 @@ class STTPlugin(BasePlugin):
         processes chunks with VAD, manages WebSocket connection, sends audio stream,
         and the receiver sends final recognized text back to Core.
         """
-        if not self.vad_model: # VAD check already done in setup, but double-check
+        if not self.vad_model:  # VAD check already done in setup, but double-check
             self.logger.critical("VAD model not loaded. STT worker cannot run.")
             return
 
         loop = asyncio.get_event_loop()
         stream = None
-        self._internal_audio_queue = asyncio.Queue(maxsize=100) # Ensure queue is created
+        self._internal_audio_queue = asyncio.Queue(maxsize=100)  # Ensure queue is created
 
         def audio_callback(indata: np.ndarray, frame_count: int, time_info: Any, status: sd.CallbackFlags):
             """Callback function for sounddevice stream. Puts raw bytes into queue."""
@@ -477,25 +489,27 @@ class STTPlugin(BasePlugin):
             try:
                 # Convert numpy array to bytes (int16 is expected by Iflytek)
                 if indata.dtype == np.float32:
-                     indata_int16 = (indata * 32767.0).astype(np.int16)
+                    indata_int16 = (indata * 32767.0).astype(np.int16)
                 elif indata.dtype == np.int16:
-                     indata_int16 = indata
+                    indata_int16 = indata
                 else:
-                     self.logger.warning(f"Unsupported input dtype {indata.dtype}, attempting cast to int16.")
-                     indata_int16 = indata.astype(np.int16)
+                    self.logger.warning(f"Unsupported input dtype {indata.dtype}, attempting cast to int16.")
+                    indata_int16 = indata.astype(np.int16)
 
                 # Ensure mono if necessary
                 if indata_int16.ndim > 1 and self.channels == 1:
-                     audio_bytes = indata_int16[:, 0].tobytes()
+                    audio_bytes = indata_int16[:, 0].tobytes()
                 elif indata_int16.ndim == 1 and self.channels == 1:
                     audio_bytes = indata_int16.tobytes()
                 else:
-                    self.logger.warning(f"Unexpected audio dimensions: {indata_int16.shape} for channels: {self.channels}")
+                    self.logger.warning(
+                        f"Unexpected audio dimensions: {indata_int16.shape} for channels: {self.channels}"
+                    )
                     # Attempt to take first channel if stereo but configured mono
                     if indata_int16.ndim > 1:
                         audio_bytes = indata_int16[:, 0].tobytes()
                     else:
-                        audio_bytes = indata_int16.tobytes() # Fallback
+                        audio_bytes = indata_int16.tobytes()  # Fallback
 
                 # Put data into the internal queue
                 loop.call_soon_threadsafe(self._internal_audio_queue.put_nowait, audio_bytes)
@@ -504,7 +518,7 @@ class STTPlugin(BasePlugin):
                 # self.logger.warning("Internal STT audio queue full! Discarding data.") # Too noisy
                 pass
             except Exception as e:
-                 self.logger.error(f"Error in audio callback: {e}", exc_info=True)
+                self.logger.error(f"Error in audio callback: {e}", exc_info=True)
 
         try:
             # --- Start Audio Stream --- (Moved inside worker)
@@ -514,21 +528,23 @@ class STTPlugin(BasePlugin):
                 blocksize=self.block_size_samples,
                 device=self.input_device_index,
                 channels=self.channels,
-                dtype=self.dtype_str, # Use configured dtype for input
+                dtype=self.dtype_str,  # Use configured dtype for input
                 callback=audio_callback,
             )
             stream.start()
             self.logger.info(f"Audio stream started. Listening for speech (VAD Threshold: {self.vad_threshold})...")
 
             # --- Processing Loop --- (Reads from internal queue)
-            speech_chunk_count = 0 # Track chunks sent in current utterance
+            speech_chunk_count = 0  # Track chunks sent in current utterance
             # Timeout should be slightly less than silence threshold for responsiveness
             timeout_duration = max(0.1, self.min_silence_duration_ms / 1000.0 * 0.8)
 
             while not self.stop_event.is_set():
                 try:
                     # Wait for audio chunk from the internal queue with timeout
-                    audio_chunk_bytes = await asyncio.wait_for(self._internal_audio_queue.get(), timeout=timeout_duration)
+                    audio_chunk_bytes = await asyncio.wait_for(
+                        self._internal_audio_queue.get(), timeout=timeout_duration
+                    )
                     self._internal_audio_queue.task_done()
 
                 except asyncio.TimeoutError:
@@ -541,25 +557,31 @@ class STTPlugin(BasePlugin):
                         # Continue loop to check silence duration on next iteration or timeout
 
                     # Check if silence duration threshold has been reached *now*
-                    if self._silence_started_time is not None and (time.monotonic() - self._silence_started_time > self.min_silence_duration_ms / 1000.0):
+                    if self._silence_started_time is not None and (
+                        time.monotonic() - self._silence_started_time > self.min_silence_duration_ms / 1000.0
+                    ):
                         # Silence duration threshold reached
                         if self._active_ws:
-                            self.logger.info(f"Silence duration exceeded threshold ({self.min_silence_duration_ms}ms). Ending utterance via timeout.")
+                            self.logger.info(
+                                f"Silence duration exceeded threshold ({self.min_silence_duration_ms}ms). Ending utterance via timeout."
+                            )
                             # Only close if we actually sent something
                             if speech_chunk_count > 0:
                                 await self._close_iflytek_connection(send_last_frame=True)
                             else:
-                                self.logger.info("Silence threshold reached but no speech chunks were sent. Closing connection silently.")
+                                self.logger.info(
+                                    "Silence threshold reached but no speech chunks were sent. Closing connection silently."
+                                )
                                 await self._close_iflytek_connection(send_last_frame=False)
-                            speech_chunk_count = 0 # Reset count
-                            self._is_speaking = False # Ensure state reset
+                            speech_chunk_count = 0  # Reset count
+                            self._is_speaking = False  # Ensure state reset
                         # else: No active connection, just reset timer below
-                        self._silence_started_time = None # Reset timer after handling
+                        self._silence_started_time = None  # Reset timer after handling
                     # Continue loop after timeout handling
                     continue
                 except asyncio.CancelledError:
                     self.logger.info("Internal audio queue get cancelled.")
-                    break # Exit loop if queue get is cancelled
+                    break  # Exit loop if queue get is cancelled
 
                 # --- VAD Check --- (Process the received audio chunk)
                 try:
@@ -568,8 +590,8 @@ class STTPlugin(BasePlugin):
                     # Convert to float32 for Silero VAD
                     audio_float32 = audio_np.astype(np.float32) / 32768.0
                     if audio_float32.ndim == 0 or audio_float32.size == 0:
-                         # self.logger.warning("Empty audio chunk after conversion, skipping VAD.")
-                         continue # Skip empty chunks
+                        # self.logger.warning("Empty audio chunk after conversion, skipping VAD.")
+                        continue  # Skip empty chunks
                     audio_tensor = torch.from_numpy(audio_float32)
 
                     # Perform VAD check
@@ -589,36 +611,38 @@ class STTPlugin(BasePlugin):
                         # -- Transition: Silence -> Speech (Utterance Start) --
                         self.logger.info(f"VAD: Speech started (Prob: {speech_prob:.2f})")
                         self._is_speaking = True
-                        self._silence_started_time = None # Clear silence timer
-                        speech_chunk_count = 0 # Reset count for new utterance
+                        self._silence_started_time = None  # Clear silence timer
+                        speech_chunk_count = 0  # Reset count for new utterance
 
                         # Ensure connection exists or establish one
                         if not await self._ensure_iflytek_connection():
                             self.logger.error("Failed to establish STT connection, cannot start utterance.")
-                            self._is_speaking = False # Reset state
-                            continue # Skip this chunk
+                            self._is_speaking = False  # Reset state
+                            continue  # Skip this chunk
 
                         # Send First Frame (Contains the first speech chunk)
                         if self._active_ws:
                             try:
                                 first_frame = self._build_iflytek_frame(STATUS_FIRST_FRAME, audio_chunk_bytes)
                                 await asyncio.wait_for(self._active_ws.send_bytes(first_frame), timeout=2.0)
-                                speech_chunk_count += 1 # Increment count after sending first frame
+                                speech_chunk_count += 1  # Increment count after sending first frame
                                 self.logger.debug("Sent first frame with audio.")
                             except asyncio.TimeoutError:
                                 self.logger.warning("Timeout sending first frame.")
                                 await self._close_iflytek_connection(send_last_frame=False)
-                                self._is_speaking = False; speech_chunk_count = 0
+                                self._is_speaking = False
+                                speech_chunk_count = 0
                                 continue
                             except Exception as e:
                                 self.logger.exception(f"Error sending first frame: {e}. Closing connection.")
                                 await self._close_iflytek_connection(send_last_frame=False)
-                                self._is_speaking = False; speech_chunk_count = 0
+                                self._is_speaking = False
+                                speech_chunk_count = 0
                                 continue
-                        else: # Should not happen if ensure_connection worked
-                             self.logger.error("_ensure_iflytek_connection returned True but _active_ws is None!")
-                             self._is_speaking = False
-                             continue
+                        else:  # Should not happen if ensure_connection worked
+                            self.logger.error("_ensure_iflytek_connection returned True but _active_ws is None!")
+                            self._is_speaking = False
+                            continue
 
                     # -- State: Speaking (Continuing Speech) --
                     # Only send if it's NOT the first chunk (already sent with first_frame)
@@ -629,17 +653,20 @@ class STTPlugin(BasePlugin):
                             speech_chunk_count += 1
                             # self.logger.debug(f"Sent audio frame {speech_chunk_count}.") # Verbose
                         except asyncio.TimeoutError:
-                             self.logger.warning("Timeout sending audio frame.")
-                             await self._close_iflytek_connection(send_last_frame=False)
-                             self._is_speaking = False; speech_chunk_count = 0
+                            self.logger.warning("Timeout sending audio frame.")
+                            await self._close_iflytek_connection(send_last_frame=False)
+                            self._is_speaking = False
+                            speech_chunk_count = 0
                         except ConnectionResetError:
                             self.logger.warning("Connection reset while trying to send audio frame. Closing locally.")
                             await self._close_iflytek_connection(send_last_frame=False)
-                            self._is_speaking = False; speech_chunk_count = 0
+                            self._is_speaking = False
+                            speech_chunk_count = 0
                         except Exception as e:
                             self.logger.exception(f"Error sending audio frame: {e}. Closing connection.")
                             await self._close_iflytek_connection(send_last_frame=False)
-                            self._is_speaking = False; speech_chunk_count = 0
+                            self._is_speaking = False
+                            speech_chunk_count = 0
                     elif self._is_speaking:
                         # Defensive check if connection dropped mid-speech
                         self.logger.warning("Detected speech but STT connection is not active.")
@@ -652,39 +679,44 @@ class STTPlugin(BasePlugin):
                         # -- Transition: Speech -> Silence --
                         self.logger.debug(f"VAD: Speech ended (Silence detected)")
                         self._is_speaking = False
-                        self._silence_started_time = now # Start timing silence
+                        self._silence_started_time = now  # Start timing silence
 
                         # Send this silent chunk
                         if self._active_ws and not self._active_ws.closed:
-                             try:
-                                 data_frame = self._build_iflytek_frame(STATUS_CONTINUE_FRAME, audio_chunk_bytes)
-                                 await asyncio.wait_for(self._active_ws.send_bytes(data_frame), timeout=1.0)
-                             except asyncio.TimeoutError:
-                                  self.logger.warning("Timeout sending silent frame.")
-                                  await self._close_iflytek_connection(send_last_frame=False)
-                                  self._silence_started_time = None; speech_chunk_count = 0
-                             except ConnectionResetError:
-                                 self.logger.warning("Connection reset sending silent frame. Closing locally.")
-                                 await self._close_iflytek_connection(send_last_frame=False)
-                                 self._silence_started_time = None; speech_chunk_count = 0
-                             except Exception as e:
-                                 self.logger.exception(f"Error sending silent frame: {e}. Closing connection.")
-                                 await self._close_iflytek_connection(send_last_frame=False)
-                                 self._silence_started_time = None; speech_chunk_count = 0
+                            try:
+                                data_frame = self._build_iflytek_frame(STATUS_CONTINUE_FRAME, audio_chunk_bytes)
+                                await asyncio.wait_for(self._active_ws.send_bytes(data_frame), timeout=1.0)
+                            except asyncio.TimeoutError:
+                                self.logger.warning("Timeout sending silent frame.")
+                                await self._close_iflytek_connection(send_last_frame=False)
+                                self._silence_started_time = None
+                                speech_chunk_count = 0
+                            except ConnectionResetError:
+                                self.logger.warning("Connection reset sending silent frame. Closing locally.")
+                                await self._close_iflytek_connection(send_last_frame=False)
+                                self._silence_started_time = None
+                                speech_chunk_count = 0
+                            except Exception as e:
+                                self.logger.exception(f"Error sending silent frame: {e}. Closing connection.")
+                                await self._close_iflytek_connection(send_last_frame=False)
+                                self._silence_started_time = None
+                                speech_chunk_count = 0
 
                     # -- State: Silence (Continuing Silence after Speech) --
                     elif self._silence_started_time is not None:
                         # Check if silence duration threshold reached
                         if now - self._silence_started_time > self.min_silence_duration_ms / 1000.0:
                             if self._active_ws:
-                                self.logger.info(f"Silence duration threshold ({self.min_silence_duration_ms}ms) reached after silence chunk. Ending utterance.")
+                                self.logger.info(
+                                    f"Silence duration threshold ({self.min_silence_duration_ms}ms) reached after silence chunk. Ending utterance."
+                                )
                                 if speech_chunk_count > 0:
-                                     await self._close_iflytek_connection(send_last_frame=True)
+                                    await self._close_iflytek_connection(send_last_frame=True)
                                 else:
-                                     self.logger.info("Silence after VAD trigger, but no speech sent. Closing silently.")
-                                     await self._close_iflytek_connection(send_last_frame=False)
+                                    self.logger.info("Silence after VAD trigger, but no speech sent. Closing silently.")
+                                    await self._close_iflytek_connection(send_last_frame=False)
                                 speech_chunk_count = 0
-                            self._silence_started_time = None # Reset timer after handling
+                            self._silence_started_time = None  # Reset timer after handling
 
         except sd.PortAudioError as pae:
             self.logger.error(f"PortAudio error: {pae}")
@@ -713,11 +745,11 @@ class STTPlugin(BasePlugin):
         and sends the final text back to Core via send_to_maicore.
         """
         full_text = ""
-        utterance_failed = False # Track if the utterance had errors
+        utterance_failed = False  # Track if the utterance had errors
         self.logger.debug("讯飞接收器任务启动。")
         try:
             async for msg in ws:
-                if self.stop_event.is_set(): # Check for plugin stop signal
+                if self.stop_event.is_set():  # Check for plugin stop signal
                     self.logger.info("Receiver detected stop event.")
                     break
 
@@ -728,7 +760,7 @@ class STTPlugin(BasePlugin):
                             err_msg = f"讯飞 API 错误: Code={resp.get('code')}, Message={resp.get('message')}"
                             self.logger.error(err_msg)
                             utterance_failed = True
-                            break # Stop processing this utterance
+                            break  # Stop processing this utterance
 
                         data = resp.get("data", {})
                         status = data.get("status", -1)
@@ -746,7 +778,7 @@ class STTPlugin(BasePlugin):
 
                         if status == STATUS_LAST_FRAME:
                             self.logger.info(f"讯飞收到最终结果: '{full_text}'")
-                            if full_text.strip() and not utterance_failed: # Only send non-empty, non-failed results
+                            if full_text.strip() and not utterance_failed:  # Only send non-empty, non-failed results
                                 try:
                                     # --- 修正服务调用 (Re-inserted from old logic) ---
                                     final_text_to_send = full_text.strip()
@@ -759,49 +791,57 @@ class STTPlugin(BasePlugin):
                                                 corrected = await correction_service.correct_text(final_text_to_send)
                                                 if corrected and isinstance(corrected, str):
                                                     self.logger.info(f"修正后 STT 结果: '{corrected}'")
-                                                    final_text_to_send = corrected # Use corrected text
+                                                    final_text_to_send = corrected  # Use corrected text
                                                 elif corrected:
-                                                     self.logger.warning(f"STT 修正服务返回了非字符串结果 ({type(corrected)})，使用原始文本。")
+                                                    self.logger.warning(
+                                                        f"STT 修正服务返回了非字符串结果 ({type(corrected)})，使用原始文本。"
+                                                    )
                                                 else:
                                                     self.logger.info("STT 修正服务未返回有效结果，使用原始文本。")
                                             except AttributeError:
-                                                self.logger.error("获取到的 'stt_correction' 服务没有 'correct_text' 方法。")
+                                                self.logger.error(
+                                                    "获取到的 'stt_correction' 服务没有 'correct_text' 方法。"
+                                                )
                                             except Exception as correct_err:
-                                                self.logger.error(f"调用 stt_correction 服务时出错: {correct_err}", exc_info=True)
+                                                self.logger.error(
+                                                    f"调用 stt_correction 服务时出错: {correct_err}", exc_info=True
+                                                )
                                         else:
                                             self.logger.warning("配置启用了 STT 修正，但未找到 'stt_correction' 服务。")
                                     # --- 使用 (可能) 修正后的文本发送消息到 Core ---
                                     message_to_send = await self._create_stt_message(final_text_to_send)
                                     self.logger.debug(f"准备发送 STT 消息对象到 Core: {repr(message_to_send)}")
                                     await self.core.send_to_maicore(message_to_send)
-                                    self.logger.info(f"STT 结果已发送到 Core: {message_to_send.message_info.message_id}")
+                                    self.logger.info(
+                                        f"STT 结果已发送到 Core: {message_to_send.message_info.message_id}"
+                                    )
                                 except Exception as send_err:
-                                     self.logger.error(f"创建或发送 STT 结果到 Core 时出错: {send_err}", exc_info=True)
+                                    self.logger.error(f"创建或发送 STT 结果到 Core 时出错: {send_err}", exc_info=True)
                             elif utterance_failed:
                                 self.logger.warning("Utterance failed due to API error, not sending result.")
                             else:
-                                 self.logger.info("最终识别结果为空，不发送。")
+                                self.logger.info("最终识别结果为空，不发送。")
                             # full_text = "" # Reset unnecessary as connection will close
-                            break # End receiving loop for this utterance
+                            break  # End receiving loop for this utterance
 
                     except json.JSONDecodeError:
                         self.logger.error(f"无法解码来自讯飞的 JSON: {msg.data}")
-                        utterance_failed = True # Mark as failed
+                        utterance_failed = True  # Mark as failed
                         break
                     except Exception as e:
                         self.logger.exception(f"处理讯飞消息时出错: {e}")
-                        utterance_failed = True # Mark as failed
+                        utterance_failed = True  # Mark as failed
                         break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     err = ws.exception() or RuntimeError("讯飞 WebSocket 错误")
                     self.logger.error(f"讯飞 WebSocket 错误: {err}")
-                    utterance_failed = True # Mark as failed
+                    utterance_failed = True  # Mark as failed
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     self.logger.warning(f"讯飞 WebSocket 连接被关闭: Code={ws.close_code}")
                     if not utterance_failed and full_text.strip():
-                         self.logger.warning(f"在最终结果前连接关闭。最后累积文本: '{full_text.strip()}' (未发送)")
-                         # Decide policy: maybe send partial? Currently not.
+                        self.logger.warning(f"在最终结果前连接关闭。最后累积文本: '{full_text.strip()}' (未发送)")
+                        # Decide policy: maybe send partial? Currently not.
                     break
         except asyncio.CancelledError:
             self.logger.info("讯飞接收器任务被取消。")
@@ -811,16 +851,15 @@ class STTPlugin(BasePlugin):
             # Remove future logic
             self.logger.debug(f"讯飞接收器任务结束 (Utterance failed: {utterance_failed})。")
 
-
     # --- Iflytek Frame Builders and Auth (Keep as is, using self.iflytek_config) ---
 
     def _build_iflytek_auth_url(self) -> str:
         # ... (Keep existing code)
         cfg = self.iflytek_config
         if not all([cfg.get(k) for k in ["host", "path", "api_secret", "api_key"]]):
-             raise ValueError("Iflytek config missing host, path, api_key, or api_secret.")
-        host = cfg['host']
-        path = cfg['path']
+            raise ValueError("Iflytek config missing host, path, api_key, or api_secret.")
+        host = cfg["host"]
+        path = cfg["path"]
         url = f"wss://{host}{path}"
         # Use UTC time for consistency
         date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
@@ -833,7 +872,7 @@ class STTPlugin(BasePlugin):
         authorization = base64.b64encode(authorization_origin.encode("utf-8")).decode(encoding="utf-8")
         # URL encode the parameters
         v = {"authorization": authorization, "date": date, "host": host}
-        signed_url = url + "?" + urlencode(v) # No need for quote_via=quote with urlencode defaults
+        signed_url = url + "?" + urlencode(v)  # No need for quote_via=quote with urlencode defaults
         self.logger.debug(f"Generated Iflytek auth URL (ends): ...?{urlencode(v)[-30:]}")
         return signed_url
 
@@ -849,21 +888,21 @@ class STTPlugin(BasePlugin):
             "language": self.iflytek_config.get("language", "zh_cn"),
             "domain": self.iflytek_config.get("domain", "iat"),
             "accent": self.iflytek_config.get("accent", "mandarin"),
-            "ptt": self.iflytek_config.get("ptt", 1), # Punctuation default on
-            "rlang": self.iflytek_config.get("rlang", "zh-cn"), # Dynamic correction lang
-            "vinfo": self.iflytek_config.get("vinfo", 1), # Return time info default on
-            "dwa": self.iflytek_config.get("dwa", "wpgs"), # Dynamic correction enable keyword
-            "vad_eos": self.iflytek_config.get("vad_eos", self.min_silence_duration_ms), # Server VAD timeout
-            "nunum": 0 # Disable number conversion
+            "ptt": self.iflytek_config.get("ptt", 1),  # Punctuation default on
+            "rlang": self.iflytek_config.get("rlang", "zh-cn"),  # Dynamic correction lang
+            "vinfo": self.iflytek_config.get("vinfo", 1),  # Return time info default on
+            "dwa": self.iflytek_config.get("dwa", "wpgs"),  # Dynamic correction enable keyword
+            "vad_eos": self.iflytek_config.get("vad_eos", self.min_silence_duration_ms),  # Server VAD timeout
+            "nunum": 0,  # Disable number conversion
         }
 
     def _build_iflytek_data_params(self, status: int, audio_chunk_bytes: bytes = b"") -> dict:
         # ... (Keep existing code)
-         return {
+        return {
             "status": status,
-            "format": f"audio/L16;rate={self.sample_rate}", # Ensure rate matches input
+            "format": f"audio/L16;rate={self.sample_rate}",  # Ensure rate matches input
             "encoding": "raw",
-            "audio": base64.b64encode(audio_chunk_bytes).decode('utf-8')
+            "audio": base64.b64encode(audio_chunk_bytes).decode("utf-8"),
         }
 
     def _build_iflytek_frame(self, status: int, audio_chunk_bytes: bytes = b"") -> bytes:
@@ -871,9 +910,9 @@ class STTPlugin(BasePlugin):
         frame = {
             "common": self._build_iflytek_common_params(),
             "business": self._build_iflytek_business_params(),
-            "data": self._build_iflytek_data_params(status, audio_chunk_bytes)
+            "data": self._build_iflytek_data_params(status, audio_chunk_bytes),
         }
-        return json.dumps(frame).encode('utf-8')
+        return json.dumps(frame).encode("utf-8")
 
     # --- Message Creation Helper (Keep as is, uses self.message_config) ---
     async def _create_stt_message(self, text: str) -> MessageBase:
@@ -883,21 +922,21 @@ class STTPlugin(BasePlugin):
         cfg = self.message_config
 
         # --- User Info ---
-        user_id_from_config = cfg.get("user_id", "stt_user") # Use string ID consistently
+        user_id_from_config = cfg.get("user_id", "stt_user")  # Use string ID consistently
         user_info = UserInfo(
             platform=self.core.platform,
-            user_id=str(user_id_from_config), # Ensure string
+            user_id=str(user_id_from_config),  # Ensure string
             user_nickname=cfg.get("user_nickname", "语音"),
             user_cardname=cfg.get("user_cardname", ""),
         )
 
         # --- Group Info (Conditional) ---
         group_info: Optional[GroupInfo] = None
-        if cfg.get("enable_group_info", False): # Default to False unless specified
-            group_id_from_config = cfg.get("group_id", "stt_group") # Use string ID
+        if cfg.get("enable_group_info", False):  # Default to False unless specified
+            group_id_from_config = cfg.get("group_id", "stt_group")  # Use string ID
             group_info = GroupInfo(
                 platform=self.core.platform,
-                group_id=str(group_id_from_config), # Ensure string
+                group_id=str(group_id_from_config),  # Ensure string
                 group_name=cfg.get("group_name", "stt_default"),
             )
 
@@ -921,7 +960,7 @@ class STTPlugin(BasePlugin):
                 except Exception as e:
                     self.logger.error(f"调用 prompt_context 服务时出错: {e}", exc_info=True)
 
-            main_prompt_key = cfg.get("main_prompt_key", "reasoning_prompt_main") # Allow config key override
+            main_prompt_key = cfg.get("main_prompt_key", "reasoning_prompt_main")  # Allow config key override
             if additional_context and main_prompt_key in modified_template_items:
                 original_prompt = modified_template_items[main_prompt_key]
                 modified_template_items[main_prompt_key] = original_prompt + "\n" + additional_context
@@ -931,8 +970,8 @@ class STTPlugin(BasePlugin):
 
         # --- Additional Config ---
         additional_config = cfg.get("additional_config", {}).copy()
-        additional_config["source"] = "stt_plugin" # Identify source
-        additional_config["sender_name"] = user_info.user_nickname # Convenience
+        additional_config["source"] = "stt_plugin"  # Identify source
+        additional_config["sender_name"] = user_info.user_nickname  # Convenience
 
         # --- Base Message Info ---
         message_info = BaseMessageInfo(
@@ -948,7 +987,7 @@ class STTPlugin(BasePlugin):
 
         # --- Message Segment ---
         message_segment = Seg(
-            type="text", # STT result is text
+            type="text",  # STT result is text
             data=text,
         )
 
