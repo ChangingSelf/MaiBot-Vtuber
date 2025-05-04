@@ -179,3 +179,4 @@ token.txt
 vts_token.txt
 **/config.toml
 data/
+logs/

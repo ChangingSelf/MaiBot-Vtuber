@@ -25,7 +25,8 @@ callback_path = "/maicore_callback"
 [pipelines]
 # 已启用的管道及其优先级（数字越小优先级越高）
 # 未配置的管道默认不启用
-throttle = 100
+message_logger = 100 # 消息日志管道
+throttle = 200       # 限流管道
 # 其他管道示例
 # custom_pipeline = 200
 
