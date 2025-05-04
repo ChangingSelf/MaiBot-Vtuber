@@ -183,6 +183,14 @@ class AmaidesuCore:
             if self._ws_task and not self._ws_task.done():
                 self.logger.info("WebSocket 连接初步建立，标记核心为已连接。")
                 self._is_connected = True
+
+                # 通知所有管道连接已建立
+                if self._pipeline_manager is not None:
+                    try:
+                        await self._pipeline_manager.notify_connect()
+                        self.logger.info("已通知所有管道连接已建立")
+                    except Exception as e:
+                        self.logger.error(f"通知管道连接事件时出错: {e}", exc_info=True)
             else:
                 self.logger.warning("WebSocket 任务在监控开始前已结束，连接失败。")
                 self._is_connected = False
@@ -197,6 +205,14 @@ class AmaidesuCore:
         except Exception as e:
             self.logger.error(f"WebSocket 连接监控任务异常退出: {e}", exc_info=True)
         finally:
+            # 通知所有管道连接已断开（如果之前已连接）
+            if self._is_connected and self._pipeline_manager is not None:
+                try:
+                    await self._pipeline_manager.notify_disconnect()
+                    self.logger.info("已通知所有管道连接已断开")
+                except Exception as e:
+                    self.logger.error(f"通知管道断开连接事件时出错: {e}", exc_info=True)
+
             self.logger.info("WebSocket 连接监控任务已结束。")
             self._is_connected = False  # 最终确保状态为未连接
             self._ws_task = None  # 清理任务引用
@@ -222,6 +238,14 @@ class AmaidesuCore:
     async def disconnect(self):
         """取消 WebSocket 任务并停止 HTTP 服务器。"""
         async with self._connect_lock:
+            # 如果已连接，主动通知管道断开连接
+            if self._is_connected and self._pipeline_manager is not None:
+                try:
+                    await self._pipeline_manager.notify_disconnect()
+                    self.logger.info("已通知所有管道连接即将断开")
+                except Exception as e:
+                    self.logger.error(f"通知管道断开连接事件时出错: {e}", exc_info=True)
+
             tasks = []
             # 停止 WebSocket 任务
             if self._ws_task and not self._ws_task.done():

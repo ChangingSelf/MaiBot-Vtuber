@@ -51,6 +51,39 @@ class ThrottlePipeline(MessagePipeline):
             f"限流管道初始化: 全局限制={global_rate_limit}/分钟, 用户限制={user_rate_limit}/分钟, 窗口={window_size}秒"
         )
 
+    async def on_connect(self) -> None:
+        """
+        连接建立时重置状态。
+
+        当 AmaidesuCore 成功连接到 MaiCore 时调用。
+        重置所有计数器和时间戳队列，为新会话做准备。
+        """
+        async with self._cleanup_lock:
+            # 清空所有时间戳队列
+            self._global_timestamps.clear()
+            self._user_timestamps.clear()
+
+            # 重置统计数据
+            self._throttled_count = 0
+
+            logger.info("限流管道已重置状态（连接建立）")
+
+    async def on_disconnect(self) -> None:
+        """
+        连接断开时进行清理。
+
+        当 AmaidesuCore 与 MaiCore 断开连接时调用。
+        记录最终统计数据并释放资源。
+        """
+        async with self._cleanup_lock:
+            logger.info(f"限流管道会话结束统计: 共限流消息 {self._throttled_count} 条")
+
+            # 清空所有队列释放内存
+            self._global_timestamps.clear()
+            self._user_timestamps.clear()
+
+            logger.info("限流管道已清理资源（连接断开）")
+
     async def _clean_expired_timestamps(self, current_time: float) -> None:
         """
         清理过期的时间戳记录，保持滑动窗口更新。

@@ -42,6 +42,24 @@ class MessagePipeline(ABC):
         """
         pass
 
+    async def on_connect(self) -> None:
+        """
+        当 AmaidesuCore 成功连接到 MaiCore 时调用的钩子方法。
+        子类可以重写此方法以在连接建立时执行初始化操作。
+
+        默认实现为空操作。
+        """
+        pass
+
+    async def on_disconnect(self) -> None:
+        """
+        当 AmaidesuCore 与 MaiCore 断开连接时调用的钩子方法。
+        子类可以重写此方法以在连接断开时执行清理操作。
+
+        默认实现为空操作。
+        """
+        pass
+
 
 class PipelineManager:
     """
@@ -300,3 +318,41 @@ class PipelineManager:
                     self.logger.error(f"初始化管道 '{name}' 时出错: {e}", exc_info=True)
 
         return count
+
+    async def notify_connect(self) -> None:
+        """
+        通知所有注册的管道连接已建立。
+
+        在 AmaidesuCore 成功连接到 MaiCore 后调用。
+        按管道优先级顺序调用每个管道的 on_connect 方法。
+        """
+        self._ensure_sorted()
+        self.logger.info("通知所有管道：连接已建立")
+
+        for pipeline in self._pipelines:
+            try:
+                self.logger.debug(f"调用管道 {pipeline.__class__.__name__} 的 on_connect 方法")
+                await pipeline.on_connect()
+            except Exception as e:
+                self.logger.error(
+                    f"调用管道 {pipeline.__class__.__name__} 的 on_connect 方法时出错: {e}", exc_info=True
+                )
+
+    async def notify_disconnect(self) -> None:
+        """
+        通知所有注册的管道连接已断开。
+
+        在 AmaidesuCore 与 MaiCore 断开连接时调用。
+        按管道优先级顺序调用每个管道的 on_disconnect 方法。
+        """
+        self._ensure_sorted()
+        self.logger.info("通知所有管道：连接已断开")
+
+        for pipeline in self._pipelines:
+            try:
+                self.logger.debug(f"调用管道 {pipeline.__class__.__name__} 的 on_disconnect 方法")
+                await pipeline.on_disconnect()
+            except Exception as e:
+                self.logger.error(
+                    f"调用管道 {pipeline.__class__.__name__} 的 on_disconnect 方法时出错: {e}", exc_info=True
+                )
