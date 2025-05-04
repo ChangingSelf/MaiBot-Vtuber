@@ -1,19 +1,11 @@
-[server]
-host = "127.0.0.1"
-port = 8070
-
-[routes]
-qq = "http://127.0.0.1:8090/ws" # 或者nonebot-qq
-# nonebot-qq = "default"
+[plugin]
+# output_device_name = ""
+llm_clean = true
 
 [pipeline]
 # pipeline预设配置
 default_preset = "default"  # 默认使用的预设名称
 
-# pipeline平台预设映射
-[pipeline.platform_presets]
-qq = "default"       # QQ平台使用default预设
-# nonebot-qq = "default"
 
 [tts]
 # GPT-SoVITS API 配置

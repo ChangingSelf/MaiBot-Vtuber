@@ -129,38 +129,41 @@ class TTSConfig:
 
 
 @dataclass
-class ServerConfig:
-    host: str
-    port: int
+class PluginConfig:
+    output_device: str
+    llm_clean: bool
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PluginConfig":
+        return cls(
+            output_device=data.get("output_device_name", ""),
+            llm_clean=data.get("llm_clean", True),
+        )
 
 
 @dataclass
 class PipelineConfig:
     default_preset: str
-    platform_presets: Dict[str, str]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PipelineConfig":
         return cls(
             default_preset=data.get("default_preset", "default"),
-            platform_presets=data.get("platform_presets", {}),
         )
 
 
 @dataclass
 class BaseConfig:
     tts: TTSConfig
-    server: ServerConfig
-    routes: Dict[str, str]
     pipeline: PipelineConfig
+    plugin: PluginConfig
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BaseConfig":
         return cls(
             tts=TTSConfig.from_dict(data["tts"]),
-            server=ServerConfig(**data["server"]),
-            routes=data["routes"],
             pipeline=PipelineConfig.from_dict(data.get("pipeline", {})),
+            plugin=PluginConfig.from_dict(data.get("plugin", {})),
         )
 
 
@@ -184,16 +187,12 @@ class Config:
         return self.base_config.tts
 
     @property
-    def server(self) -> ServerConfig:
-        return self.base_config.server
-
-    @property
-    def routes(self) -> Dict[str, str]:
-        return self.base_config.routes
-
-    @property
     def pipeline(self) -> PipelineConfig:
         return self.base_config.pipeline
+
+    @property
+    def plugin(self) -> PluginConfig:
+        return self.base_config.plugin
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -216,28 +215,8 @@ def get_default_config() -> Config:
     return Config(str(config_path))
 
 
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's specific config.toml file."""
-    if tomllib is None:
-        logger.error("TOML library not available, cannot load TTS plugin config.")
-        return {}
-    try:
-        with open(_CONFIG_FILE, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载 TTS 插件配置文件: {_CONFIG_FILE}")
-            return config
-    except FileNotFoundError:
-        logger.warning(f"TTS 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"TTS 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
-    except Exception as e:
-        logger.error(f"加载 TTS 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
-    return {}
-
-
 import requests
 import os
-from utils.config import Config
 from typing import Optional, Dict, Any
 
 
@@ -579,11 +558,13 @@ class TTSPlugin(BasePlugin):
         self.tts_config = get_default_config()
 
         # --- TTS Service Initialization (from tts_service.py) ---
+        if not self.tts_config.plugin.output_device:
+            self.output_device_name = ""
         self.output_device_index = self._find_device_index(self.output_device_name, kind="output")
         self.tts_lock = asyncio.Lock()
         self.input_pcm_queue_lock = asyncio.Lock()
 
-        self.logger.info(f"TTS 服务组件初始化。语音: {self.voice}, 输出设备: {self.output_device_name or '默认设备'}")
+        self.logger.info(f"TTS 服务组件初始化。输出设备: {self.output_device_name or '默认设备'}")
         self.tts_model = TTSModel(self.tts_config, self.tts_config.tts.host, self.tts_config.tts.port)
         self.input_pcm_queue = deque(b"")
         self.audio_data_queue = deque()
@@ -622,13 +603,58 @@ class TTSPlugin(BasePlugin):
         """将 Base64 PCM 数据解码，并合并入缓冲区，按需切割成完整块"""
         pcm_bytes = base64.b64decode(base64_str)
 
-        with self.input_pcm_queue_lock:
-            self.input_pcm_queue.extend(pcm_bytes)
+        # with self.input_pcm_queue_lock:
+        self.input_pcm_queue.extend(pcm_bytes)
+        self.logger.debug(f"解码并缓冲 {len(pcm_bytes)} 字节的 PCM 数据。")
 
         # 后台处理缓冲区 → 拆分成完整 BLOCKSIZE 的音频块
         while self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
             raw_block = self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
             self.audio_data_queue.append(raw_block)
+
+    def decode_and_buffer(self, base64_str):
+        """解析分块的WAV数据，提取PCM音频并缓冲"""
+        # 解码Base64
+        wav_data = base64.b64decode(base64_str)
+        
+        # 解析WAV数据
+        try:
+            # 验证RIFF头
+            if wav_data[:4] != b'RIFF':
+                raise ValueError("无效的WAV数据，缺少RIFF头")
+                
+            if wav_data[8:12] != b'WAVE':
+                raise ValueError("无效的WAV格式标识")
+                
+            # 查找data块位置（搜索"data"标识符）
+            pos = 12
+            while pos < len(wav_data):
+                chunk_id = wav_data[pos:pos+4]
+                if chunk_id == b'data':
+                    break
+                chunk_size = struct.unpack('<I', wav_data[pos+4:pos+8])[0]
+                pos += 8 + chunk_size
+                
+            if chunk_id != b'data':
+                raise ValueError("未找到WAV数据块")
+                
+            # 提取PCM数据
+            data_start = pos + 8
+            data_end = pos + 8 + struct.unpack('<I', wav_data[pos+4:pos+8])[0]
+            pcm_data = wav_data[data_start:data_end]
+            
+            # 缓冲处理
+            # with self.input_pcm_queue_lock:
+                self.input_pcm_queue.extend(pcm_data)
+                self.logger.debug(f"解码并缓冲 {len(pcm_data)} 字节的PCM数据（源自WAV块）")
+                
+            # 按需切割音频块（保持原有逻辑）
+            while self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
+                raw_block = self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
+                self.audio_data_queue.append(raw_block)
+                
+        except Exception as e:
+            self.logger.error(f"处理WAV数据失败: {str(e)}")
 
     def start_pcm_stream(self, samplerate=44100, channels=2, dtype=np.int16, blocksize=1024):
         """创建并启动音频流
@@ -646,11 +672,16 @@ class TTSPlugin(BasePlugin):
                 outdata[:] = np.frombuffer(pcm_data, dtype=DTYPE).reshape(-1, CHANNELS)
             except IndexError:
                 # 播放队列为空时阻塞输出（系统会自动保持）
-                raise sd.CallbackStop()
+                outdata.fill(0)
 
         # 创建音频流
         stream = sd.OutputStream(
-            samplerate=samplerate, channels=channels, dtype=dtype, blocksize=blocksize, callback=audio_callback
+            samplerate=samplerate,
+            channels=channels,
+            dtype=dtype,
+            blocksize=blocksize,
+            callback=audio_callback,
+            device=self.output_device_index,
         )
 
         return stream
@@ -723,7 +754,7 @@ class TTSPlugin(BasePlugin):
                     self.logger.error(f"调用 text_cleanup 服务时出错: {e}", exc_info=True)
             else:
                 # 如果配置中 cleanup_llm.enable 为 true 但服务未注册，可能需要警告
-                cleanup_config_in_tts = self.tts_config.get("cleanup_llm", {})
+                cleanup_config_in_tts = self.tts_config.plugin.llm_clean
                 if cleanup_config_in_tts.get("enable", False):
                     self.logger.warning(
                         "Cleanup LLM 在 TTS 配置中启用，但未找到 'text_cleanup' 服务。请确保 CleanupLLMPlugin 已启用并成功加载。"
@@ -734,11 +765,6 @@ class TTSPlugin(BasePlugin):
             if not final_text:
                 self.logger.warning("清理后文本为空，跳过后续处理。")
                 return
-
-            # 2. (可选) UDP 广播
-            if self.udp_enabled and self.udp_socket and self.udp_dest:
-                self._broadcast_text(final_text)
-
             # 3. 执行 TTS
             await self._speak(final_text)
         else:
@@ -747,84 +773,35 @@ class TTSPlugin(BasePlugin):
             # self.logger.debug(f"收到非文本类型消息 ({msg_type})，TTS 插件跳过。")
             pass
 
-    def _broadcast_text(self, text: str):
-        """通过 UDP 发送文本 (来自 tts_monitor.py / mmc_client.py)。"""
-        if self.udp_socket and self.udp_dest:
-            try:
-                message_bytes = text.encode("utf-8")
-                self.udp_socket.sendto(message_bytes, self.udp_dest)
-                self.logger.debug(f"已发送 TTS 内容到 UDP 监听器: {self.udp_dest}")
-            except Exception as e:
-                self.logger.warning(f"发送 TTS 内容到 UDP 监听器失败: {e}")
-
     async def _speak(self, text: str):
         """执行 Edge TTS 合成和播放，并通知 Subtitle Service。"""
 
-        self.logger.debug(f"请求播放: '{text[:30]}...'")
-        async with self.tts_lock:
-            self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
-            tmp_filename = None
-            duration_seconds: Optional[float] = None  # 初始化时长变量
-            try:
-                audio_stream = self.tts_model.tts_stream(text)
-                # --- TTS 合成 ---
-                self.logger.info(f"TTS 正在合成: {text[:30]}...")
-                communicate = edge_tts.Communicate(text, self.voice)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=tempfile.gettempdir()) as tmp_file:
-                    tmp_filename = tmp_file.name
-                self.logger.debug(f"创建临时文件: {tmp_filename}")
-                await asyncio.to_thread(communicate.save_sync, tmp_filename)
-                self.logger.debug(f"音频已保存到临时文件: {tmp_filename}")
-
-                # --- 读取音频并计算时长 ---
-                audio_data, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype="float32")
-                self.logger.info(f"读取音频完成，采样率: {samplerate} Hz")
-                if samplerate > 0 and isinstance(audio_data, np.ndarray):
-                    duration_seconds = len(audio_data) / samplerate
-                    self.logger.info(f"计算得到音频时长: {duration_seconds:.3f} 秒")
-                else:
-                    self.logger.warning("无法计算音频时长 (采样率或数据无效)")
-
-                # --- 通知 Subtitle Service (如果获取到时长) ---
-                if duration_seconds is not None and duration_seconds > 0:
-                    subtitle_service = self.core.get_service("subtitle_service")
-                    if subtitle_service:
-                        self.logger.debug("找到 subtitle_service，准备记录语音信息...")
-                        try:
-                            # 异步调用，不阻塞播放
-                            asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
-                        except AttributeError:
-                            self.logger.error("获取到的 'subtitle_service' 没有 'record_speech' 方法。")
-                        except Exception as e:
-                            self.logger.error(f"调用 subtitle_service.record_speech 时出错: {e}", exc_info=True)
-                    # else: # 可以选择性记录服务未找到
-                    #    self.logger.debug("未找到 subtitle_service。")
-
-                # --- 播放音频 ---
-                self.logger.info(f"开始播放音频 (设备索引: {self.output_device_index})...")
-                await asyncio.to_thread(
-                    sd.play, audio_data, samplerate=samplerate, device=self.output_device_index, blocking=True
-                )
-                self.logger.info("TTS 播放完成。")
-
-            except (sf.SoundFileError, sd.PortAudioError, edge_tts.exceptions.NoAudioReceived, Exception) as e:
-                log_level = logging.ERROR
-                if isinstance(e, edge_tts.exceptions.NoAudioReceived):
-                    log_level = logging.WARNING  # Treat no audio as a warning maybe
-                self.logger.log(
-                    log_level,
-                    f"TTS 处理或播放时发生错误: {type(e).__name__} - {e}",
-                    exc_info=isinstance(e, Exception)
-                    and not isinstance(e, (sf.SoundFileError, sd.PortAudioError, edge_tts.exceptions.NoAudioReceived)),
-                )
-            finally:
-                if tmp_filename and os.path.exists(tmp_filename):
-                    try:
-                        os.remove(tmp_filename)
-                        self.logger.debug(f"已删除临时文件: {tmp_filename}")
-                    except Exception as e_rem:
-                        self.logger.warning(f"删除临时文件 {tmp_filename} 时出错: {e_rem}")
-                self.logger.debug(f"释放 TTS 锁: '{text[:30]}...'")
+        self.logger.info(f"请求播放: '{text[:30]}...'")
+        # async with self.tts_lock:
+        # self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
+        # duration_seconds: Optional[float] = 10.0  # 初始化时长变量
+        # subtitle_service = self.core.get_service("subtitle_service")
+        # if subtitle_service:
+        #     self.logger.debug("找到 subtitle_service，准备记录语音信息...")
+        #     try:
+        #         # 异步调用，不阻塞播放
+        #         asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
+        #     except AttributeError:
+        #         self.logger.error("获取到的 'subtitle_service' 没有 'record_speech' 方法。")
+        #     except Exception as e:
+        #         self.logger.error(f"调用 subtitle_service.record_speech 时出错: {e}", exc_info=True)
+        audio_stream = self.tts_model.tts_stream(text)
+        self.logger.info("开始播放音频流...")
+        print(audio_stream)
+        # async with self.stream:
+        for chunk in audio_stream:
+            # print(chunk)
+            if chunk:
+                self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
+                self.decode_and_buffer(chunk)
+            else:
+                self.logger.warning("收到空音频块，跳过。")
+                continue
 
 
 # --- Plugin Entry Point ---
