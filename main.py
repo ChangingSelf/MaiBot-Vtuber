@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 # 从 src 目录导入核心类和插件管理器
 from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import PluginManager
+from src.core.pipeline_manager import PipelineManager  # 导入管道管理器
 from src.utils.logger import logger
 
 # 获取 main.py 文件所在的目录
@@ -91,13 +92,63 @@ def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
                     logger.debug(f"在 '{item_name}' 中: config.toml 已存在。")
                 # else: # config_exists and not template_exists - 也无需操作
 
-    except Exception as e:
-        logger.error(f"检查插件配置时发生意外错误: {e}", exc_info=True)
-        # 出现意外错误时，最好也阻止正常启动，因为它可能表明环境问题
-        return False  # 返回 False (或可以考虑返回 True 以强制退出)
+        return config_copied
 
-    logger.info("插件配置文件检查完成。")
-    return config_copied
+    except Exception as e:
+        logger.error(f"检查插件配置文件时出错: {e}", exc_info=True)
+        return False  # 出错时返回 False
+
+
+# --- 检查并设置管道配置文件的函数 ---
+def check_and_setup_pipeline_configs(pipeline_base_dir: str) -> bool:
+    """
+    检查管道目录中的 config.toml。如果不存在但存在 config-template.toml，则复制模板。
+    返回 True 如果有任何文件被复制，否则返回 False。
+    """
+    config_copied = False
+    logger.info("开始检查管道配置文件...")
+    try:
+        # 确保管道基础目录存在
+        if not os.path.isdir(pipeline_base_dir):
+            logger.error(f"指定的管道目录 '{pipeline_base_dir}' 不存在或不是一个目录。")
+            return False  # 无法继续
+
+        # 遍历管道基础目录中的所有项目
+        for item_name in os.listdir(pipeline_base_dir):
+            pipeline_dir_path = os.path.join(pipeline_base_dir, item_name)
+
+            # 检查是否是目录，并且不是像 __pycache__ 这样的特殊目录
+            if os.path.isdir(pipeline_dir_path) and not item_name.startswith("__"):
+                config_path = os.path.join(pipeline_dir_path, "config.toml")
+                template_path = os.path.join(pipeline_dir_path, "config-template.toml")
+
+                logger.debug(f"检查管道目录: {item_name}")
+
+                template_exists = os.path.exists(template_path)
+                config_exists = os.path.exists(config_path)
+
+                if template_exists and not config_exists:
+                    try:
+                        # 使用 copy2 保留元数据（如修改时间），虽然对 toml 可能不重要
+                        shutil.copy2(template_path, config_path)
+                        logger.info(f"在管道 '{item_name}' 中: config.toml 不存在，已从 config-template.toml 复制。")
+                        config_copied = True  # 标记发生了复制
+                    except Exception as e:
+                        # 如果复制失败，记录错误，但不阻止检查其他管道
+                        logger.error(f"在管道 '{item_name}' 中: 从模板复制配置文件失败: {e}")
+                elif not template_exists and not config_exists:
+                    # 这种情况可能正常（管道不需要配置），或者是个问题（缺少模板）
+                    logger.debug(f"在管道 '{item_name}' 中: 未找到 config.toml 或 config-template.toml。")
+                elif template_exists and config_exists:
+                    # 配置文件已存在，无需操作
+                    logger.debug(f"在管道 '{item_name}' 中: config.toml 已存在。")
+                # else: # config_exists and not template_exists - 也无需操作
+
+        return config_copied
+
+    except Exception as e:
+        logger.error(f"检查管道配置文件时出错: {e}", exc_info=True)
+        return False  # 出错时返回 False
 
 
 # --- 新增：检查并设置主配置文件的函数 ---
@@ -178,23 +229,32 @@ async def main():
     plugin_dir = os.path.join(_BASE_DIR, "src", "plugins")
     plugin_configs_copied = check_and_setup_plugin_configs(plugin_dir)
 
-    if plugin_configs_copied:
+    # --- 检查并设置管道配置 ---
+    pipeline_dir = os.path.join(_BASE_DIR, "src", "pipelines")
+    pipeline_configs_copied = check_and_setup_pipeline_configs(pipeline_dir)
+
+    if plugin_configs_copied or pipeline_configs_copied:
         # 如果有任何配置文件是从模板复制的，打印提示并退出
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        logger.warning("!! 已根据模板创建了部分插件的 config.toml 文件。          !!")
-        logger.warning("!! 请检查 src/plugins/ 下各插件目录中的 config.toml 文件， !!")
+        if plugin_configs_copied:
+            logger.warning("!! 已根据模板创建了部分插件的 config.toml 文件。          !!")
+            logger.warning("!! 请检查 src/plugins/ 下各插件目录中的 config.toml 文件， !!")
+        if pipeline_configs_copied:
+            logger.warning("!! 已根据模板创建了部分管道的 config.toml 文件。          !!")
+            logger.warning("!! 请检查 src/pipelines/ 下各管道目录中的 config.toml 文件，!!")
         logger.warning("!! 特别是 API 密钥、房间号、设备名称等需要您修改的配置。   !!")
         logger.warning("!! 修改完成后，请重新运行程序。                           !!")
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         sys.exit(0)  # 正常退出，让用户去修改配置
     else:
         # 如果所有配置文件都已存在，或者无需创建，则继续
-        logger.info("所有必要的插件配置文件已存在或已处理。继续正常启动...")
+        logger.info("所有必要的配置文件已存在或已处理。继续正常启动...")
 
     # 从配置中提取参数，提供默认值或进行错误处理
     general_config = config.get("general", {})
     maicore_config = config.get("maicore", {})
     http_config = config.get("http_server", {})
+    pipeline_config = config.get("pipelines", {})  # 添加管道配置
 
     platform_id = general_config.get("platform_id", "amaidesu_default")
 
@@ -207,6 +267,28 @@ async def main():
     http_port = http_config.get("port", 8080) if http_enabled else None
     http_callback_path = http_config.get("callback_path", "/maicore_callback")
 
+    # --- 加载管道 ---
+    pipeline_manager = None
+    if config.get("pipelines", {}):
+        pipeline_dir = os.path.join(_BASE_DIR, "src", "pipelines")
+        logger.info(f"准备加载管道 (从目录: {pipeline_dir})...")
+
+        try:
+            # 创建管道管理器并加载管道
+            pipeline_manager = PipelineManager()
+            await pipeline_manager.load_pipelines(pipeline_dir, config.get("pipelines", {}))
+            if len(pipeline_manager._pipelines) > 0:
+                logger.info(f"管道加载完成，共 {len(pipeline_manager._pipelines)} 个管道。")
+            else:
+                logger.warning("未找到任何有效的管道，管道功能将被禁用。")
+                pipeline_manager = None
+        except Exception as e:
+            logger.error(f"加载管道时出错: {e}", exc_info=True)
+            logger.warning("由于加载失败，管道处理功能将被禁用")
+            pipeline_manager = None
+    else:
+        logger.info("配置中未启用管道功能")
+
     # --- 初始化核心 ---
     core = AmaidesuCore(
         platform=platform_id,
@@ -215,6 +297,7 @@ async def main():
         http_host=http_host,  # 如果 http_enabled=False, 这里会是 None
         http_port=http_port,
         http_callback_path=http_callback_path,
+        pipeline_manager=pipeline_manager,  # 传入加载好的管道管理器或None
         # maicore_token=maicore_token # 如果 core 需要 token
     )
 

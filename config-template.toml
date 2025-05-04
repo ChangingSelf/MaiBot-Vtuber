@@ -21,7 +21,15 @@ port = 8080
 # MaiCore 或其他服务访问的回调路径
 callback_path = "/maicore_callback"
 
+# 管道配置
+[pipelines]
+# 已启用的管道及其优先级（数字越小优先级越高）
+# 未配置的管道默认不启用
+throttle = 100
+# 其他管道示例
+# custom_pipeline = 200
 
+# 插件全局配置
 [plugins]
 enable_console_input = true
 enable_tts = true

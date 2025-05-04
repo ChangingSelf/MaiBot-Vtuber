@@ -7,6 +7,7 @@ from aiohttp import web
 
 from maim_message import Router, RouteConfig, TargetConfig, MessageBase
 from src.utils.logger import logger
+from .pipeline_manager import PipelineManager
 
 
 class AmaidesuCore:
@@ -22,6 +23,7 @@ class AmaidesuCore:
         http_host: Optional[str] = None,
         http_port: Optional[int] = None,
         http_callback_path: str = "/callback",
+        pipeline_manager: Optional[PipelineManager] = None,
     ):
         """
         初始化 Amaidesu Core。
@@ -33,6 +35,7 @@ class AmaidesuCore:
             http_host: (可选) 监听 HTTP 回调的主机地址。如果为 None，则不启动 HTTP 服务器。
             http_port: (可选) 监听 HTTP 回调的端口。
             http_callback_path: (可选) 接收 HTTP 回调的路径。
+            pipeline_manager: (可选) 已配置的管道管理器。如果为None则禁用管道处理。
         """
         # 初始化 AmaidesuCore 自己的 logger
         self.logger = logger
@@ -59,6 +62,13 @@ class AmaidesuCore:
 
         self._ws_task: Optional[asyncio.Task] = None  # 添加用于存储 WebSocket 运行任务的属性
         self._monitor_task: Optional[asyncio.Task] = None  # 添加用于监控 ws_task 的任务
+
+        # 管道管理器
+        self._pipeline_manager = pipeline_manager
+        if self._pipeline_manager is None:
+            self.logger.info("管道处理功能已禁用")
+        else:
+            self.logger.info("管道处理功能已启用")
 
         self._setup_router()
         if self._http_host and self._http_port:
@@ -256,6 +266,7 @@ class AmaidesuCore:
     async def send_to_maicore(self, message: MessageBase):
         """
         向 MaiCore 发送 MessageBase 消息。
+        消息将首先通过所有注册的管道处理，再发送到 MaiCore。
 
         Args:
             message: 要发送的 MessageBase 对象。
@@ -266,18 +277,29 @@ class AmaidesuCore:
             return
 
         logger.debug(f"准备向 MaiCore 发送消息: {message.message_info.message_id}")
+
+        # 如果有管道管理器，通过管道处理消息
+        processed_message = message
+        if self._pipeline_manager is not None:
+            processed_message = await self._pipeline_manager.process_message(message)
+            if processed_message is None:
+                logger.info(f"消息 {message.message_info.message_id} 被管道拦截，不会发送到 MaiCore")
+                return
+        else:
+            logger.debug("管道管理器未配置，跳过管道处理")
+
         try:
             # Add debug log for the message content just before sending via router
             try:
-                message_dict_for_log = message.to_dict()
+                message_dict_for_log = processed_message.to_dict()
                 logger.debug(f"发送给 Router 的消息内容: {str(message_dict_for_log)}...")  # Log partial dict string
             except Exception as log_err:
                 logger.error(f"在记录消息日志时出错: {log_err}")  # Log error during logging itself
-                logger.debug(f"发送给 Router 的消息对象 (repr): {repr(message)}")  # Fallback to repr
+                logger.debug(f"发送给 Router 的消息对象 (repr): {repr(processed_message)}")  # Fallback to repr
 
-            await self._router.send_message(message)
+            await self._router.send_message(processed_message)
             logger.info(
-                f"消息已发送: {message.message_info.message_id} (Type: {message.message_segment.type if message.message_segment else 'N/A'})"
+                f"消息已发送: {processed_message.message_info.message_id} (Type: {processed_message.message_segment.type if processed_message.message_segment else 'N/A'})"
             )
         except Exception as e:
             logger.error(f"发送消息到 MaiCore 时出错: {e}", exc_info=True)

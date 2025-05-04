@@ -34,7 +34,8 @@ Amaidesu!
 1. **AmaidesuCore**: 核心模块，负责与 MaiCore 的通信，有服务注册与发现、消息分发的功能。
 2. **PluginManager**: 插件管理器，负责插件的加载和管理
 3. **BasePlugin**: 插件基类，定义插件的基本接口
-4. **插件系统**: 各种功能插件，如 TTS、STT、LLM 等。各个插件可以利用被注入的 AmaidesuCore 实例发送消息给 MaiCore，在 AmaidesuCore接收到消息时，会分发给注册了对应处理类型的插件进行处理。也可以将本插件作为服务注册到 AmaidesuCore 中，供其他插件使用。
+4. **PipelineManager**: 管道管理器，负责管道的加载和执行，用于在消息发送到 MaiCore 前进行预处理
+5. **插件系统**: 各种功能插件，如 TTS、STT、LLM 等。各个插件可以利用被注入的 AmaidesuCore 实例发送消息给 MaiCore，在 AmaidesuCore接收到消息时，会分发给注册了对应处理类型的插件进行处理。也可以将本插件作为服务注册到 AmaidesuCore 中，供其他插件使用。
 
 ### 消息处理时序图
 
@@ -153,6 +154,127 @@ class MyPlugin(BasePlugin):
         # 清理资源
         pass
 ```
+
+## 管道系统
+
+管道系统用于在消息发送到 MaiCore 前进行预处理。管道可以用于实现各种功能，如消息过滤、限流、内容转换等。
+
+### 管道配置方式
+
+管道的启用和优先级在根目录的 `config.toml` 文件中进行配置。
+
+#### 基本配置
+
+```toml
+# 管道配置
+[pipelines]
+# 已启用的管道及其优先级（数字越小优先级越高）
+# 未配置的管道默认不启用
+throttle = 100
+# 其他管道示例
+# custom_pipeline = 200
+```
+
+1. `[pipelines]` 部分（主配置文件）：
+   - 各配置项为需要启用的管道名称及其优先级值
+   - 命名规则：使用蛇形命名法（snake_case），系统会自动转换为驼峰命名法（CamelCase）并添加"Pipeline"后缀
+   - 例如：配置中的 `throttle` 会对应代码中的 `ThrottlePipeline` 类
+
+2. 优先级说明：
+   - 数字越小，优先级越高（先处理）
+   - 配置中未明确列出的管道默认不会被加载
+
+#### 管道特定配置
+
+除了在主配置文件中设置管道优先级外，每个管道也可以有自己的配置文件：
+
+1. 每个管道目录可包含 `config-template.toml` 和 `config.toml` 文件
+2. 首次运行时，如果管道目录存在 `config-template.toml` 但没有 `config.toml`，系统会自动复制模板创建配置文件
+3. 管道配置文件必须包含与管道同名的段落，例如 `[throttle]`
+4. 配置文件中的参数将在管道初始化时自动注入到管道类的 `__init__` 方法中
+
+例如，对于 ThrottlePipeline，配置文件结构如下：
+
+```toml
+# src/pipelines/throttle/config.toml
+
+[throttle]
+# 是否启用此管道 (注意：此项在主配置中也需要设置优先级)
+enabled = true
+
+# 全局消息频率限制（每分钟最大消息数量）
+global_rate_limit = 100
+
+# 每个用户消息频率限制（每分钟最大消息数量）
+user_rate_limit = 10
+
+# 时间窗口大小（秒）
+window_size = 60
+```
+
+### 自定义管道开发
+
+要创建自定义管道，需遵循以下步骤：
+
+1. 在 `src/pipelines` 目录下创建新的包目录，如 `my_pipeline`
+2. 在包目录中创建 `__init__.py` 文件和 `pipeline.py` 文件
+3. 在 `pipeline.py` 中继承 `MessagePipeline` 基类并实现 `process_message` 方法：
+
+```python
+# src/pipelines/my_pipeline/pipeline.py
+from src.core.pipeline_manager import MessagePipeline
+from maim_message import MessageBase
+from typing import Optional
+
+class MyPipeline(MessagePipeline):
+    # 设置默认优先级
+    priority = 500
+    
+    def __init__(self, param1="default value", param2=42):
+        # 初始化管道，可接受参数（将从配置文件中加载）
+        self.param1 = param1
+        self.param2 = param2
+    
+    async def process_message(self, message: MessageBase) -> Optional[MessageBase]:
+        # 处理消息的逻辑
+        # 返回处理后的消息，或返回 None 表示丢弃该消息
+        return message
+```
+
+4. 在 `__init__.py` 中导出管道类：
+
+```python
+# src/pipelines/my_pipeline/__init__.py
+from src.pipelines.my_pipeline.pipeline import MyPipeline
+
+__all__ = ["MyPipeline"]
+```
+
+5. 创建管道配置模板文件 `config-template.toml`：
+
+```toml
+# src/pipelines/my_pipeline/config-template.toml
+
+[my_pipeline]
+# 自定义配置参数，这些参数将传递给 MyPipeline 的 __init__ 方法
+param1 = "自定义值"
+param2 = 100
+```
+
+6. 在主配置文件 `config.toml` 中添加启用配置：
+
+```toml
+[pipelines]
+my_pipeline = 500  # 注意：类名为MyPipeline，配置使用蛇形命名my_pipeline
+```
+
+### 管道执行流程
+
+1. 系统初始化时，`PipelineManager` 加载所有已启用的管道
+2. 管道按优先级排序（数字越小优先级越高）
+3. 消息按优先级顺序依次通过各个管道处理
+4. 如果任何管道返回 `None`，消息处理终止（消息被丢弃）
+5. 最终处理后的消息发送到 MaiCore 
 
 ## 安装与运行
 
