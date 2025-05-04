@@ -10,15 +10,6 @@ python mock_maicore.py
 ```
 """
 
-# ANSI 颜色代码
-COLOR_RESET = "\033[0m"
-COLOR_RED = "\033[91m"
-COLOR_GREEN = "\033[92m"
-COLOR_YELLOW = "\033[93m"
-COLOR_BLUE = "\033[94m"
-COLOR_MAGENTA = "\033[95m"
-COLOR_CYAN = "\033[96m"
-
 import asyncio
 import json
 import uuid
@@ -33,6 +24,17 @@ from maim_message import MessageBase
 from src.utils.logger import logger
 import tomllib
 from aiohttp import web, WSMsgType
+
+
+# ANSI 颜色代码
+COLOR_RESET = "\033[0m"
+COLOR_RED = "\033[91m"
+COLOR_GREEN = "\033[92m"
+COLOR_YELLOW = "\033[93m"
+COLOR_BLUE = "\033[94m"
+COLOR_MAGENTA = "\033[95m"
+COLOR_CYAN = "\033[96m"
+
 
 CONFIG_FILE_PATH = "config.toml"
 DEFAULT_HOST = "127.0.0.1"
@@ -53,19 +55,21 @@ async def handle_websocket(request: web.Request):
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                logger.info(f"收到来自 {request.remote} 的消息:")
                 try:
                     data = json.loads(msg.data)
-                    logger.info(json.dumps(data, indent=2, ensure_ascii=False))
+                    logger.debug(json.dumps(data, indent=2, ensure_ascii=False))
 
                     message_base = MessageBase.from_dict(data)
+                    timestamp = time.strftime("%H:%M:%S", time.localtime(message_base.message_info.time))
+                    user_info = message_base.message_info.user_info
+                    user_display = f"{user_info.user_nickname}"
                     if message_base.message_segment.type == "text":
                         print(
-                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} > {message_base.message_segment.data}"
+                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} [{timestamp}] {COLOR_YELLOW}{user_display}{COLOR_RESET} > {message_base.message_segment.data}"
                         )
                     else:
                         print(
-                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} > [{message_base.message_segment.type}类型的消息]"
+                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} [{timestamp}] {COLOR_YELLOW}{user_display}{COLOR_RESET} > [{message_base.message_segment.type}类型的消息]"
                         )
 
                 except Exception as e:
