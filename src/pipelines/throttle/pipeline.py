@@ -32,6 +32,7 @@ class ThrottlePipeline(MessagePipeline):
             user_rate_limit: 每个用户每分钟最大消息数量
             window_size: 滑动窗口大小（秒）
         """
+        super().__init__()
         self._global_rate_limit = global_rate_limit
         self._user_rate_limit = user_rate_limit
         self._window_size = window_size

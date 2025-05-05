@@ -33,6 +33,7 @@ class MessageLoggerPipeline(MessagePipeline):
             file_extension: 日志文件扩展名
             default_group_id: 当没有群组ID时使用的默认ID
         """
+        super().__init__()
         self._logs_dir = logs_dir
         self._file_prefix = file_prefix
         self._file_extension = file_extension

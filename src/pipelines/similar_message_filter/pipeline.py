@@ -36,6 +36,7 @@ class SimilarMessageFilterPipeline(MessagePipeline):
             min_message_length: 最小处理消息长度，低于此长度的消息不会被过滤
             cross_user_filter: 是否跨用户过滤相似消息，如果为True则忽略用户ID
         """
+        super().__init__()
         # 配置参数
         self.message_types = message_types or ["text", "danmu", "comment"]
         self.similarity_threshold = similarity_threshold
