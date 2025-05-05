@@ -180,3 +180,5 @@ vts_token.txt
 **/config.toml
 data/
 logs/
+src/plugins/mock_danmaku/data/
+*.jsonl

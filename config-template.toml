@@ -46,3 +46,4 @@ enable_read_pingmu = true
 enable_emotion_judge = false
 enable_sticker = false
 enable_funasr_stt = false
+enable_mock_danmaku = false
