@@ -21,9 +21,11 @@ from typing import Set
 
 from maim_message.message_base import BaseMessageInfo, FormatInfo, Seg, UserInfo
 from maim_message import MessageBase
-from src.utils.logger import logger
 import tomllib
 from aiohttp import web, WSMsgType
+from src.utils.logger import get_logger
+
+logger = get_logger("mock_maicore")
 
 
 # ANSI 颜色代码

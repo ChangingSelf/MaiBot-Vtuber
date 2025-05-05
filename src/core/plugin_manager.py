@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional, Type
 if TYPE_CHECKING:
     from .amaidesu_core import AmaidesuCore
 
-from src.utils.logger import logger
+from src.utils.logger import get_logger
 
 
 # --- 插件基类 (可选但推荐) ---
@@ -29,7 +29,7 @@ class BasePlugin:
         """
         self.core = core
         self.plugin_config = plugin_config
-        self.logger = logger
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info(f"初始化插件: {self.__class__.__name__}")
 
     async def setup(self):
@@ -62,7 +62,7 @@ class PluginManager:
         self.global_plugin_config = global_plugin_config
         self.loaded_plugins: Dict[str, BasePlugin] = {}
         # 初始化 PluginManager 自己的 logger
-        self.logger = logger
+        self.logger = get_logger("PluginManager")
         self.logger.debug("PluginManager 初始化完成")
 
     async def load_plugins(self, plugin_dir: str = "src/plugins"):

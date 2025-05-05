@@ -1,5 +1,6 @@
 import asyncio
-import logging
+
+# import logging
 import os
 import sys
 import time
@@ -19,8 +20,9 @@ except ModuleNotFoundError:
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
+from src.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("ConsoleInputPlugin")
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))

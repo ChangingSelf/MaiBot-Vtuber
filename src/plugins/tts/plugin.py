@@ -1,7 +1,8 @@
 # Amaidesu TTS Plugin: src/plugins/tts/plugin.py
 
 import asyncio
-import logging
+
+# import logging
 import os
 import sys
 import socket
@@ -44,8 +45,9 @@ except ModuleNotFoundError:
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # Import MessageBase for type hint
+from src.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("TTSPlugin")
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -275,9 +277,9 @@ class TTSPlugin(BasePlugin):
                 self.logger.info("TTS 播放完成。")
 
             except (sf.SoundFileError, sd.PortAudioError, edge_tts.exceptions.NoAudioReceived, Exception) as e:
-                log_level = logging.ERROR
+                log_level = "ERROR"
                 if isinstance(e, edge_tts.exceptions.NoAudioReceived):
-                    log_level = logging.WARNING  # Treat no audio as a warning maybe
+                    log_level = "WARNING"  # Treat no audio as a warning maybe
                 self.logger.log(
                     log_level,
                     f"TTS 处理或播放时发生错误: {type(e).__name__} - {e}",

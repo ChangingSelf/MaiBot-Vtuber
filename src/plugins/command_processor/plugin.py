@@ -1,7 +1,8 @@
 # src/plugins/command_processor/plugin.py
 
 import asyncio
-import logging
+
+# import logging
 import re
 import tomllib
 import os
@@ -10,6 +11,9 @@ from typing import Any, Dict
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # 假设 MessageBase 可以从 maim_message 导入
+from src.utils.logger import get_logger
+
+logger = get_logger("CommandProcessorPlugin")
 
 
 # --- Helper Function ---
@@ -27,13 +31,13 @@ def load_plugin_config() -> Dict[str, Any]:
                     with open(config_path, "r", encoding="utf-8") as rf:
                         return toml.load(rf)
                 except ImportError:
-                    logging.error("toml package needed for Python < 3.11.")
+                    logger.error("toml package needed for Python < 3.11.")
                     return {}
                 except FileNotFoundError:
-                    logging.warning(f"Config file not found: {config_path}")
+                    logger.warning(f"Config file not found: {config_path}")
                     return {}
     except Exception as e:
-        logging.error(f"Error loading config: {config_path}: {e}", exc_info=True)
+        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
         return {}
 
 
@@ -48,7 +52,7 @@ class CommandProcessorPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
         self.config = plugin_config.get("command_processor", {})
         self.enabled = self.config.get("enabled", True)
 

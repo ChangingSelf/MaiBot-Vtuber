@@ -1,7 +1,8 @@
 # Amaidesu STT Plugin: src/plugins/stt/plugin.py
 
 import asyncio
-import logging
+
+# import logging
 import os
 import sys
 import base64
@@ -46,8 +47,9 @@ except ModuleNotFoundError:
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
+from src.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("STTPlugin")
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -96,7 +98,7 @@ class STTPlugin(BasePlugin):
         super().__init__(core, plugin_config)  # Initialize BasePlugin
         self.config = load_plugin_config()  # Load plugin-specific config
         self.enabled = True  # Assume enabled unless dependencies fail
-        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")  # More specific logger
+        self.logger = logger  # More specific logger
 
         # --- Basic Dependency Check ---
         if torch is None or sd is None or aiohttp is None or tomllib is None:

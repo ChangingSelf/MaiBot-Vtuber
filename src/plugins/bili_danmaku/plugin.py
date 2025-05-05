@@ -23,7 +23,9 @@ except ModuleNotFoundError:
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+logger = get_logger("BiliDanmakuPlugin")
 
 
 # --- Helper Function ---

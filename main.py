@@ -19,7 +19,9 @@ except ModuleNotFoundError:
 from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import PluginManager
 from src.core.pipeline_manager import PipelineManager  # 导入管道管理器
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+logger = get_logger("Main")
 
 # 获取 main.py 文件所在的目录
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -206,7 +208,7 @@ async def main():
             sys.stderr,
             level="DEBUG",
             colorize=True,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+            format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{line: <4}</cyan> | <cyan>{extra[module]}</cyan> - <level>{message}</level>",
         )
         logger.info("已启用 DEBUG 日志级别。")
 

@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 from typing import Dict, List, Optional, Any, Type, TypeVar, Set, Callable
 
 from maim_message import MessageBase
-from src.utils.logger import logger
+from src.utils.logger import get_logger
 
 
 class MessagePipeline(ABC):
@@ -28,6 +28,9 @@ class MessagePipeline(ABC):
 
     # 默认优先级，数值越小优先级越高
     priority = 1000
+
+    def __init__(self):
+        self.logger = get_logger(self.__class__.__name__)
 
     @abstractmethod
     async def process_message(self, message: MessageBase) -> Optional[MessageBase]:
@@ -69,7 +72,7 @@ class PipelineManager:
     def __init__(self):
         self._pipelines: List[MessagePipeline] = []
         self._sorted: bool = True  # 标记管道列表是否已排序
-        self.logger = logger
+        self.logger = get_logger("PipelineManager")
 
     def register_pipeline(self, pipeline: MessagePipeline) -> None:
         """

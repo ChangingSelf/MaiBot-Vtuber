@@ -24,7 +24,9 @@ except ModuleNotFoundError:
 # --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+logger = get_logger("LLMTextProcessorPlugin")
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))

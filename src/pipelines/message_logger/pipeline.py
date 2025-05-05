@@ -4,7 +4,6 @@ from typing import Dict, Optional, List, Iterator, Any
 
 from maim_message import MessageBase
 from src.core.pipeline_manager import MessagePipeline
-from src.utils.logger import logger
 
 
 class MessageLoggerPipeline(MessagePipeline):
@@ -45,24 +44,24 @@ class MessageLoggerPipeline(MessagePipeline):
         # 记录已打开的文件句柄
         self._file_handles: Dict[str, object] = {}
 
-        logger.info(f"消息日志管道初始化: 日志目录={logs_dir}")
+        self.logger.info(f"消息日志管道初始化: 日志目录={logs_dir}")
 
     async def on_connect(self) -> None:
         """连接建立时确保日志目录存在"""
         os.makedirs(self._logs_dir, exist_ok=True)
-        logger.info("消息日志管道已确认日志目录存在")
+        self.logger.info("消息日志管道已确认日志目录存在")
 
     async def on_disconnect(self) -> None:
         """连接断开时关闭所有打开的文件句柄"""
         for group_id, file_handle in self._file_handles.items():
             try:
                 file_handle.close()
-                logger.debug(f"已关闭群组 {group_id} 的日志文件")
+                self.logger.debug(f"已关闭群组 {group_id} 的日志文件")
             except Exception as e:
-                logger.error(f"关闭群组 {group_id} 的日志文件时出错: {e}")
+                self.logger.error(f"关闭群组 {group_id} 的日志文件时出错: {e}")
 
         self._file_handles.clear()
-        logger.info("消息日志管道已关闭所有文件句柄")
+        self.logger.info("消息日志管道已关闭所有文件句柄")
 
     def _get_file_path(self, group_id: str) -> str:
         """
@@ -92,7 +91,7 @@ class MessageLoggerPipeline(MessagePipeline):
         if group_id not in self._file_handles or self._file_handles[group_id].closed:
             file_path = self._get_file_path(group_id)
             self._file_handles[group_id] = open(file_path, "a", encoding="utf-8")
-            logger.debug(f"已打开群组 {group_id} 的日志文件: {file_path}")
+            self.logger.debug(f"已打开群组 {group_id} 的日志文件: {file_path}")
 
         return self._file_handles[group_id]
 
@@ -129,12 +128,12 @@ class MessageLoggerPipeline(MessagePipeline):
             file_handle.write(json.dumps(formatted_message, ensure_ascii=False) + "\n")
             file_handle.flush()  # 确保立即写入磁盘
 
-            logger.debug(
+            self.logger.debug(
                 f"已记录消息: 群组={group_id}, 用户={formatted_message.get('user', {}).get('nickname', 'unknown')}, "
                 f"类型={formatted_message.get('content_type', 'unknown')}"
             )
         except Exception as e:
-            logger.error(f"记录消息到日志文件时出错: {e}", exc_info=True)
+            self.logger.error(f"记录消息到日志文件时出错: {e}", exc_info=True)
 
     async def process_message(self, message: MessageBase) -> Optional[MessageBase]:
         """
@@ -170,7 +169,7 @@ class MessageLoggerPipeline(MessagePipeline):
                     if line.strip():  # 忽略空行
                         messages.append(json.loads(line))
         except Exception as e:
-            logger.error(f"读取JSONL文件 {file_path} 时出错: {e}")
+            self.logger.error(f"读取JSONL文件 {file_path} 时出错: {e}")
         return messages
 
     @staticmethod
@@ -190,7 +189,7 @@ class MessageLoggerPipeline(MessagePipeline):
                     if line.strip():  # 忽略空行
                         yield json.loads(line)
         except Exception as e:
-            logger.error(f"流式读取JSONL文件 {file_path} 时出错: {e}")
+            self.logger.error(f"流式读取JSONL文件 {file_path} 时出错: {e}")
 
     @staticmethod
     def extract_messages_by_user(file_path: str, user_id: str) -> List[dict]:
@@ -222,5 +221,5 @@ class MessageLoggerPipeline(MessagePipeline):
                     except json.JSONDecodeError:
                         continue
         except Exception as e:
-            logger.error(f"从JSONL文件 {file_path} 提取用户 {user_id} 的消息时出错: {e}")
+            self.logger.error(f"从JSONL文件 {file_path} 提取用户 {user_id} 的消息时出错: {e}")
         return messages

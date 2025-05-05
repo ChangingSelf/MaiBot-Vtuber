@@ -6,7 +6,6 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 
 from maim_message import MessageBase
 from src.core.pipeline_manager import MessagePipeline
-from src.utils.logger import logger
 
 
 class SimilarMessageFilterPipeline(MessagePipeline):
@@ -58,7 +57,7 @@ class SimilarMessageFilterPipeline(MessagePipeline):
         self._cleanup_active = False
         self._last_cleanup_time = time.time()
 
-        logger.info(
+        self.logger.info(
             f"相似消息过滤管道初始化: 相似度阈值={similarity_threshold}, 时间窗口={time_window}秒, "
             f"处理的消息类型={message_types}, 跨用户过滤={cross_user_filter}"
         )
@@ -66,20 +65,20 @@ class SimilarMessageFilterPipeline(MessagePipeline):
     async def on_connect(self) -> None:
         """连接建立时初始化缓存"""
         self._cleanup_active = True
-        logger.info("相似消息过滤管道已激活")
+        self.logger.info("相似消息过滤管道已激活")
 
     async def on_disconnect(self) -> None:
         """连接断开时清理资源"""
         self._cleanup_active = False
         self._clear_caches()
-        logger.info("相似消息过滤管道已清理资源")
+        self.logger.info("相似消息过滤管道已清理资源")
 
     def _clear_caches(self) -> None:
         """清理所有缓存"""
         self.message_cache.clear()
         self.processed_message_ids.clear()
         self.filtered_message_ids.clear()
-        logger.debug("已清理相似消息过滤管道的所有缓存")
+        self.logger.debug("已清理相似消息过滤管道的所有缓存")
 
     def _clean_expired_messages(self) -> None:
         """清理过期的消息缓存"""
@@ -107,12 +106,12 @@ class SimilarMessageFilterPipeline(MessagePipeline):
                 expired_count += 1
 
             if expired_count > 0:
-                logger.debug(f"群组 {group_id} 清理了 {expired_count} 条过期消息")
+                self.logger.debug(f"群组 {group_id} 清理了 {expired_count} 条过期消息")
 
             # 如果群组的队列为空，则删除该群组的记录
             if not self.message_cache[group_id]:
                 del self.message_cache[group_id]
-                logger.debug(f"群组 {group_id} 缓存为空，已删除")
+                self.logger.debug(f"群组 {group_id} 缓存为空，已删除")
 
         # 清理处理过的消息ID（保留近期的一些ID以防止重复处理）
         processed_ids_before = len(self.processed_message_ids)
@@ -137,7 +136,7 @@ class SimilarMessageFilterPipeline(MessagePipeline):
             "filtered_ids": len(self.filtered_message_ids),
         }
 
-        logger.debug(
+        self.logger.debug(
             f"清理结果: 处理ID从{processed_ids_before}减至{cache_stats_after['processed_ids']}, "
             f"过滤ID从{filtered_ids_before}减至{cache_stats_after['filtered_ids']}, "
             f"当前缓存群组数={cache_stats_after['group_count']}, "
@@ -167,7 +166,7 @@ class SimilarMessageFilterPipeline(MessagePipeline):
                 contained_similarity = shorter / longer
                 similarity = max(similarity, contained_similarity)
 
-        logger.debug(f"计算相似度: '{text1}' vs '{text2}' = {similarity:.4f}")
+        self.logger.debug(f"计算相似度: '{text1}' vs '{text2}' = {similarity:.4f}")
         return similarity
 
     def _get_message_content(self, message: MessageBase) -> Optional[str]:
@@ -181,7 +180,7 @@ class SimilarMessageFilterPipeline(MessagePipeline):
             消息的文本内容，如果无法提取则返回None
         """
         if not message.message_segment:
-            logger.debug("消息没有segment部分，无法提取内容")
+            self.logger.debug("消息没有segment部分，无法提取内容")
             return None
 
         # 根据消息类型提取内容
@@ -195,18 +194,18 @@ class SimilarMessageFilterPipeline(MessagePipeline):
                     # 尝试转换为字符串
                     try:
                         content = str(content)
-                        logger.warning(f"文本消息内容不是字符串类型，已尝试转换: {content}")
+                        self.logger.warning(f"文本消息内容不是字符串类型，已尝试转换: {content}")
                     except:
-                        logger.warning(f"文本消息内容不是字符串类型且无法转换: {type(content)}")
+                        self.logger.warning(f"文本消息内容不是字符串类型且无法转换: {type(content)}")
                         return None
-                logger.debug(f"提取到文本消息内容: '{content}'")
+                self.logger.debug(f"提取到文本消息内容: '{content}'")
                 return content
             except (AttributeError, TypeError) as e:
-                logger.error(f"提取文本消息内容时出错: {e}，消息segment: {message.message_segment}")
+                self.logger.error(f"提取文本消息内容时出错: {e}，消息segment: {message.message_segment}")
                 return None
 
         # 其他类型，暂不处理
-        logger.debug(f"不支持的消息类型: {segment_type}，跳过处理")
+        self.logger.debug(f"不支持的消息类型: {segment_type}，跳过处理")
         return None
 
     def _should_process_message(self, message: MessageBase) -> bool:
@@ -221,26 +220,26 @@ class SimilarMessageFilterPipeline(MessagePipeline):
         """
         # 检查消息ID是否已处理过
         if message.message_info.message_id in self.processed_message_ids:
-            logger.debug(f"消息ID {message.message_info.message_id} 已处理过，跳过")
+            self.logger.debug(f"消息ID {message.message_info.message_id} 已处理过，跳过")
             return False
 
         # 检查消息类型是否在处理列表中
         if not message.message_segment:
-            logger.debug("消息没有segment部分，跳过处理")
+            self.logger.debug("消息没有segment部分，跳过处理")
             return False
 
         if message.message_segment.type not in self.message_types:
-            logger.debug(f"消息类型 '{message.message_segment.type}' 不在处理列表中，跳过处理")
+            self.logger.debug(f"消息类型 '{message.message_segment.type}' 不在处理列表中，跳过处理")
             return False
 
         # 检查消息内容长度是否满足最小长度要求
         content = self._get_message_content(message)
         if not content:
-            logger.debug("无法提取消息内容，跳过处理")
+            self.logger.debug("无法提取消息内容，跳过处理")
             return False
 
         if len(content) < self.min_message_length:
-            logger.debug(f"消息内容长度 {len(content)} 小于最小要求 {self.min_message_length}，跳过处理")
+            self.logger.debug(f"消息内容长度 {len(content)} 小于最小要求 {self.min_message_length}，跳过处理")
             return False
 
         return True
@@ -263,12 +262,12 @@ class SimilarMessageFilterPipeline(MessagePipeline):
         now = time.time()
         cutoff_time = now - self.time_window
 
-        logger.debug(f"检查消息 '{content}' 是否有相似消息, 群组={group_id}, 用户={user_id}")
+        self.logger.debug(f"检查消息 '{content}' 是否有相似消息, 群组={group_id}, 用户={user_id}")
 
         # 检查缓存中是否有相似消息
         if group_id in self.message_cache:
             cache_size = len(self.message_cache[group_id])
-            logger.debug(f"当前群组缓存消息数量: {cache_size}")
+            self.logger.debug(f"当前群组缓存消息数量: {cache_size}")
 
             for cached_ts, cached_msg_id, cached_content, cached_user_id in self.message_cache[group_id]:
                 if cached_ts < cutoff_time:
@@ -276,7 +275,7 @@ class SimilarMessageFilterPipeline(MessagePipeline):
 
                 # 如果不是跨用户过滤且用户不同，则跳过
                 if not self.cross_user_filter and cached_user_id != user_id:
-                    logger.debug(
+                    self.logger.debug(
                         f"不允许跨用户过滤，跳过不同用户的消息 (当前用户={user_id}, 缓存用户={cached_user_id})"
                     )
                     continue
@@ -288,12 +287,12 @@ class SimilarMessageFilterPipeline(MessagePipeline):
                     # 找到相似消息，标记当前消息为已过滤
                     self.filtered_message_ids.add(message_id)
                     found_similar = True
-                    logger.info(
+                    self.logger.info(
                         f"消息 '{content}' 与缓存消息 '{cached_content}' 相似度为 {similarity:.2f}，已标记为过滤"
                     )
                     break
         else:
-            logger.debug(f"群组 {group_id} 没有缓存消息")
+            self.logger.debug(f"群组 {group_id} 没有缓存消息")
 
         return found_similar
 
@@ -314,31 +313,31 @@ class SimilarMessageFilterPipeline(MessagePipeline):
         try:
             message_dict = message.to_dict()
             message_type = message.message_segment.type if message.message_segment else "unknown"
-            logger.debug(
+            self.logger.debug(
                 f"处理新消息: 类型={message_type}, 内容={json.dumps(message_dict, ensure_ascii=False)[:200]}..."
             )
         except Exception as e:
-            logger.warning(f"记录输入消息内容时出错: {e}")
+            self.logger.warning(f"记录输入消息内容时出错: {e}")
 
         # 获取消息属性
         message_id = message.message_info.message_id
 
         # 检查消息是否已处理
         if message_id in self.processed_message_ids:
-            logger.debug(f"消息ID {message_id} 已处理过，跳过")
+            self.logger.debug(f"消息ID {message_id} 已处理过，跳过")
             # 如果已被过滤，返回None，否则返回原消息
             return None if message_id in self.filtered_message_ids else message
 
         # 如果消息ID已在过滤列表中，直接丢弃
         if message_id in self.filtered_message_ids:
-            logger.info(f"消息 {message_id} 已被过滤，丢弃")
+            self.logger.info(f"消息 {message_id} 已被过滤，丢弃")
             self.processed_message_ids.add(message_id)  # 确保标记为已处理
             return None
 
         # 检查是否应该处理该消息
         if not self._should_process_message(message):
             # 不处理的消息直接返回原样
-            logger.debug("消息不符合处理条件，直接返回原消息")
+            self.logger.debug("消息不符合处理条件，直接返回原消息")
             return message
 
         # 获取群组ID和用户ID
@@ -355,15 +354,15 @@ class SimilarMessageFilterPipeline(MessagePipeline):
             if hasattr(message.message_info.user_info, "nickname") and message.message_info.user_info.nickname:
                 user_name = message.message_info.user_info.nickname
 
-        logger.debug(f"消息信息: ID={message_id}, 群组={group_id}, 用户={user_id}({user_name})")
+        self.logger.debug(f"消息信息: ID={message_id}, 群组={group_id}, 用户={user_id}({user_name})")
 
         # 提取消息内容
         content = self._get_message_content(message)
         if not content:
-            logger.warning(f"无法提取消息内容，返回原消息: {message_id}")
+            self.logger.warning(f"无法提取消息内容，返回原消息: {message_id}")
             return message
 
-        logger.info(f"处理消息: '{content}', 用户={user_name}, ID={message_id}")
+        self.logger.info(f"处理消息: '{content}', 用户={user_name}, ID={message_id}")
 
         # 记录当前时间作为消息时间戳
         timestamp = time.time()
@@ -376,10 +375,10 @@ class SimilarMessageFilterPipeline(MessagePipeline):
 
         if found_similar:
             # 如果找到相似消息，丢弃当前消息
-            logger.info(f"消息 '{content}' 与已有消息相似，丢弃此消息 ID={message_id}")
+            self.logger.info(f"消息 '{content}' 与已有消息相似，丢弃此消息 ID={message_id}")
             return None
         else:
             # 没有找到相似消息，将当前消息添加到缓存，并返回原始消息
             self.message_cache[group_id].append((timestamp, message_id, content, user_id))
-            logger.debug(f"没有找到相似消息，添加到缓存并返回原始消息: '{content}'")
+            self.logger.debug(f"没有找到相似消息，添加到缓存并返回原始消息: '{content}'")
             return message

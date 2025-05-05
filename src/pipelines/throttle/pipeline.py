@@ -5,7 +5,6 @@ from collections import defaultdict, deque
 
 from maim_message import MessageBase
 from src.core.pipeline_manager import MessagePipeline
-from src.utils.logger import logger
 
 
 class ThrottlePipeline(MessagePipeline):
@@ -47,7 +46,7 @@ class ThrottlePipeline(MessagePipeline):
         # 统计数据
         self._throttled_count = 0
 
-        logger.info(
+        self.logger.info(
             f"限流管道初始化: 全局限制={global_rate_limit}/分钟, 用户限制={user_rate_limit}/分钟, 窗口={window_size}秒"
         )
 
@@ -66,7 +65,7 @@ class ThrottlePipeline(MessagePipeline):
             # 重置统计数据
             self._throttled_count = 0
 
-            logger.info("限流管道已重置状态（连接建立）")
+            self.logger.info("限流管道已重置状态（连接建立）")
 
     async def on_disconnect(self) -> None:
         """
@@ -76,13 +75,13 @@ class ThrottlePipeline(MessagePipeline):
         记录最终统计数据并释放资源。
         """
         async with self._cleanup_lock:
-            logger.info(f"限流管道会话结束统计: 共限流消息 {self._throttled_count} 条")
+            self.logger.info(f"限流管道会话结束统计: 共限流消息 {self._throttled_count} 条")
 
             # 清空所有队列释放内存
             self._global_timestamps.clear()
             self._user_timestamps.clear()
 
-            logger.info("限流管道已清理资源（连接断开）")
+            self.logger.info("限流管道已清理资源（连接断开）")
 
     async def _clean_expired_timestamps(self, current_time: float) -> None:
         """
@@ -121,7 +120,7 @@ class ThrottlePipeline(MessagePipeline):
         # 检查全局限流
         global_count = len(self._global_timestamps)
         if global_count >= self._global_rate_limit:
-            logger.warning(
+            self.logger.warning(
                 f"全局消息限流触发: 当前速率 {global_count}/{self._window_size}秒 "
                 f"超过限制 {self._global_rate_limit}/{self._window_size}秒"
             )
@@ -130,7 +129,7 @@ class ThrottlePipeline(MessagePipeline):
         # 检查用户级别限流
         user_timestamps = self._user_timestamps.get(user_id)
         if user_timestamps and len(user_timestamps) >= self._user_rate_limit:
-            logger.warning(
+            self.logger.warning(
                 f"用户 {user_id} 消息限流触发: 当前速率 {len(user_timestamps)}/{self._window_size}秒 "
                 f"超过限制 {self._user_rate_limit}/{self._window_size}秒"
             )
@@ -184,7 +183,7 @@ class ThrottlePipeline(MessagePipeline):
             else:
                 content = "未知内容"
 
-            logger.info(f"消息限流: 用户={user_id}, {content}, 累计限流={self._throttled_count}")
+            self.logger.info(f"消息限流: 用户={user_id}, {content}, 累计限流={self._throttled_count}")
             return None  # 丢弃该消息
 
         # 记录通过的消息

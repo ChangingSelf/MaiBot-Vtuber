@@ -1,6 +1,6 @@
 # src/plugins/prompt_context/plugin.py
 
-import logging
+# import logging
 import tomllib  # 使用 tomllib (Python 3.11+) 或 toml
 from typing import Any, Dict, List, Optional, TypedDict
 import os
@@ -9,7 +9,9 @@ import asyncio  # 引入 asyncio
 # Use absolute imports relative to the src directory
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+logger = get_logger("PromptContextPlugin")
 
 
 # --- Helper Function ---
@@ -29,13 +31,13 @@ def load_plugin_config() -> Dict[str, Any]:
                     with open(config_path, "r", encoding="utf-8") as rf:
                         return toml.load(rf)
                 except ImportError:
-                    logging.error("Toml package not found. Please install it (`pip install toml`) for Python < 3.11.")
+                    logger.error("Toml package not found. Please install it (`pip install toml`) for Python < 3.11.")
                     return {}
                 except FileNotFoundError:
-                    logging.warning(f"Configuration file not found at {config_path}")
+                    logger.warning(f"Configuration file not found at {config_path}")
                     return {}
     except Exception as e:
-        logging.error(f"Error loading configuration from {config_path}: {e}", exc_info=True)
+        logger.error(f"Error loading configuration from {config_path}: {e}", exc_info=True)
         return {}
 
 

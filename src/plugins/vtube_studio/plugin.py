@@ -13,7 +13,9 @@ import pyvts
 # 从 core 导入基类和核心类
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+logger = get_logger("VtubeStudioPlugin")
 
 
 # --- Helper Function ---

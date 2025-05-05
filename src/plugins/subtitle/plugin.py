@@ -1,6 +1,5 @@
 # Amaidesu Subtitle Plugin (Screen Display): src/plugins/subtitle/plugin.py
 
-import logging
 import tomllib
 import os
 import time
@@ -16,6 +15,9 @@ except ImportError:
 
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
+from src.utils.logger import get_logger
+
+logger = get_logger("SubtitlePlugin")
 
 
 # --- Helper Function ---
@@ -32,13 +34,13 @@ def load_plugin_config() -> Dict[str, Any]:
                     with open(config_path, "r", encoding="utf-8") as rf:
                         return toml.load(rf)
                 except ImportError:
-                    logging.error("toml package needed for Python < 3.11.")
+                    logger.error("toml package needed for Python < 3.11.")
                     return {}
                 except FileNotFoundError:
-                    logging.warning(f"Config file not found: {config_path}")
+                    logger.warning(f"Config file not found: {config_path}")
                     return {}
     except Exception as e:
-        logging.error(f"Error loading config: {config_path}: {e}", exc_info=True)
+        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
         return {}
 
 
@@ -53,8 +55,7 @@ class SubtitlePlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logging.getLogger(__name__)
-
+        self.logger = logger
         # --- 加载配置 ---
         loaded_config = load_plugin_config()
         self.config = loaded_config.get("subtitle_display", {})  # 使用新的配置段 'subtitle_display'
