@@ -22,8 +22,7 @@ Amaidesu!
 
 
 聊天机器人麦麦的[VTubeStudio](https://github.com/DenchiSoft/VTubeStudio) 适配器。
-其聊天核心为[麦麦Bot](https://github.com/aiM-with-u/MaiBot)，一款专注于 群组聊天 
-的赛博网友 QQ BOT。
+其聊天核心为[麦麦Bot](https://github.com/MaiM-with-u/MaiBot)，一款专注于 群组聊天 的赛博网友 QQ BOT。
 
 </div>
 
@@ -60,6 +59,53 @@ sequenceDiagram
     AmaidesuCore-->>ConsoleInput: 返回最终结果
     ConsoleInput-->>User: 显示结果
 ```
+
+## 安装与运行
+
+1. 克隆仓库
+2. 安装依赖：`pip install -r requirements.txt`
+3. 复制需要启动的插件的 `config-template.toml` 为 `config.toml` 并配置
+4. 启动在这之前已经部署好的 MaiMaiCore（参见[MaiBot部署教程](https://docs.mai-mai.org/manual/usage/mmc_q_a)）
+5. 运行：`python main.py`
+
+## 运行与配置
+
+1.  **首次运行与配置生成**: 
+    - 在首次运行 `python main.py` 之前，请确保根目录下存在 `config-template.toml`。
+    - 首次运行会自动检查并根据 `config-template.toml` 创建 `config.toml`。
+    - 同时，它也会检查 `src/plugins/` 和 `src/pipelines/` 下各个子目录，如果存在 `config-template.toml` 但不存在 `config.toml`，也会自动复制生成。
+    - **重要**: 自动生成配置文件后，程序会提示并退出。请务必检查新生成的 `config.toml` 文件（包括根目录和插件/管道目录下的），填入必要的配置信息（如 API 密钥、设备名称、房间号等），然后再重新运行程序。
+
+2.  **启动程序**: 
+    - 配置完成后，使用 `python main.py` 启动应用程序。
+
+3.  **命令行参数**:
+    - `--debug`: 启用详细的 DEBUG 级别日志输出，方便排查问题。
+      ```bash
+      python main.py --debug
+      ```
+    - `--filter <MODULE_NAME> [<MODULE_NAME> ...]`: 过滤日志输出，只显示指定模块的 INFO/DEBUG 级别日志。WARNING 及以上级别的日志总是会显示。可以指定一个或多个模块名。
+      ```bash
+      # 只显示来自 StickerPlugin 和 TTS 模块的 INFO/DEBUG 日志 (以及所有模块的 WARN+ 日志)
+      python main.py --filter StickerPlugin TTSPlugin 
+      
+      # 同时启用 DEBUG 并过滤
+      python main.py --debug --filter StickerPlugin
+      ```
+      *   模块名通常是 `src/utils/logger.py` 中 `get_logger("模块名")` 使用的名称，或者插件/管道的类名或目录名（取决于日志记录时如何绑定模块名）。可以通过查看日志输出中的模块名来确定。
+
+## 模拟MaiCore
+
+当你不方便部署麦麦时，可以用它启用一个ws服务端和一个控制台输入任务，便于模拟麦麦的回应来测试插件功能
+
+使用方法：
+
+```bash
+python mock_maicore.py
+```
+
+现在支持的简单命令：
+- sendRandomEmoji: 发送一个随机的表情包（默认在"data/emoji"目录下查找表情包），用于测试VTubeStudio的表情包功能
 
 ## 已有插件
 
@@ -276,33 +322,10 @@ my_pipeline = 500  # 注意：类名为MyPipeline，配置使用蛇形命名my_p
 4. 如果任何管道返回 `None`，消息处理终止（消息被丢弃）
 5. 最终处理后的消息发送到 MaiCore 
 
-## 安装与运行
 
-1. 克隆仓库
-2. 安装依赖：`pip install -r requirements.txt`
-3. 复制需要启动的插件的 `config-template.toml` 为 `config.toml` 并配置
-4. 运行：`python main.py`
 
-## 调试模式
 
-使用 `--debug` 参数启用调试日志：
 
-```bash
-python main.py --debug
-```
-
-## 模拟MaiCore
-
-当你不方便部署麦麦时，可以用它启用一个ws服务端和一个控制台输入任务，便于模拟麦麦的回应来测试插件功能
-
-使用方法：
-
-```bash
-python mock_maicore.py
-```
-
-现在支持的简单命令：
-- sendRandomEmoji: 发送一个随机的表情包，用于测试VTubeStudio的表情包功能
 
 
 ### 如果你需要更多帮助-查阅[help.md](https://github.com/ChangingSelf/Amaidesu/blob/main/help.md)

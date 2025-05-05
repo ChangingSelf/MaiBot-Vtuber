@@ -198,19 +198,62 @@ async def main():
     parser = argparse.ArgumentParser(description="Amaidesu 应用程序")
     # 添加 --debug 参数，用于控制日志级别
     parser.add_argument("--debug", action="store_true", help="启用 DEBUG 级别日志输出")
+    # 添加 --filter 参数，用于过滤特定模块的日志
+    parser.add_argument(
+        "--filter",
+        nargs="+",  # 允许一个或多个参数
+        metavar="MODULE_NAME",  # 在帮助信息中显示的参数名
+        help="仅显示指定模块的 INFO/DEBUG 级别日志 (WARNING 及以上级别总是显示)",
+    )
     # 解析命令行参数
     args = parser.parse_args()
 
     # --- 配置日志 ---
+    base_level = "DEBUG" if args.debug else "INFO"
+    log_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{line: <4}</cyan> | <cyan>{extra[module]}</cyan> - <level>{message}</level>"
+
+    # 清除所有预设的 handler (包括 src/utils/logger.py 中添加的)
+    logger.remove()
+
+    module_filter_func = None
+    if args.filter:
+        filtered_modules = set(args.filter)  # 使用集合提高查找效率
+
+        def filter_logic(record):
+            # 总是允许 WARN/ERROR/CRITICAL 级别通过
+            if record["level"].no >= logger.level("WARNING").no:
+                return True
+            # 检查模块名是否在过滤列表中
+            module_name = record["extra"].get("module")
+            if module_name and module_name in filtered_modules:
+                return True
+            # 其他 DEBUG/INFO 级别的日志，如果模块不在列表里，则过滤掉
+            return False
+
+        module_filter_func = filter_logic
+        # 使用一个临时 logger 配置来打印这条信息，确保它不被自身过滤掉
+        logger.add(sys.stderr, level="INFO", format=log_format, colorize=True, filter=None)  # 临时添加无过滤的 handler
+        logger.info(f"日志过滤器已激活，将主要显示来自模块 {list(filtered_modules)} 的日志")
+        logger.remove()  # 移除临时 handler
+
+    # 添加最终的 handler，应用过滤器（如果定义了）
+    logger.add(
+        sys.stderr,
+        level=base_level,
+        colorize=True,
+        format=log_format,
+        filter=module_filter_func,  # 如果 args.filter 为 None，filter 参数为 None，表示不过滤
+    )
+
+    # 打印日志级别和过滤器状态相关的提示信息
     if args.debug:
-        logger.remove()  # 移除之前的handler
-        logger.add(
-            sys.stderr,
-            level="DEBUG",
-            colorize=True,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{line: <4}</cyan> | <cyan>{extra[module]}</cyan> - <level>{message}</level>",
-        )
-        logger.info("已启用 DEBUG 日志级别。")
+        if args.filter:
+            logger.info(f"已启用 DEBUG 日志级别，并激活模块过滤器: {list(filtered_modules)}")
+        else:
+            logger.info("已启用 DEBUG 日志级别。")
+    elif args.filter:
+        # 如果只设置了 filter 但没设置 debug
+        logger.info(f"日志过滤器已激活: {list(filtered_modules)} (INFO 级别)")
 
     logger.info("启动 Amaidesu 应用程序...")
 
