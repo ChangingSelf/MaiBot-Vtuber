@@ -1,0 +1,20 @@
+[minecraft]
+# Minecraft WebSocket server host
+# 服务监听的主机地址
+server_host = "0.0.0.0"
+
+# Minecraft WebSocket server port
+# 服务监听的端口
+server_port = 8766
+
+# 用于从 Minecraft 发送消息的用户 ID (发送给 MaiCore 时使用)
+user_id = "minecraft_bot"
+
+# 用于从 Minecraft 发送消息的群组 ID (发送给 MaiCore 时使用，如果适用)
+# group_id = "minecraft_server"
+
+# Minecraft 观察者的昵称 (发送给 MaiCore 时使用)
+nickname = "Minecraft Observer"
+
+# 提示 MaiCore 以 JSON 格式返回动作指令的前缀
+json_prompt_prefix = "请以JSON格式返回Minecraft中的动作指令："

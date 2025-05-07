@@ -146,7 +146,7 @@ class PluginManager:
                         f"导入插件模块 '{module_import_path if module else plugin_name}' 失败: {e}", exc_info=True
                     )
                 except Exception as e:
-                    self.logger.error(f"加载或设置插件 '{plugin_name}' 时发生错误: {e}", exc_info=True)
+                    self.logger.exception(f"加载或设置插件 '{plugin_name}' 时发生错误: {e}", exc_info=True)
             # else: # 可以选择性地记录非插件目录的项
             #     if item != "__pycache__" and not item.startswith("."):
             #         logger.debug(f"跳过非插件目录项: {item}")
