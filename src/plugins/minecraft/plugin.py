@@ -65,7 +65,6 @@ class MinecraftPlugin(BasePlugin):
         # 简化假设：一次处理一个 Minecraft 客户端的请求-响应周期
         self._active_minecraft_client_ws: Optional[websockets.WebSocketServerProtocol] = None
         self._last_low_level_action_enabled: bool = False
-        self._maicore_response_future: Optional[asyncio.Future] = None
 
     async def setup(self):
         await super().setup()
@@ -94,15 +93,12 @@ class MinecraftPlugin(BasePlugin):
 
     async def handle_minecraft_client(self, websocket: websockets.WebSocketServerProtocol):
         """处理来自单个 Minecraft 客户端的连接和消息。"""
-        # 如果需要路径信息，可以使用 websocket.path
         path = getattr(websocket, "path", "/")
 
-        # 简单处理：新的连接会覆盖旧的，或者可以拒绝新连接如果已有活动连接
         if self._active_minecraft_client_ws and not self._active_minecraft_client_ws.closed:
             self.logger.warning(
                 f"新的 Minecraft 客户端连接自 {websocket.remote_address}，但已有活动连接。将关闭旧连接。"
             )
-            # await self._active_minecraft_client_ws.close(code=1000, reason="被新连接取代") # 可选：通知旧客户端
 
         self._active_minecraft_client_ws = websocket
         self.logger.info(f"Minecraft 客户端 {websocket.remote_address} 已连接。路径: {path}")
@@ -119,8 +115,7 @@ class MinecraftPlugin(BasePlugin):
                     self._last_low_level_action_enabled = data_from_minecraft.get("low_level_action_enabled", False)
                     self.logger.debug(f"Minecraft low_level_action_enabled: {self._last_low_level_action_enabled}")
 
-                    # 将整个从 Minecraft 收到的 JSON（已解析为 dict）转换为字符串，并添加提示前缀
-                    # MaiCore 将收到类似："请以JSON...：{\"step\": ..., \"observations\": ..., ...}"
+                    # 将整个从 Minecraft 收到的 JSON 转换为字符串，并添加提示前缀
                     prompted_message_content = f"{self.json_prompt_prefix}{json.dumps(data_from_minecraft)}"
 
                     # --- 构建 MessageBase ---
@@ -131,14 +126,13 @@ class MinecraftPlugin(BasePlugin):
                         platform=self.core.platform, user_id=str(self.user_id), user_nickname=self.nickname
                     )
 
-                    group_info_obj: Optional[GroupInfo] = None
-                    if self.group_id_str:  # 使用 self.group_id_str
+                    group_info_obj = None
+                    if self.group_id_str:
                         try:
                             parsed_group_id = int(self.group_id_str)
                             group_info_obj = GroupInfo(
                                 platform=self.core.platform,
                                 group_id=parsed_group_id,
-                                # group_name 可以从配置添加
                             )
                         except ValueError:
                             self.logger.warning(
@@ -171,28 +165,10 @@ class MinecraftPlugin(BasePlugin):
                     )
                     # --- MessageBase 构建完毕 ---
 
-                    # 创建一个 Future 来等待 MaiCore 的响应
-                    self._maicore_response_future = asyncio.Future()
-
+                    # 直接发送给MaiCore，不等待响应
                     await self.core.send_to_maicore(msg_to_maicore)
                     self.logger.info(
-                        f"已将 Minecraft 感知信息 (low_level_action_enabled={self._last_low_level_action_enabled}) 发送给 MaiCore。等待响应..."
-                    )
-
-                    # 等待 MaiCore 的响应通过 handle_maicore_response 设置 Future 结果
-                    maicore_response_content = await asyncio.wait_for(
-                        self._maicore_response_future, timeout=60.0
-                    )  # 添加超时
-
-                    # MaiCore 应返回一个 JSON 字符串，该字符串已根据 low_level_action_enabled 标志调整了结构
-                    # 例如，如果 low_level_action_enabled=false, MaiCore 返回 {"action_type_name": "NEW", "code": "..."}
-                    # 如果 low_level_action_enabled=true, MaiCore 返回 {"values": [0,0,...]}
-
-                    # 我们直接将 MaiCore 返回的 JSON 字符串发送给 Minecraft 客户端
-                    # (假设MaiCore已正确处理结构)
-                    await websocket.send(maicore_response_content)
-                    self.logger.info(
-                        f"已将 MaiCore 的响应发送给 Minecraft 客户端 {websocket.remote_address}: {maicore_response_content[:100]}..."
+                        f"已将 Minecraft 感知信息 (low_level_action_enabled={self._last_low_level_action_enabled}) 发送给 MaiCore。"
                     )
 
                 except json.JSONDecodeError as e:
@@ -200,10 +176,7 @@ class MinecraftPlugin(BasePlugin):
                     await websocket.send(json.dumps({"error": "Invalid JSON received", "details": str(e)}))
                 except websockets.ConnectionClosed:
                     self.logger.info(f"与 Minecraft 客户端 {websocket.remote_address} 的连接已关闭。")
-                    break  # 退出此客户端的消息循环
-                except asyncio.TimeoutError:
-                    self.logger.warning(f"等待 MaiCore 对 Minecraft 客户端 {websocket.remote_address} 请求的响应超时。")
-                    await websocket.send(json.dumps({"error": "Timeout waiting for MaiCore response"}))
+                    break
                 except Exception as e:
                     self.logger.exception(
                         f"处理 Minecraft 客户端 {websocket.remote_address} 消息时发生错误: {e}", exc_info=True
@@ -211,50 +184,108 @@ class MinecraftPlugin(BasePlugin):
                     try:
                         await websocket.send(json.dumps({"error": "Internal server error", "details": str(e)}))
                     except websockets.ConnectionClosed:
-                        pass  # 客户端可能已断开
-                    break  # 发生错误，终止此客户端的处理
+                        pass
+                    break
         finally:
             self.logger.info(f"Minecraft 客户端 {websocket.remote_address} 断开连接。")
             if self._active_minecraft_client_ws == websocket:
                 self._active_minecraft_client_ws = None
-                if self._maicore_response_future and not self._maicore_response_future.done():  # 清理 Future
-                    self._maicore_response_future.cancel()
-                self._maicore_response_future = None
-                # self._last_low_level_action_enabled 状态会随下一个消息被覆盖，无需特意清理
 
     async def handle_maicore_response(self, message: MessageBase):
         """处理从 MaiCore 返回的文本消息。"""
-        content = message.get_plaintext_content().strip()
-        self.logger.debug(f"从 MaiCore 收到响应内容: {content[:200]}...")
-
-        # 检查是否有等待此响应的 Future
-        if self._maicore_response_future and not self._maicore_response_future.done():
-            # 假设 MaiCore 返回的 content 就是可以直接发送给 Minecraft 的 JSON 字符串
-            # MaiCore 需要根据其收到的 low_level_action_enabled 标志来决定返回的 JSON 结构
-            try:
-                # 尝试解析以确认是有效的 JSON，但实际发送的是原始字符串
-                json.loads(content)
-                self._maicore_response_future.set_result(content)
-                self.logger.info("MaiCore 响应已转发给等待的 Minecraft 客户端处理程序。")
-            except json.JSONDecodeError:
-                error_msg = f"MaiCore 返回的响应不是有效的 JSON: {content[:200]}"
-                self.logger.error(error_msg)
-                self._maicore_response_future.set_exception(ValueError(error_msg))
-            except Exception as e:
-                self.logger.error(f"设置 MaiCore 响应 Future 时发生错误: {e}", exc_info=True)
-                if not self._maicore_response_future.done():  # 以防万一在 set_exception 之前 Future 状态改变
-                    self._maicore_response_future.set_exception(e)
-        else:
-            # 如果没有活动的 Minecraft 客户端或 Future，或者 Future 已完成/不存在，则记录
-            relevant_future_info = (
-                "不存在或已完成"
-                if not self._maicore_response_future
-                else f"状态: done={self._maicore_response_future.done()}, cancelled={self._maicore_response_future.cancelled()}"
-            )
+        if message.message_segment.type != "text":
             self.logger.warning(
-                f"收到 MaiCore 响应，但没有匹配的 Minecraft 客户端 Future 等待它 (Future {relevant_future_info}): {content[:100]}..."
+                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. Expected 'text'. Discarding."
             )
-            # 可以考虑将这类消息存入一个队列或丢弃
+            return
+
+        content = message.message_segment.data.strip()
+        self.logger.debug(f"从 MaiCore 收到响应内容准备转发: {content[:200]}...")
+
+        active_ws = self._active_minecraft_client_ws
+        can_send_to_ws = False
+
+        if active_ws:
+            client_addr = getattr(active_ws, "remote_address", "N/A")  # 获取地址用于日志
+            self.logger.debug(
+                f"MC_RESP_PING: active_ws object detected for {client_addr}. Type: {type(active_ws)}. Attempting ping."
+            )
+            try:
+                # 发送 ping 并等待 pong。如果连接已关闭，这通常会引发 ConnectionClosed。
+                # 添加一个合理的超时以防万一客户端不响应 pong 但连接未立即关闭。
+                await asyncio.wait_for(active_ws.ping(), timeout=5.0)
+                self.logger.debug(
+                    f"MC_RESP_PING: Ping to {client_addr} successful (pong received or ping sent without error)."
+                )
+                can_send_to_ws = True
+            except websockets.exceptions.ConnectionClosed as e_closed:
+                self.logger.warning(f"MC_RESP_PING: Ping to {client_addr} failed. Connection closed: {e_closed}")
+                # 确保清理掉无效的连接
+                if self._active_minecraft_client_ws == active_ws:
+                    self._active_minecraft_client_ws = None
+            except asyncio.TimeoutError:
+                self.logger.warning(
+                    f"MC_RESP_PING: Ping to {client_addr} timed out after 5 seconds. Assuming connection is stale."
+                )
+                # 也可以选择关闭连接
+                if self._active_minecraft_client_ws == active_ws:
+                    await active_ws.close(code=1001, reason="Ping timeout")
+                    self._active_minecraft_client_ws = None
+            except Exception as e_ping:
+                self.logger.error(f"MC_RESP_PING: Error during ping to {client_addr}: {e_ping}", exc_info=True)
+        else:  # active_ws is None
+            self.logger.warning("MC_RESP_PING: _active_minecraft_client_ws is None. Cannot send.")
+
+        if can_send_to_ws and active_ws:  # 再次检查 active_ws 以防在 ping 过程中被设为 None
+            # client_addr 已经从上面获取
+            self.logger.info(f"尝试将响应 '{content[:50]}...' 转发给活跃的 Minecraft 客户端 {client_addr}.")
+            try:
+                try:
+                    json.loads(content)  # 验证 MaiCore 的响应是否为有效的 JSON
+                except json.JSONDecodeError as json_err:
+                    error_msg = f"MaiCore 返回的内容不是有效的 JSON: {content[:200]}. Error: {json_err}"
+                    self.logger.error(error_msg)
+                    # 尝试向客户端发送错误，仍然需要检查连接是否在 ping 之后仍然存活
+                    # （尽管 can_send_to_ws 为 True，但仍有可能在 ping 和此代码之间发生极小概率的关闭）
+                    if active_ws:  # 再次检查 active_ws 是否仍被赋值
+                        try:
+                            await active_ws.send(
+                                json.dumps({"error": "Received malformed data from core", "details": content[:200]})
+                            )
+                        except websockets.exceptions.ConnectionClosed:
+                            self.logger.warning(f"发送 JSON 解析错误通知给 {client_addr} 失败：连接已关闭。")
+                    return
+
+                await active_ws.send(content)
+                self.logger.info(f"成功将 MaiCore 响应转发给 Minecraft 客户端 {client_addr}: {content[:100]}...")
+
+            except websockets.exceptions.ConnectionClosed:
+                self.logger.warning(
+                    f"转发响应给 Minecraft 客户端 {client_addr} 失败：连接已关闭 (ConnectionClosed exception during send)。"
+                )
+                if self._active_minecraft_client_ws == active_ws:
+                    self._active_minecraft_client_ws = None
+            except Exception as e_send:
+                self.logger.error(
+                    f"转发 MaiCore 响应给 Minecraft 客户端 {client_addr} 时发生未知错误: {e_send}", exc_info=True
+                )
+                # 尝试发送通用错误，同样需要检查连接
+                if active_ws:
+                    try:
+                        await active_ws.send(json.dumps({"error": "Internal server error during response forwarding"}))
+                    except websockets.exceptions.ConnectionClosed:
+                        self.logger.warning(f"发送内部错误通知给 {client_addr} 失败：连接已关闭。")
+                    except Exception as e_send_error_final:
+                        self.logger.error(
+                            f"发送错误消息给 Minecraft 客户端 {client_addr} 时再次失败: {e_send_error_final}",
+                            exc_info=True,
+                        )
+
+        elif active_ws:  # active_ws 不为 None, 但 can_send_to_ws 是 False (例如 ping 失败)
+            self.logger.warning(
+                f"收到 MaiCore 响应，但与 Minecraft 客户端 (type: {type(active_ws)}, address: {getattr(active_ws, 'remote_address', 'N/A')}) 的连接在 ping 测试中失败或超时。丢弃消息: {content[:100]}..."
+            )
+        # 如果 active_ws 最初就是 None, 它已经在 MC_RESP_PING 日志中记录过了。
 
     async def cleanup(self):
         self.logger.info("正在清理 Minecraft 插件...")
@@ -281,9 +312,6 @@ class MinecraftPlugin(BasePlugin):
                 self.logger.info("已关闭活动的 Minecraft 客户端连接。")
             except Exception as e:  # pylint: disable=broad-except
                 self.logger.error(f"关闭活动 Minecraft 客户端连接时出错: {e}", exc_info=True)
-
-        if self._maicore_response_future and not self._maicore_response_future.done():
-            self._maicore_response_future.cancel()
 
         self.logger.info("Minecraft 插件清理完毕。")
 

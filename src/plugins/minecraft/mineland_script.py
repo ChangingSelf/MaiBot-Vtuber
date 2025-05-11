@@ -3,22 +3,24 @@ import json
 import websockets
 import mineland
 import numpy as np
-import logging
+from loguru import logger
+import sys
 
 # --- Configuration ---
 WEBSOCKET_SERVER_URL = "ws://localhost:8766"  # 修改为你的 Amaidesu WebSocket 服务器地址
 TASK_ID = "playground"  # 你想运行的 MineLand 任务 ID
 AGENTS_COUNT = 1  # 目前脚本主要针对单个智能体进行动作解析
-AGENTS_CONFIG = [{"name": f"AmaidesuBot{i}"} for i in range(AGENTS_COUNT)]
+AGENTS_CONFIG = [{"name": f"MaiMai{i}"} for i in range(AGENTS_COUNT)]
 HEADLESS = True  # 是否以无头模式运行 (不显示游戏窗口)
 IMAGE_SIZE = (180, 320)  # 期望的 RGB 观察图像尺寸 (高, 宽)
-ENABLE_LOW_LEVEL_ACTION = False  # True: 使用低级别动作; False: 使用高级别动作
+ENABLE_LOW_LEVEL_ACTION = True  # True: 使用低级别动作; False: 使用高级别动作
 TICKS_PER_STEP = 20  # 每步对应的游戏 tick 数 (Minecraft 默认 20 ticks/秒)
-MAX_STEPS = 5000  # 脚本运行的最大步数
+MAX_STEPS = 5000  # 每个 WebSocket 会话的最大步数
+RECONNECT_DELAY_SECONDS = 5  # 重连尝试之间的延迟
 
 # 设置日志级别
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger.add(sys.stderr, level="DEBUG")
+logger.add("logs/amaidesu_mineland_bridge.log", level="INFO")
 
 
 class MinelandJSONEncoder(json.JSONEncoder):
@@ -64,6 +66,8 @@ def json_serialize_mineland(obj):
 
 
 # --- Helper Functions ---
+# numpy_to_list_recursive is kept for potential direct use or deeper inspection,
+# though MinelandJSONEncoder should handle most cases when applied to the whole payload.
 def numpy_to_list_recursive(item):
     """递归地将 NumPy 数组和其他不可JSON序列化对象转换为可序列化类型。"""
     if isinstance(item, np.ndarray):
@@ -90,7 +94,7 @@ def numpy_to_list_recursive(item):
 
 
 async def run_mineland_bridge():
-    """主函数，运行 MineLand 环境并与 WebSocket 服务器桥接。"""
+    """主函数，运行 MineLand 环境并与 WebSocket 服务器桥接，带重连机制。"""
     logger.info(f"正在初始化 MineLand 环境 (Task ID: {TASK_ID})...")
     mland = None
     try:
@@ -105,140 +109,224 @@ async def run_mineland_bridge():
         )
         logger.info("MineLand 环境初始化成功。")
 
-        obs = mland.reset()
-        logger.info(f"环境已重置，收到初始观察: {len(obs)} 个智能体。")
+        # 主运行循环，处理重连
+        while True:
+            try:
+                logger.info("正在尝试重置 MineLand 环境并开始新的 WebSocket 会话...")
+                obs = mland.reset()
+                logger.info(f"环境已重置，收到初始观察: {len(obs)} 个智能体。")
 
-        # 为第一次发送准备初始的 "前一状态" 信息
-        code_info = [None] * AGENTS_COUNT
-        event = [[] for _ in range(AGENTS_COUNT)]  # 或者 [None] * AGENTS_COUNT
-        done = False
-        task_info = {}  # 或者 None
+                # 为新会话准备初始状态信息
+                code_info = [None] * AGENTS_COUNT
+                event = [[] for _ in range(AGENTS_COUNT)]
+                done = False  # 每个新会话开始时，done 为 False
+                task_info = {}
 
-        async with websockets.connect(WEBSOCKET_SERVER_URL) as websocket:
-            logger.info(f"已成功连接到 WebSocket 服务器: {WEBSOCKET_SERVER_URL}")
+                # ping_interval 和 ping_timeout 有助于保持连接活跃并检测断开
+                async with websockets.connect(WEBSOCKET_SERVER_URL, ping_interval=20, ping_timeout=20) as websocket:
+                    logger.info(f"已成功连接到 WebSocket 服务器: {WEBSOCKET_SERVER_URL}")
 
-            for step_num in range(MAX_STEPS):
-                if done:
-                    logger.info("任务已完成，正在退出循环。")
-                    break
+                    for step_num in range(MAX_STEPS):
+                        if done:  # 如果上一步 mland.step() 将 done 设置为 True
+                            logger.info(f"任务在步骤 {step_num - 1} (当前会话) 已完成。结束当前 WebSocket 会话。")
+                            break  # 结束 for step_num 循环，外层 while True 将尝试重连/新会话
 
-                # 1. 准备并发送状态信息到服务器
-                state_payload = {
-                    "step": step_num,
-                    "observations": numpy_to_list_recursive(obs),
-                    "code_infos": numpy_to_list_recursive(code_info),
-                    "events": numpy_to_list_recursive(event),
-                    "is_done": done,
-                    "task_info": numpy_to_list_recursive(task_info),
-                    "low_level_action_enabled": ENABLE_LOW_LEVEL_ACTION,
-                }
+                        # 1. 准备并发送状态信息到服务器
+                        state_payload = {
+                            "step": step_num,
+                            "observations": obs,  # MinelandJSONEncoder 会处理内部 NumPy 类型等
+                            "code_infos": code_info,  # MinelandJSONEncoder 会处理
+                            "events": event,  # MinelandJSONEncoder 会处理
+                            "is_done": done,
+                            "task_info": task_info,  # MinelandJSONEncoder 会处理
+                            "low_level_action_enabled": ENABLE_LOW_LEVEL_ACTION,
+                        }
 
-                # 使用自定义序列化方法
-                try:
-                    json_str = json_serialize_mineland(state_payload)
-                    await websocket.send(json_str)
-                    logger.debug(f"步骤 {step_num}: 已发送状态到服务器。")
-                except TypeError as e:
-                    logger.error(f"JSON序列化错误: {e}")
-                    # 尝试打印出问题对象的类型信息以帮助调试
-                    error_details = f"observations类型: {type(obs)}"
-                    if isinstance(obs, list) and obs:
-                        error_details += f", 第一个元素类型: {type(obs[0])}"
-                    logger.error(error_details)
-                    raise
+                        try:
+                            json_str = json_serialize_mineland(state_payload)
+                            await websocket.send(json_str)
+                            logger.debug(f"步骤 {step_num}: 已发送状态到服务器。")
+                        except TypeError as e:  # 来自 json_serialize_mineland 的严重错误
+                            logger.exception(f"步骤 {step_num}: JSON序列化错误: {e}")
+                            # 此错误表示状态无法发送，当前会话无法继续
+                            # 抛出一个 WebSocket 相关的异常，由外层捕获以触发重连
+                            raise websockets.exceptions.AbortHandshake(status=1011, reason=f"Serialization error: {e}")
+                        except websockets.exceptions.ConnectionClosed:
+                            logger.exception(f"步骤 {step_num}: 发送状态时 WebSocket 连接关闭。")
+                            raise  # 重新抛出，由外层 except 处理重连
 
-                # 2. 从服务器接收动作指令
-                action_response = await websocket.recv()
-                logger.debug(f"步骤 {step_num}: 从服务器收到响应: {action_response}")
+                        # 2. 从服务器接收动作指令
+                        action_response_str = None
+                        action_data = None
+                        try:
+                            action_response_str = await websocket.recv()
+                            logger.debug(f"步骤 {step_num}: 从服务器收到响应: {action_response_str}")
+                            action_data = json.loads(action_response_str)
+                        except websockets.exceptions.ConnectionClosed:
+                            logger.exception(f"步骤 {step_num}: 接收动作时 WebSocket 连接关闭。")
+                            raise  # 重新抛出，由外层 except 处理重连
+                        except json.JSONDecodeError as e:
+                            logger.exception(f"步骤 {step_num}: JSON 解码错误: {e}. 收到的数据: {action_response_str}")
+                            logger.warning(f"步骤 {step_num}: 跳过损坏的动作消息，将使用 no_op。")
+                            # action_data 将保持为 None，后续逻辑会处理并使用 no_op
 
-                action_data = json.loads(action_response)
+                        # 解析动作并准备 current_actions
+                        current_actions = []
+                        if action_data:  # 仅当 action_data 有效 (JSON 解析成功) 时解析
+                            if AGENTS_COUNT == 1:
+                                # parsed_agent_action_list = None # No longer needed for LLA path
+                                parsed_agent_action_obj = None  # 用于高级别单个动作
 
-                actions_for_step = []
+                                if ENABLE_LOW_LEVEL_ACTION:
+                                    agent_action_values = action_data.get("values")
+                                    # low_level_action.py shows self.data has 8 components.
+                                    if (
+                                        agent_action_values
+                                        and isinstance(agent_action_values, list)
+                                        and len(agent_action_values) == 8
+                                    ):
+                                        lla = (
+                                            mineland.LowLevelAction()
+                                        )  # Creates an LLA with self.data = [0,0,0,0,0,0,0,0]
+                                        valid_lla_components = True
+                                        for i in range(8):  # There are 8 components
+                                            try:
+                                                component_value = int(agent_action_values[i])
+                                                lla[i] = (
+                                                    component_value  # Uses LowLevelAction.__setitem__ which validates
+                                                )
+                                            except ValueError:
+                                                logger.warning(
+                                                    f"步骤 {step_num}: 低级别动作组件 {i} 值 '{agent_action_values[i]}' 不是有效整数。对该组件使用默认值 0。"
+                                                )
+                                                # lla[i] will retain its default from LowLevelAction() initialization (0)
+                                                # Or, we could decide to invalidate the whole LLA if one component is bad.
+                                                # For now, allow partial application with defaults for bad components.
+                                            except (
+                                                AssertionError
+                                            ) as e_assert:  # Catches out-of-range from LowLevelAction.__setitem__
+                                                logger.warning(
+                                                    f"步骤 {step_num}: 低级别动作组件 {i} 值 ({agent_action_values[i]}) 无效: {e_assert}。对该组件使用默认值 0。"
+                                                )
+                                                # lla[i] will retain its default.
+                                        current_actions = [lla]
+                                    else:
+                                        if not (agent_action_values and isinstance(agent_action_values, list)):
+                                            logger.warning(
+                                                f"步骤 {step_num}: 低级别动作数据格式错误 (期望列表，得到 {type(agent_action_values)})，将使用 no_op。 数据: {action_data}"
+                                            )
+                                        elif not isinstance(agent_action_values, list) or len(agent_action_values) != 8:
+                                            logger.warning(
+                                                f"步骤 {step_num}: 低级别动作数据长度错误 (期望 8，得到 {len(agent_action_values) if isinstance(agent_action_values, list) else 'N/A'})，将使用 no_op。 数据: {agent_action_values}"
+                                            )
+                                        current_actions = mineland.LowLevelAction.no_op(AGENTS_COUNT)
+                                else:  # 高级别动作
+                                    action_type_str = action_data.get("action_type_name", "NO_OP").upper()
 
-                if AGENTS_COUNT == 1:  # 简化处理单个智能体的情况
-                    parsed_action_for_agent = None
-                    if ENABLE_LOW_LEVEL_ACTION:
-                        # 服务器应发送 {"values": [int, int, ...]}
-                        # LowLevelAction 通常是一个二维列表 [[act_agent0], [act_agent1]]
-                        # 这里我们假设服务器为单个智能体发送其动作列表
-                        agent_action_values = action_data.get("values")
-                        if agent_action_values and isinstance(agent_action_values, list):
-                            temp_actions = mineland.LowLevelAction.no_op(AGENTS_COUNT)
-                            temp_actions[0] = agent_action_values  # 直接赋值给第一个智能体
-                            parsed_action_for_agent = temp_actions  # 这是整个动作列表
-                        else:
-                            logger.warning(
-                                f"步骤 {step_num}: 低级别动作数据格式错误，将使用 no_op。 数据: {action_data}"
+                                    if action_type_str == "NEW":
+                                        action_param_code = action_data.get("code", "")
+                                        parsed_agent_action_obj = mineland.Action(
+                                            type=mineland.Action.NEW, code=action_param_code
+                                        )
+                                    elif action_type_str == "RESUME":
+                                        parsed_agent_action_obj = mineland.Action(type=mineland.Action.RESUME, code="")
+                                    elif action_type_str == "CHAT_OP" or action_type_str == "CHAT":
+                                        chat_message = action_data.get("message", "")
+                                        current_actions = mineland.Action.chat_op(
+                                            AGENTS_COUNT, chat_message
+                                        )  # 直接赋值给 current_actions
+                                        logger.info(f"步骤 {step_num}: 为智能体创建聊天动作: {chat_message}")
+                                    else:  # NO_OP 或未知
+                                        if action_type_str != "NO_OP":  # 如果是未知类型
+                                            logger.info(
+                                                f"步骤 {step_num}: 未知高级动作类型 '{action_type_str}'，使用 no_op。"
+                                            )
+                                        # parsed_agent_action_obj 保持 None，后续逻辑会生成 no_op
+
+                                    if parsed_agent_action_obj:  # 如果是 NEW 或 RESUME
+                                        current_actions = [parsed_agent_action_obj]
+                                    elif (
+                                        not current_actions
+                                    ):  # 如果不是 CHAT_OP 且 parsed_agent_action_obj 未设置 (即 NO_OP 或未知)
+                                        current_actions = mineland.Action.no_op(AGENTS_COUNT)
+
+                                # Corrected logging logic for single agent actions
+                                if current_actions:  # Only log if there are actions determined
+                                    log_this_specific_action = True  # Default to logging the action
+                                    if not ENABLE_LOW_LEVEL_ACTION:
+                                        # This suppression logic is only for high-level actions.
+                                        # action_type_str is defined in the high-level action parsing path.
+                                        # current_actions[0] is expected to be a mineland.Action instance.
+                                        if (
+                                            len(current_actions) == 1
+                                            and isinstance(current_actions[0], mineland.Action)  # Safety check
+                                            and current_actions[0].type == mineland.Action.NO_OP
+                                            and action_type_str == "NO_OP"
+                                        ):  # action_type_str is in scope here
+                                            log_this_specific_action = False
+                                    # For low-level actions, log_this_specific_action remains True by default,
+                                    # so they are always logged if present (matching previous implicit behavior).
+
+                                    if log_this_specific_action:
+                                        logger.info(f"步骤 {step_num}: 为智能体 0 解析的动作: {current_actions}")
+
+                            else:  # 多智能体 (AGENTS_COUNT > 1)
+                                logger.warning(
+                                    f"步骤 {step_num}: 尚未完全支持 AGENTS_COUNT > 1 的动作解析，将使用 no_op。"
+                                )
+                                current_actions = (
+                                    mineland.Action.no_op(AGENTS_COUNT)
+                                    if not ENABLE_LOW_LEVEL_ACTION
+                                    else mineland.LowLevelAction.no_op(AGENTS_COUNT)
+                                )
+
+                        else:  # action_data 无效 (例如 JSON 解析失败或服务器未发送有效数据)
+                            logger.warning(f"步骤 {step_num}: 无有效动作数据或解析失败，将使用 no_op。")
+                            current_actions = (
+                                mineland.LowLevelAction.no_op(AGENTS_COUNT)
+                                if ENABLE_LOW_LEVEL_ACTION
+                                else mineland.Action.no_op(AGENTS_COUNT)
                             )
-                            parsed_action_for_agent = mineland.LowLevelAction.no_op(AGENTS_COUNT)
-                        actions_for_step = parsed_action_for_agent  # LowLevelAction 本身就是列表
-                    else:  # 高级别动作
-                        # 服务器应发送 {"action_type_name": "NEW/RESUME/CHAT_OP/NO_OP", "code": "...", "message": "..."}
-                        action_type_str = action_data.get("action_type_name", "NO_OP").upper()
 
-                        # 使用字符串比较而不是直接访问可能不存在的属性
-                        if action_type_str == "NEW":
-                            # 创建一个NEW类型的动作，代码由code字段提供
-                            action_param_code = action_data.get("code", "")
-                            parsed_action_for_agent = mineland.Action(type=mineland.Action.NEW, code=action_param_code)
-                        elif action_type_str == "RESUME":
-                            # 创建一个RESUME类型的动作
-                            parsed_action_for_agent = mineland.Action(type=mineland.Action.RESUME, code="")
-                        elif action_type_str == "CHAT_OP" or action_type_str == "CHAT":
-                            # 使用chat_op工厂方法创建聊天动作
-                            chat_message = action_data.get("message", "")
-                            # 对于一个智能体，我们直接返回一个动作列表
-                            actions_for_step = mineland.Action.chat_op(AGENTS_COUNT, chat_message)
-                            logger.info(f"步骤 {step_num}: 为智能体 0 创建聊天动作: {chat_message}")
-                            # 继续下一个迭代，因为actions_for_step已经设置好了
-                            continue
-                        else:
-                            # 默认使用no_op
-                            actions_for_step = mineland.Action.no_op(AGENTS_COUNT)
-                            logger.info(f"步骤 {step_num}: 未知动作类型 {action_type_str}，使用 no_op。")
-                            # 继续下一个迭代，因为actions_for_step已经设置好了
-                            continue
+                        # 3. 在 MineLand 环境中执行动作
+                        obs, code_info, event, done, task_info = mland.step(action=current_actions)
+                        logger.debug(f"步骤 {step_num}: MineLand step 执行完毕。Done: {done}")
 
-                        actions_for_step = [parsed_action_for_agent]
+                    # for step_num 循环结束 (因 MAX_STEPS 或 done=True)
+                    if not done:  # 如果是因为 MAX_STEPS 结束
+                        logger.info(f"WebSocket 会话因达到 MAX_STEPS ({MAX_STEPS}) 而结束。")
+                    # 不需要 break 或 continue，外层 while True 会使其尝试重连和新会话
 
-                    logger.info(f"步骤 {step_num}: 为智能体 0 解析的动作: {actions_for_step}")
+            except (
+                websockets.exceptions.ConnectionClosed,
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.ConnectionClosedOK,  # 正常关闭也应尝试重连，除非脚本主动退出
+                websockets.exceptions.WebSocketException,  # 包括 AbortHandshake 等更具体的 WebSocket 错误
+                ConnectionRefusedError,  # 连接被拒绝
+                OSError,  # 例如: [Errno 10054] 远程主机强迫关闭了一个现有的连接, [Errno 11001] getaddrinfo failed
+            ) as e:
+                logger.exception(f"WebSocket 连接错误或会话中断: {type(e).__name__} - {e}.")
+                logger.info(f"将在 {RECONNECT_DELAY_SECONDS} 秒后尝试重连...")
+                await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+                # continue 会让外层 while True 循环继续，开始新的连接尝试和 mland.reset()
+            # 其他意外错误（例如 Mineland 内部的严重错误）不在此处捕获，它们将导致程序通过
+            # __main__ 中的 except Exception 来终止，这样可以暴露更深层次的、非网络相关的问题。
 
-                else:
-                    # TODO: 实现多智能体动作的接收和解析逻辑
-                    # 服务器需要发送一个动作列表，或者为每个智能体指定动作
-                    logger.warning(f"步骤 {step_num}: 尚未完全支持 AGENTS_COUNT > 1 的动作解析，将使用 no_op。")
-                    actions_for_step = (
-                        mineland.Action.no_op(AGENTS_COUNT)
-                        if not ENABLE_LOW_LEVEL_ACTION
-                        else mineland.LowLevelAction.no_op(AGENTS_COUNT)
-                    )
-
-                # 3. 在 MineLand 环境中执行动作
-                obs, code_info, event, done, task_info = mland.step(action=actions_for_step)
-                logger.debug(f"步骤 {step_num}: MineLand step 执行完毕。Done: {done}")
-
-            logger.info("已达到最大步数或任务已完成。")
-
-    except websockets.exceptions.ConnectionClosedError as e:
-        logger.error(f"WebSocket 连接关闭错误: {e}")
-    except websockets.exceptions.WebSocketException as e:
-        logger.error(f"WebSocket 错误: {e}")
-    except ConnectionRefusedError:
-        logger.error(f"无法连接到 WebSocket 服务器 {WEBSOCKET_SERVER_URL}。请确保服务器正在运行。")
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON 解码错误: {e}. 收到的数据: {action_response if 'action_response' in locals() else 'N/A'}")
-    except Exception as e:
-        logger.error(f"发生意外错误: {e}", exc_info=True)
     finally:
         if mland:
             logger.info("正在关闭 MineLand 环境...")
             mland.close()
             logger.info("MineLand 环境已关闭。")
-        logger.info("脚本执行完毕。")
+        logger.info("Amaidesu-MineLand Bridge 脚本执行终止。")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(run_mineland_bridge())
     except KeyboardInterrupt:
-        logger.info("脚本被用户中断。")
+        logger.info("脚本被用户中断 (KeyboardInterrupt)。正在清理并退出...")
+    except Exception as e:  # 捕获从 run_mineland_bridge 抛出的未在此处理的意外错误
+        logger.exception(f"脚本因意外错误而终止: {e}")
+    finally:
+        # mland.close() 已经在 run_mineland_bridge 的 finally 中处理
+        logger.info("Amaidesu-MineLand Bridge 已关闭。")
