@@ -13,7 +13,7 @@ AGENTS_COUNT = 1  # 目前脚本主要针对单个智能体进行动作解析
 AGENTS_CONFIG = [{"name": f"MaiMai{i}"} for i in range(AGENTS_COUNT)]
 HEADLESS = True  # 是否以无头模式运行 (不显示游戏窗口)
 IMAGE_SIZE = (180, 320)  # 期望的 RGB 观察图像尺寸 (高, 宽)
-ENABLE_LOW_LEVEL_ACTION = True  # True: 使用低级别动作; False: 使用高级别动作
+ENABLE_LOW_LEVEL_ACTION = False  # True: 使用低级别动作; False: 使用高级别动作
 TICKS_PER_STEP = 20  # 每步对应的游戏 tick 数 (Minecraft 默认 20 ticks/秒)
 MAX_STEPS = 5000  # 每个 WebSocket 会话的最大步数
 RECONNECT_DELAY_SECONDS = 5  # 重连尝试之间的延迟
@@ -260,7 +260,7 @@ async def run_mineland_bridge():
                                         if (
                                             len(current_actions) == 1
                                             and isinstance(current_actions[0], mineland.Action)  # Safety check
-                                            and current_actions[0].type == mineland.Action.NO_OP
+                                            and current_actions[0].type == mineland.Action.no_op
                                             and action_type_str == "NO_OP"
                                         ):  # action_type_str is in scope here
                                             log_this_specific_action = False
