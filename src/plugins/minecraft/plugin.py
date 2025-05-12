@@ -8,7 +8,6 @@ import os
 import tomllib
 import mineland
 import numpy as np
-from enum import Enum
 
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
@@ -17,32 +16,6 @@ from maim_message import MessageBase, UserInfo, GroupInfo, FormatInfo, BaseMessa
 from src.utils.logger import get_logger
 
 logger = get_logger("MinecraftPlugin")
-
-
-# Minecraft动作类型枚举
-class MinecraftActionType(Enum):
-    """Minecraft动作类型枚举，规范化动作类型的使用"""
-
-    NO_OP = "NO_OP"  # 不执行任何操作
-    NEW = "NEW"  # 提交新代码
-    RESUME = "RESUME"  # 恢复执行
-    CHAT = "CHAT"  # 聊天消息
-    CHAT_OP = "CHAT_OP"  # 聊天消息（与CHAT相同）
-
-    @classmethod
-    def from_string(cls, action_type_str: str) -> "MinecraftActionType":
-        """从字符串获取动作类型枚举"""
-        try:
-            return cls[action_type_str.upper()]
-        except (KeyError, AttributeError):
-            # 如果找不到对应的枚举值，返回NO_OP
-            logger.warning(f"未知动作类型: '{action_type_str}'，使用 NO_OP 代替。")
-            return cls.NO_OP
-
-    @classmethod
-    def is_chat_action(cls, action_type) -> bool:
-        """判断是否为聊天类动作"""
-        return action_type in (cls.CHAT, cls.CHAT_OP)
 
 
 class MinelandJSONEncoder(json.JSONEncoder):
@@ -161,9 +134,6 @@ class MinecraftPlugin(BasePlugin):
         self.user_id: str = minecraft_config.get("user_id", "minecraft_bot")
         self.group_id_str: Optional[str] = minecraft_config.get("group_id")
         self.nickname: str = minecraft_config.get("nickname", "Minecraft Observer")
-        self.json_prompt_prefix: str = minecraft_config.get(
-            "json_prompt_prefix", "Minecraft环境状态如下，请提供JSON格式的动作指令："
-        )
 
         # Mineland 实例
         self.mland: Optional[mineland.MineLand] = None
@@ -188,7 +158,7 @@ class MinecraftPlugin(BasePlugin):
                 agents_config=self.agents_config,
                 headless=self.headless,
                 image_size=self.image_size,
-                enable_low_level_action=self.enable_low_level_action,  # MineLand环境是否启用低级动作
+                enable_low_level_action=self.enable_low_level_action,
                 ticks_per_step=self.ticks_per_step,
             )
             self.logger.info(f"MineLand 环境 (Task ID: {self.task_id}) 初始化成功。")
@@ -221,24 +191,61 @@ class MinecraftPlugin(BasePlugin):
             "events": self.current_event,
             "is_done": self.current_done,
             "task_info": self.current_task_info,
-            "low_level_action_enabled": self.enable_low_level_action,
+            "low_level_action_enabled": self.enable_low_level_action,  # 仅用于提示词选择，不影响动作解析
         }
 
         try:
-            # 使用 MinelandJSONEncoder 进行序列化，确保 NumPy 等类型正确处理
-            # json_str_payload = json.dumps(state_payload, cls=MinelandJSONEncoder) # 直接传递字典，让MessageBase处理
-            # prompted_message_content = f"{self.json_prompt_prefix}{json_str_payload}"
-
-            # MaiCore可能期望一个更结构化的输入，而不仅仅是一个JSON字符串。
-            # 我们将整个 state_payload 作为消息内容的一部分，而不是纯文本。
-            # FormatInfo可能需要调整，或者MaiCore需要能处理dict类型的data。
-            # 暂时，我们仍将其序列化为JSON字符串作为文本内容。
-
-            prompted_message_content = f"{self.json_prompt_prefix}{json_serialize_mineland(state_payload)}"
-
+            serialized_state = json_serialize_mineland(state_payload)
         except Exception as e:
             self.logger.exception(f"序列化 Mineland 状态失败: {e}", exc_info=True)
             return
+
+        # ---- 动态构建提示词 ----
+        base_prompt = (
+            "你是一个Minecraft智能体助手。以下是当前的游戏状态。请分析状态并提供一个JSON格式的动作指令。\n"
+            "你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), "
+            "也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。"
+        )
+
+        # 分别构建高级和低级动作的提示词
+        high_level_example = {"actions": "bot.chat('Hello from Minecraft!'); bot.jump();"}
+
+        high_level_instructions = (
+            f"请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是JavaScript代码字符串。\n\n"
+            f"此JavaScript代码将控制智能体在Minecraft中的行为。例如:\n"
+            f"`{json.dumps(high_level_example)}`\n\n"
+            f"如果不提供 `actions` 字段或其不是有效的字符串，将不执行任何操作。\n"
+            f"回复必须是纯JSON，不含其他文本或标记。"
+        )
+
+        low_level_example = {"actions": [0, 1, 0, 0, 12, 0, 0, 0]}
+
+        low_level_instructions = (
+            f"请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是包含8个整数的数组。\n\n"
+            f"这8个整数控制智能体的基本动作:\n"
+            f"- 索引 0: 前进/后退 (0=无, 1=前进, 2=后退), 范围: [0, 2]\n"
+            f"- 索引 1: 左移/右移 (0=无, 1=左移, 2=右移), 范围: [0, 2]\n"
+            f"- 索引 2: 跳跃/下蹲 (0=无, 1=跳跃, 2=下蹲, 3=其他), 范围: [0, 3]\n"
+            f"- 索引 3: 摄像头水平旋转 (0-24, 12=无变化), 范围: [0, 24]\n"
+            f"- 索引 4: 摄像头垂直旋转 (0-24, 12=无变化), 范围: [0, 24]\n"
+            f"- 索引 5: 交互类型 (0=无, 1=攻击, 2=使用, 3=放置...), 范围: [0, 9]\n"
+            f"- 索引 6: 方块/物品选择 (0-243), 范围: [0, 243]\n"
+            f"- 索引 7: 库存管理 (0-45), 范围: [0, 45]\n\n"
+            f"例如: `{json.dumps(low_level_example)}`\n\n"
+            f"如果不提供 `actions` 字段或其不是包含8个整数的数组，将不执行任何操作。\n"
+            f"回复必须是纯JSON，不含其他文本或标记。"
+        )
+
+        # 根据配置选择提示词
+        detailed_instructions = low_level_instructions if self.enable_low_level_action else high_level_instructions
+        action_mode = "低级 (数值数组)" if self.enable_low_level_action else "高级 (JavaScript)"
+        self.logger.info(f"当前偏好的动作模式: {action_mode}，但仍可解析两种类型的动作")
+
+        # 最终的提示内容
+        prompted_message_content = (
+            f"{base_prompt}\n\n{detailed_instructions}\n\n以下是当前的游戏状态 (JSON格式):\n{serialized_state}"
+        )
+        # ---- 提示词构建完毕 ----
 
         current_time = int(time.time())
         message_id = f"mc_direct_{current_time}_{hash(prompted_message_content + str(self.user_id)) % 10000}"
@@ -259,11 +266,6 @@ class MinecraftPlugin(BasePlugin):
         # format_info = FormatInfo(content_format="application/json", accept_format="application/json") # MaiCore需要能处理
         format_info = FormatInfo(content_format="text", accept_format="text")  # 保持文本格式，内容是JSON字符串
 
-        additional_cfg = {
-            "source_plugin": "minecraft",
-            "low_level_action_enabled": self.enable_low_level_action,
-        }
-
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             message_id=message_id,
@@ -271,7 +273,9 @@ class MinecraftPlugin(BasePlugin):
             user_info=user_info,
             group_info=group_info_obj,
             format_info=format_info,
-            additional_config=additional_cfg,
+            additional_config={
+                "source_plugin": "minecraft",
+            },
             template_info=None,
         )
 
@@ -284,7 +288,7 @@ class MinecraftPlugin(BasePlugin):
 
         await self.core.send_to_maicore(msg_to_maicore)
         self.logger.info(
-            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
+            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}, 偏好动作模式: {action_mode}) 发送给 MaiCore。"
         )
         self.logger.debug(f"发送给 MaiCore 的状态详情: {prompted_message_content[:300]}...")
 
@@ -298,7 +302,7 @@ class MinecraftPlugin(BasePlugin):
 
         if message.message_segment.type != "text":
             self.logger.warning(
-                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text' (包含JSON动作)。丢弃消息。"
+                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text' (包含JSON格式的动作指令)。丢弃消息。"
             )
             return
 
@@ -313,72 +317,50 @@ class MinecraftPlugin(BasePlugin):
             # 目前，如果动作无效，我们将跳过此步骤并且不发送新状态。
             return
 
-        # --- 解析动作并准备 current_actions (逻辑移植自 mineland_script.py) ---
-        # 注意: 此处假设 AGENTS_COUNT 总是 1，与 mineland_script.py 中处理单 Agent 的逻辑对齐
-        # 如果将来需要多 Agent，这里的逻辑需要扩展。
+        # --- 解析动作并准备 current_actions ---
+        # 目前仅支持单智能体 (self.agents_count=1)
         current_actions = []
-        parsed_action_for_log = "no_op"  # 用于日志记录的已解析动作字符串
+        parsed_action_for_log = "NO_OP"  # 用于日志记录的已解析动作字符串
 
         if self.agents_count == 1:
-            if self.enable_low_level_action:
-                agent_action_values = action_data.get("values")
-                if (
-                    agent_action_values
-                    and isinstance(agent_action_values, list)
-                    and len(agent_action_values) == 8  # mineland.LowLevelAction.dim 低级动作维度，通常为8
-                ):
-                    lla = mineland.LowLevelAction()
-                    for i in range(len(agent_action_values)):  # 通常是8个组件
-                        try:
-                            component_value = int(agent_action_values[i])
-                            lla[i] = component_value
-                        except (ValueError, AssertionError) as err_lla:
-                            logger.warning(
-                                f"步骤 {self.current_step_num}: 低级别动作组件 {i} 值 '{agent_action_values[i]}' 无效 ({err_lla})。对该组件使用默认值 0。"
-                            )
-                            # lla[i] 将保留其默认值 (0)
-                    current_actions = [lla]
-                    parsed_action_for_log = f"LLA: {lla.data}"
-                else:
-                    logger.warning(
-                        f"步骤 {self.current_step_num}: 低级别动作数据格式或长度错误 (期望列表长度8)，将使用 no_op。数据: {agent_action_values}"
-                    )
-                    current_actions = mineland.LowLevelAction.no_op(self.agents_count)
-            else:  # 高级别动作
-                action_type_str = action_data.get("action_type_name", MinecraftActionType.NO_OP.value)
-                action_type = MinecraftActionType.from_string(action_type_str)
-                parsed_agent_action_obj = None
+            # 获取 actions 字段并根据类型判断是高级还是低级动作
+            actions = action_data.get("actions")
 
-                if action_type == MinecraftActionType.NEW:
-                    action_param_code = action_data.get("code", "")
-                    parsed_agent_action_obj = mineland.Action(type=mineland.Action.NEW, code=action_param_code)
-                    parsed_action_for_log = f"NEW: {action_param_code[:50]}"  # 记录动作类型和代码片段
-                elif action_type == MinecraftActionType.RESUME:
-                    parsed_agent_action_obj = mineland.Action(type=mineland.Action.RESUME, code="")
-                    parsed_action_for_log = "RESUME"  # 记录RESUME动作
-                elif MinecraftActionType.is_chat_action(action_type):
-                    # 在CHAT和CHAT_OP类型之间进行统一处理
-                    chat_message = action_data.get("message", "")
-                    # mineland.Action.chat_op 返回一个动作列表
-                    current_actions = mineland.Action.chat_op(self.agents_count, chat_message)
-                    parsed_action_for_log = f"CHAT: {chat_message[:50]}"  # 记录CHAT动作和消息片段
-                    self.logger.info(f"执行聊天动作: '{chat_message}'")
-                else:  # NO_OP 或未知动作类型
-                    # parsed_agent_action_obj 保持 None，后续逻辑会生成 no_op
-                    parsed_action_for_log = f"NO_OP (或未知动作: {action_type_str})"
-
-                if parsed_agent_action_obj:  # 如果是 NEW 或 RESUME 动作
-                    current_actions = [parsed_agent_action_obj]
-                elif not current_actions:  # 如果不是 CHAT_OP 且 parsed_agent_action_obj 未设置 (即 NO_OP 或未知)
-                    current_actions = mineland.Action.no_op(self.agents_count)
+            if actions is None:
+                # 无 actions 字段，执行无操作
+                self.logger.info(f"步骤 {self.current_step_num}: 未提供 actions 字段，将执行无操作。")
+                current_actions = mineland.Action.no_op(self.agents_count)
+                parsed_action_for_log = "无操作 (NO_OP)"
+            elif isinstance(actions, str) and actions.strip():
+                # actions 是字符串，执行高级动作
+                parsed_agent_action_obj = mineland.Action(type=mineland.Action.NEW, code=actions)
+                current_actions = [parsed_agent_action_obj]
+                parsed_action_for_log = f"高级动作: {actions[:50]}{'...' if len(actions) > 50 else ''}"
+            elif isinstance(actions, list) and len(actions) == 8:
+                # actions 是数组，执行低级动作
+                lla = mineland.LowLevelAction()
+                for i in range(len(actions)):
+                    try:
+                        component_value = int(actions[i])
+                        lla[i] = component_value
+                    except (ValueError, AssertionError) as err_lla:
+                        self.logger.warning(
+                            f"步骤 {self.current_step_num}: 低级动作组件 {i} 值 '{actions[i]}' 无效 ({err_lla})。使用默认值 0。"
+                        )
+                        # lla[i] 将保留默认值 (0)
+                current_actions = [lla]
+                parsed_action_for_log = f"低级动作: {lla.data}"
+            else:
+                # actions 格式不正确，执行无操作
+                self.logger.warning(
+                    f"步骤 {self.current_step_num}: actions 字段格式不正确 (应为字符串或8元素数组)，将执行无操作。"
+                )
+                current_actions = mineland.Action.no_op(self.agents_count)
+                parsed_action_for_log = "无操作 (NO_OP - 格式错误)"
         else:  # 多智能体 (self.agents_count > 1)
-            logger.warning(f"步骤 {self.current_step_num}: AGENTS_COUNT > 1 的动作解析尚未完全支持，将使用 no_op。")
-            current_actions = (
-                mineland.LowLevelAction.no_op(self.agents_count)
-                if self.enable_low_level_action
-                else mineland.Action.no_op(self.agents_count)
-            )
-            parsed_action_for_log = "fallback_no_op"  # 记录回退到no_op
+            self.logger.warning(f"步骤 {self.current_step_num}: 多智能体 (AGENTS_COUNT > 1) 暂不支持，将执行无操作。")
+            current_actions = mineland.Action.no_op(self.agents_count)
+            parsed_action_for_log = "多智能体-无操作"
 
         self.logger.info(f"步骤 {self.current_step_num}: MaiCore 返回动作，解析为: {parsed_action_for_log}")
 

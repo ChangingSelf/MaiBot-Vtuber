@@ -65,22 +65,6 @@ def command(name: str, description: str, usage: str = None):
     return decorator
 
 
-# Minecraft动作类型枚举
-class MinecraftActionType(Enum):
-    """Minecraft动作类型枚举，与插件内部使用的动作类型保持一致"""
-
-    NO_OP = "NO_OP"  # 不执行任何操作
-    NEW = "NEW"  # 提交新代码
-    RESUME = "RESUME"  # 恢复执行
-    CHAT = "CHAT"  # 聊天消息（与CHAT_OP相同）
-    CHAT_OP = "CHAT_OP"  # 聊天消息
-
-    @classmethod
-    def get_name(cls, action_type):
-        """获取动作类型的名称"""
-        return action_type.value
-
-
 async def handle_websocket(request: web.Request):
     """处理新的 WebSocket 连接。"""
     ws = web.WebSocketResponse()
@@ -246,35 +230,6 @@ async def cmd_mc_help(args: List[str]) -> Optional[MessageBase]:
     return None  # 不发送任何消息到websocket
 
 
-@command("mc_new", "发送Minecraft NEW动作 - 提交新的JavaScript代码", "/mc_new [代码]")
-async def cmd_mc_new(args: List[str]) -> Optional[MessageBase]:
-    """发送Minecraft NEW动作"""
-    # 默认代码
-    default_code = """
-def run(api):
-    api.chat("Hello, Minecraft world!")
-    api.step_forward()
-    """
-
-    # 如果提供了自定义代码，使用用户提供的代码
-    code = " ".join(args) if args else default_code
-
-    action = {"action_type_name": MinecraftActionType.get_name(MinecraftActionType.NEW), "code": code}
-
-    return build_message(json.dumps(action))
-
-
-@command("mc_chat", "发送Minecraft CHAT动作 - 发送聊天消息", "/mc_chat [消息]")
-async def cmd_mc_chat(args: List[str]) -> Optional[MessageBase]:
-    """发送Minecraft CHAT动作"""
-    # 默认消息
-    message = " ".join(args) if args else "Hello, world!"
-
-    action = {"action_type_name": MinecraftActionType.get_name(MinecraftActionType.CHAT_OP), "message": message}
-
-    return build_message(json.dumps(action))
-
-
 @command("mc_low_level", "发送自定义低级动作", "/mc_low_level [val1] [val2] [val3] [val4] [val5] [val6] [val7] [val8]")
 async def cmd_mc_low_level(args: List[str]) -> Optional[MessageBase]:
     """发送Minecraft低级动作
@@ -301,22 +256,27 @@ async def cmd_mc_low_level(args: List[str]) -> Optional[MessageBase]:
             except ValueError:
                 print(f"{COLOR_RED}警告: 参数 '{arg}' 不是有效整数，使用默认值0{COLOR_RESET}")
 
-    action = {"values": values}
+    action = {"actions": values}
 
     return build_message(json.dumps(action))
 
 
-# 命令描述工具函数
-def get_action_description(action_type: MinecraftActionType) -> str:
-    """获取动作类型的描述文本"""
-    descriptions = {
-        MinecraftActionType.NO_OP: "不执行任何操作",
-        MinecraftActionType.NEW: "提交新的JavaScript代码",
-        MinecraftActionType.RESUME: "恢复执行代码",
-        MinecraftActionType.CHAT: "发送聊天消息",
-        MinecraftActionType.CHAT_OP: "发送聊天消息",
-    }
-    return descriptions.get(action_type, f"未知动作类型 ({action_type.value})")
+@command("mc_code", "发送Minecraft高级动作 - 提交JavaScript代码", "/mc_code [代码]")
+async def cmd_mc_code(args: List[str]) -> Optional[MessageBase]:
+    """发送Minecraft高级动作（JavaScript代码）"""
+    # 默认代码
+    default_code = """
+def run(api):
+    api.chat("Hello, Minecraft world!")
+    api.step_forward()
+    """
+
+    # 如果提供了自定义代码，使用用户提供的代码
+    code = " ".join(args) if args else default_code
+
+    action = {"actions": code}
+
+    return build_message(json.dumps(action))
 
 
 async def handle_command(cmd_line: str):

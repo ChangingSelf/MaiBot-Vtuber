@@ -25,9 +25,10 @@ MineLand 是一个为研究大规模互动、有限多模态感知和物理需�
 *   **状态同步**: 将 MineLand 环境的当前状态 (如观察数据、代码执行信息、事件、任务完成状态等) 序列化后发送给 AmaidesuCore。
 *   **动作执行**: 接收来自 AmaidesuCore 的动作指令，并在 MineLand 环境中为指定的智能体执行这些动作。
 *   **动作类型支持**:
-    *   **高级动作**: 以 JavaScript 代码字符串的形式定义复杂行为。
-    *   **低级动作**: 以数值数组的形式定义基础操作，适用于强化学习场景。
-    *   **聊天动作**: 允许智能体在 Minecraft 环境中发送聊天消息。
+    *   **统一的动作字段**: 使用单一的 `actions` 字段，根据内容类型区分不同动作:
+        *   **高级动作**: 当 `actions` 字段为字符串时，表示 JavaScript 代码。
+        *   **低级动作**: 当 `actions` 字段为8元素整数数组时，表示基础数值动作。
+    *   **提示词优化**: 基于配置的 `mineland_enable_low_level_action` 值，生成偏向高级或低级动作的提示词，减少使用的 tokens。
 *   **自定义序列化**: 使用自定义 JSON 编码器处理 MineLand 特有的数据类型 (如 NumPy 数组)。
 
 ## 使用流程
@@ -36,6 +37,39 @@ MineLand 是一个为研究大规模互动、有限多模态感知和物理需�
 2. 在本项目所使用的虚拟环境中使用`pip install -e <mineland所在路径>`进行本地安装
 3. 按根目录的README启动本项目
 
+## 配置说明
+
+插件使用以下配置项（位于 `src/plugins/minecraft/config.toml`）：
+
+```toml
+[minecraft]
+# MineLand 任务ID
+mineland_task_id = "playground"
+
+# 是否启用无头模式（不显示图形界面）
+mineland_headless = true
+
+# 图像大小 [高度, 宽度]
+mineland_image_size = [180, 320]
+
+# 每步的游戏刻数
+mineland_ticks_per_step = 20
+
+# 偏好使用低级别动作的提示词，但仍可解析两种类型的动作
+# true: 偏好低级动作提示词，false: 偏好高级动作提示词
+mineland_enable_low_level_action = false
+
+# 插件发送消息时使用的用户ID
+user_id = "minecraft_bot"
+
+# 插件发送消息时使用的昵称
+nickname = "Minecraft Observer"
+
+# 插件发送消息时使用的群组ID（可选）
+# group_id = "12345678"
+```
+
+**注意**: `mineland_enable_low_level_action` 配置仅影响发送给 AmaidesuCore 的提示词类型，不限制实际可执行的动作类型。无论该值如何设置，插件都能解析和执行高级和低级两种动作，只是提示词会偏向配置的类型，以节省 tokens。
 
 ## 与 AmaidesuCore 的消息交互
 
@@ -88,36 +122,46 @@ MineLand 是一个为研究大规模互动、有限多模态感知和物理需�
 *   **`MessageBase` 结构 (插件从 `handle_maicore_response` 方法接收到的 `message` 参数)**:
     *   `message_segment`:
         *   `type`: 插件期望为 `"text"`。
-        *   `data`: 一个 JSON 字符串，其具体结构取决于当前插件配置的动作模式 (`mineland_enable_low_level_action`)。
+        *   `data`: 一个 JSON 字符串，其具体结构如下。
 
-    *   **1. 高级动作模式 (`mineland_enable_low_level_action: false`)**
-        AmaidesuCore 应发送包含以下结构的 JSON 字符串：
+    *   **动作JSON结构**
+        AmaidesuCore 应发送包含以下字段的 JSON 字符串:
         ```json
         {
-            "action_type_name": "<ActionTypeNameString>",
-            // 根据 action_type_name 可能需要的其他字段:
-            "code": "<javascript_code_string>", // 当 action_type_name 为 "NEW" 时
-            "message": "<chat_message_string>"  // 当 action_type_name 为 "CHAT" 或 "CHAT_OP" 时
+            "actions": "<javascript_code_string>" // 或 [<int>, <int>, <int>, <int>, <int>, <int>, <int>, <int>]
         }
         ```
-        `action_type_name` 可以是以下字符串之一 (对应 `MinecraftActionType` 枚举):
-        *   `"NO_OP"`: 不执行任何操作。MineLand 智能体将执行一个空操作。
-        *   `"NEW"`: 执行新的 JavaScript 代码。`code` 字段必须提供。
-        *   `"RESUME"`: 继续执行先前暂停的 JavaScript 代码。
-        *   `"CHAT"` 或 `"CHAT_OP"`: 发送聊天消息。`message` 字段必须提供。该消息将在 Minecraft 环境中以智能体的身份发出。
+        
+        **字段说明:**
+        *   `actions`: 可以是以下两种类型之一:
+            * **字符串**: 包含要执行的 JavaScript 代码，触发高级动作模式。
+            * **数组**: 包含8个整数，触发低级动作模式，用于控制智能体的基本移动和交互。整数含义如下:
+             *   索引 0: 前进/后退 (0=无, 1=前进, 2=后退), 范围: [0, 2]
+             *   索引 1: 左移/右移 (0=无, 1=左移, 2=右移), 范围: [0, 2]
+             *   索引 2: 跳跃/下蹲 (0=无, 1=跳跃, 2=下蹲), 范围: [0, 3]
+             *   索引 3: 摄像头水平旋转 (0-24, 12=无变化), 范围: [0, 24]
+             *   索引 4: 摄像头垂直旋转 (0-24, 12=无变化), 范围: [0, 24]
+             *   索引 5: 交互类型 (0=无, 1=攻击, 2=使用等), 范围: [0, 9]
+             *   索引 6: 方块/物品选择 (代表快捷栏和物品), 范围: [0, 243]
+             *   索引 7: 库存管理, 范围: [0, 45]
+        
+        **注意:**
+        *   如果 `actions` 字段未提供或格式不正确，插件将执行 `no_op` (无操作) 动作。
+        *   高级和低级动作是互斥的，由 `actions` 字段的类型决定使用哪种动作。
+        *   插件会根据 `mineland_enable_low_level_action` 配置值发送偏向高级或低级动作的提示词，但 AmaidesuCore 可以返回任意一种类型的动作，插件都能正确解析和执行。
 
-    *   **2. 低级动作模式 (`mineland_enable_low_level_action: true`)**
-        AmaidesuCore 应发送包含以下结构的 JSON 字符串：
+        **示例:**
         ```json
         {
-            "values": [
-                <int>, <int>, <int>, <int>,
-                <int>, <int>, <int>, <int>
-            ]
+            "actions": "bot.chat('Hello'); bot.jump();"
         }
         ```
-        `values`: 一个包含8个整数的列表。这些值对应 `mineland.LowLevelAction` 的8个维度，用于控制智能体的基本移动和交互。
-        *   如果 `values` 字段缺失、不是列表、或列表长度不为8，插件会记录警告并执行一个 `no_op` (无操作) 动作。
+        或
+        ```json
+        {
+            "actions": [0, 1, 0, 0, 12, 0, 0, 0]
+        }
+        ```
 
 ## Mineland 核心概念
 
@@ -139,7 +183,6 @@ MineLand 是一个为研究大规模互动、有限多模态感知和物理需�
         *   `_send_state_to_maicore()`: 封装了将当前 MineLand 状态构建为 `MessageBase` 对象并发送给 AmaidesuCore 的逻辑。
         *   `handle_maicore_response(message: MessageBase)`: 核心回调函数，处理来自 AmaidesuCore 的动作指令。它解析接收到的 JSON 动作，转换为 MineLand 动作对象，通过 `mland.step()` 在模拟器中执行，然后发送更新后的状态。
         *   `cleanup()`: 关闭 MineLand 环境 (`mland.close()`)。
-    *   `MinecraftActionType(Enum)`: 定义了插件内部使用的高级动作类型 (NO_OP, NEW, RESUME, CHAT, CHAT_OP)。
     *   `MinelandJSONEncoder(json.JSONEncoder)`: 自定义 JSON 编码器，用于处理 MineLand 返回数据中可能包含的 NumPy 数组等非标准 JSON 类型，确保它们能被正确序列化。
     *   `json_serialize_mineland(obj)`: 使用 `MinelandJSONEncoder` 序列化对象的辅助函数。
     *   `load_plugin_config()`: 加载 `config.toml` 文件的辅助函数。
