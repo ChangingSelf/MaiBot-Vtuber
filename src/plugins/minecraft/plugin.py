@@ -210,31 +210,75 @@ class MinecraftPlugin(BasePlugin):
         # 分别构建高级和低级动作的提示词
         high_level_example = {"actions": "bot.chat('Hello from Minecraft!'); bot.jump();"}
 
-        high_level_instructions = (
-            f"请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是JavaScript代码字符串。\n\n"
-            f"此JavaScript代码将控制智能体在Minecraft中的行为。例如:\n"
-            f"`{json.dumps(high_level_example)}`\n\n"
-            f"如果不提供 `actions` 字段或其不是有效的字符串，将不执行任何操作。\n"
-            f"回复必须是纯JSON，不含其他文本或标记。"
-        )
+        high_level_instructions = f"""请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
+
+你是一个编写Mineflayer JavaScript代码的助手，帮助机器人完成Minecraft中的任务。
+以下是一些有用的Mineflayer API和函数:
+- `bot.chat(message)`: 发送聊天消息
+- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`
+- `craftItem(bot, name, count)`: 合成物品
+- `placeItem(bot, name, position)`: 放置方块
+- `smeltItem(bot, name, count)`: 冶炼物品
+- `killMob(bot, name, timeout)`: 击杀生物
+
+编写代码时的注意事项:
+- 使用`async/await`语法处理异步操作
+- 避免无限循环和递归函数
+- 检查机器人库存再使用物品
+- 使用`bot.chat()`显示进度
+- 不要使用`bot.on`或`bot.once`注册事件监听器
+
+简单示例代码:
+```
+async function findAndCollectWood(bot) {{
+  bot.chat('开始寻找并收集木头');
+  
+  // 尝试寻找橡木
+  const log = bot.findBlock({{
+    matching: block => block.name.includes('log'),
+    maxDistance: 32
+  }});
+  
+  if (!log) {{
+    bot.chat('附近没有找到木头，四处探索');
+    // 向前移动10秒
+    bot.setControlState('forward', true);
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    bot.setControlState('forward', false);
+    return;
+  }}
+  
+  bot.chat('找到木头，准备收集');
+  await mineBlock(bot, 'log', 3);
+  bot.chat('成功收集了木头');
+}}
+```
+
+`{json.dumps(high_level_example)}`
+
+如果不提供 `actions` 字段或其不是有效的字符串，将不执行任何操作。
+回复必须是纯JSON，不含其他文本或标记。
+"""
 
         low_level_example = {"actions": [0, 1, 0, 0, 12, 0, 0, 0]}
 
-        low_level_instructions = (
-            f"请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是包含8个整数的数组。\n\n"
-            f"这8个整数控制智能体的基本动作:\n"
-            f"- 索引 0: 前进/后退 (0=无, 1=前进, 2=后退), 范围: [0, 2]\n"
-            f"- 索引 1: 左移/右移 (0=无, 1=左移, 2=右移), 范围: [0, 2]\n"
-            f"- 索引 2: 跳跃/下蹲 (0=无, 1=跳跃, 2=下蹲, 3=其他), 范围: [0, 3]\n"
-            f"- 索引 3: 摄像头水平旋转 (0-24, 12=无变化), 范围: [0, 24]\n"
-            f"- 索引 4: 摄像头垂直旋转 (0-24, 12=无变化), 范围: [0, 24]\n"
-            f"- 索引 5: 交互类型 (0=无, 1=攻击, 2=使用, 3=放置...), 范围: [0, 9]\n"
-            f"- 索引 6: 方块/物品选择 (0-243), 范围: [0, 243]\n"
-            f"- 索引 7: 库存管理 (0-45), 范围: [0, 45]\n\n"
-            f"例如: `{json.dumps(low_level_example)}`\n\n"
-            f"如果不提供 `actions` 字段或其不是包含8个整数的数组，将不执行任何操作。\n"
-            f"回复必须是纯JSON，不含其他文本或标记。"
-        )
+        low_level_instructions = f"""请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是包含8个整数的数组。
+
+这8个整数控制智能体的基本动作:
+- 索引 0: 前进/后退 (0=无, 1=前进, 2=后退), 范围: [0, 2]
+- 索引 1: 左移/右移 (0=无, 1=左移, 2=右移), 范围: [0, 2]
+- 索引 2: 跳跃/下蹲 (0=无, 1=跳跃, 2=下蹲, 3=其他), 范围: [0, 3]
+- 索引 3: 摄像头水平旋转 (0-24, 12=无变化), 范围: [0, 24]
+- 索引 4: 摄像头垂直旋转 (0-24, 12=无变化), 范围: [0, 24]
+- 索引 5: 交互类型 (0=无, 1=攻击, 2=使用, 3=放置...), 范围: [0, 9]
+- 索引 6: 方块/物品选择 (0-243), 范围: [0, 243]
+- 索引 7: 库存管理 (0-45), 范围: [0, 45]
+
+例如: `{json.dumps(low_level_example)}`
+
+如果不提供 `actions` 字段或其不是包含8个整数的数组，将不执行任何操作。
+回复必须是纯JSON，不含其他文本或标记。
+"""
 
         # 根据配置选择提示词
         detailed_instructions = low_level_instructions if self.enable_low_level_action else high_level_instructions
