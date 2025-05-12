@@ -22,6 +22,5 @@ soundfile
 toml # For Python < 3.11 compatibility with TOML files
 torch # For VAD in STT plugin 
 tomli
-tomllib
 torchaudio
 maim-message
