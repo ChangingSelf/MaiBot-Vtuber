@@ -184,28 +184,125 @@ class MinecraftPlugin(BasePlugin):
     async def _send_state_to_maicore(self):
         """构建并发送当前Mineland状态给AmaidesuCore。"""
 
-        state_payload = {
-            "step": self.current_step_num,
-            "observations": self.current_obs,
-            "code_infos": self.current_code_info,
-            "events": self.current_event,
-            "is_done": self.current_done,
-            "task_info": self.current_task_info,
-            "low_level_action_enabled": self.enable_low_level_action,  # 仅用于提示词选择，不影响动作解析
-        }
+        # ---- 生成状态分析提示 ----
+        status_hints = []
+        state_summary = {}
 
-        try:
-            serialized_state = json_serialize_mineland(state_payload)
-        except Exception as e:
-            self.logger.exception(f"序列化 Mineland 状态失败: {e}", exc_info=True)
-            return
+        # 确保有观察数据且为列表
+        if self.current_obs and isinstance(self.current_obs, list) and len(self.current_obs) > 0:
+            agent_obs = self.current_obs[0]  # 当前仅支持单智能体
+
+            # 构建状态摘要，替代原始的完整JSON状态
+            state_summary = {"step": self.current_step_num, "agent": {}}
+
+            # 提取生命统计信息
+            if hasattr(agent_obs, "life_stats") and agent_obs.life_stats:
+                # 饥饿状态分析
+                food_level = getattr(agent_obs.life_stats, "food", 20)
+                if food_level <= 6:
+                    status_hints.append("你现在非常饥饿，需要尽快寻找食物。")
+                elif food_level <= 10:
+                    status_hints.append("你的饥饿值较低，应该考虑寻找食物。")
+
+                # 生命值分析
+                health = getattr(agent_obs.life_stats, "life", 20)
+                if health <= 5:
+                    status_hints.append("警告：你的生命值极低，处于危险状态！")
+                elif health <= 10:
+                    status_hints.append("你的生命值较低，需要小心行动。")
+
+                # 氧气值分析
+                oxygen = getattr(agent_obs.life_stats, "oxygen", 20)
+                if oxygen < 20:
+                    status_hints.append(f"你的氧气值不足，当前只有{oxygen}/20。")
+
+                # 添加到状态摘要
+                state_summary["agent"]["health"] = health
+                state_summary["agent"]["food"] = food_level
+                state_summary["agent"]["oxygen"] = oxygen
+
+            # 分析并提取库存状态
+            if hasattr(agent_obs, "inventory_full_slot_count") and hasattr(agent_obs, "inventory_slot_count"):
+                full_slots = getattr(agent_obs, "inventory_full_slot_count", 0)
+                total_slots = getattr(agent_obs, "inventory_slot_count", 36)
+                if full_slots >= total_slots - 5:
+                    status_hints.append("你的物品栏几乎已满，需要整理或丢弃一些物品。")
+
+                # 添加到状态摘要
+                state_summary["agent"]["inventory"] = {"full_slots": full_slots, "total_slots": total_slots}
+
+                # 提取物品栏内容摘要
+                if hasattr(agent_obs, "inventory") and hasattr(agent_obs.inventory, "name"):
+                    inventory_items = {}
+                    for idx, item_name in enumerate(agent_obs.inventory.name):
+                        if item_name and item_name != "null":
+                            quantity = (
+                                agent_obs.inventory.quantity[idx]
+                                if hasattr(agent_obs.inventory, "quantity") and idx < len(agent_obs.inventory.quantity)
+                                else 1
+                            )
+                            if item_name in inventory_items:
+                                inventory_items[item_name] += quantity
+                            else:
+                                inventory_items[item_name] = quantity
+
+                    state_summary["agent"]["items"] = inventory_items
+
+            # 分析并提取环境状态
+            if hasattr(agent_obs, "location_stats"):
+                location_summary = {}
+
+                # 位置坐标
+                if hasattr(agent_obs.location_stats, "pos"):
+                    pos = getattr(agent_obs.location_stats, "pos", [0, 0, 0])
+                    location_summary["position"] = pos
+                    if pos[1] < 30:  # Y坐标较低
+                        status_hints.append("你处于较低的高度，可能接近地下洞穴或矿层。")
+
+                # 天气状态
+                is_raining = getattr(agent_obs.location_stats, "is_raining", False)
+                location_summary["is_raining"] = is_raining
+                if is_raining:
+                    status_hints.append("当前正在下雨，可能影响视野和移动。")
+
+                state_summary["agent"]["location"] = location_summary
+
+            # 提取时间状态
+            if hasattr(agent_obs, "time"):
+                game_time = getattr(agent_obs, "time", 0)
+                state_summary["time"] = game_time
+                if 13000 <= game_time <= 23000:
+                    status_hints.append("现在是夜晚，小心可能出现的敌对生物。")
+
+            # 提取最近的聊天消息或事件
+            if hasattr(agent_obs, "event") and agent_obs.event:
+                recent_events = []
+                for event in agent_obs.event[-5:]:  # 仅取最近5条消息
+                    if hasattr(event, "type") and hasattr(event, "only_message"):
+                        recent_events.append({"type": event.type, "message": event.only_message})
+                if recent_events:
+                    state_summary["recent_events"] = recent_events
 
         # ---- 动态构建提示词 ----
         base_prompt = (
-            "你是一个Minecraft智能体助手。以下是当前的游戏状态。请分析状态并提供一个JSON格式的动作指令。\n"
+            "你是一个Minecraft智能体助手。请分析游戏状态并提供一个JSON格式的动作指令。\n"
             "你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), "
             "也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。"
         )
+
+        # 添加状态提示
+        if status_hints:
+            status_analysis = "\n\n状态分析：\n" + "\n".join([f"- {hint}" for hint in status_hints])
+            base_prompt += status_analysis
+
+        # 添加状态摘要
+        if state_summary:
+            try:
+                state_summary_json = json.dumps(state_summary, ensure_ascii=False, indent=2)
+                state_summary_section = f"\n\n当前游戏状态摘要：\n{state_summary_json}"
+                base_prompt += state_summary_section
+            except Exception as e:
+                self.logger.exception(f"序列化状态摘要失败: {e}", exc_info=True)
 
         # 分别构建高级和低级动作的提示词
         high_level_example = {"actions": "bot.chat('Hello from Minecraft!'); bot.jump();"}
@@ -285,10 +382,8 @@ async function findAndCollectWood(bot) {{
         action_mode = "低级 (数值数组)" if self.enable_low_level_action else "高级 (JavaScript)"
         self.logger.info(f"当前偏好的动作模式: {action_mode}，但仍可解析两种类型的动作")
 
-        # 最终的提示内容
-        prompted_message_content = (
-            f"{base_prompt}\n\n{detailed_instructions}\n\n以下是当前的游戏状态 (JSON格式):\n{serialized_state}"
-        )
+        # 最终的提示内容 - 不再包含原始的完整游戏状态JSON
+        prompted_message_content = f"{base_prompt}\n\n{detailed_instructions}"
         # ---- 提示词构建完毕 ----
 
         current_time = int(time.time())
