@@ -17,7 +17,8 @@ import time
 import os
 import random
 import base64
-from typing import Set
+from typing import Set, Dict, Callable, List, Any, Optional
+from enum import Enum
 
 from maim_message.message_base import BaseMessageInfo, FormatInfo, Seg, UserInfo
 from maim_message import MessageBase
@@ -45,6 +46,39 @@ EMOJI_PATH = "data/emoji"
 
 # 存储所有连接的 WebSocket 客户端
 clients: Set[web.WebSocketResponse] = set()
+
+# 自定义命令系统
+commands: Dict[str, Dict[str, Any]] = {}
+
+
+def command(name: str, description: str, usage: str = None):
+    """命令注册装饰器"""
+
+    def decorator(func: Callable):
+        commands[name] = {
+            "callback": func,
+            "description": description,
+            "usage": usage or f"/{name}",
+        }
+        return func
+
+    return decorator
+
+
+# Minecraft动作类型枚举
+class MinecraftActionType(Enum):
+    """Minecraft动作类型枚举，与插件内部使用的动作类型保持一致"""
+
+    NO_OP = "NO_OP"  # 不执行任何操作
+    NEW = "NEW"  # 提交新代码
+    RESUME = "RESUME"  # 恢复执行
+    CHAT = "CHAT"  # 聊天消息（与CHAT_OP相同）
+    CHAT_OP = "CHAT_OP"  # 聊天消息
+
+    @classmethod
+    def get_name(cls, action_type):
+        """获取动作类型的名称"""
+        return action_type.value
 
 
 async def handle_websocket(request: web.Request):
@@ -173,10 +207,152 @@ def build_message(content: str, message_type: str = "text") -> MessageBase:
     return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=content)
 
 
+# 命令处理函数
+@command("help", "显示所有可用命令", "/help")
+async def cmd_help(args: List[str]) -> Optional[MessageBase]:
+    """显示所有可用命令的帮助信息"""
+    help_text = f"\n{COLOR_CYAN}===== 可用命令列表 ====={COLOR_RESET}\n"
+
+    for cmd_name, cmd_info in sorted(commands.items()):
+        help_text += f"{COLOR_YELLOW}{cmd_info['usage']}{COLOR_RESET} - {cmd_info['description']}\n"
+
+    print(help_text)
+    return None  # 不发送任何消息到websocket
+
+
+@command("sendRandomEmoji", "发送随机表情包", "/sendRandomEmoji")
+async def cmd_sendRandomEmoji(args: List[str]) -> Optional[MessageBase]:
+    """发送随机表情包"""
+    emoji_data = get_random_emoji()
+    if emoji_data:
+        return build_message(emoji_data, "emoji")
+    else:
+        print(f"{COLOR_RED}无法发送表情消息：没有可用的表情包{COLOR_RESET}")
+        return None
+
+
+@command("mc_help", "显示Minecraft相关命令帮助", "/mc_help")
+async def cmd_mc_help(args: List[str]) -> Optional[MessageBase]:
+    """显示Minecraft相关命令的帮助信息"""
+    help_text = f"\n{COLOR_CYAN}===== Minecraft命令帮助 ====={COLOR_RESET}\n"
+
+    # 筛选所有mc_前缀的命令
+    mc_commands = {name: info for name, info in commands.items() if name.startswith("mc_")}
+
+    for cmd_name, cmd_info in sorted(mc_commands.items()):
+        help_text += f"{COLOR_YELLOW}{cmd_info['usage']}{COLOR_RESET} - {cmd_info['description']}\n"
+
+    print(help_text)
+    return None  # 不发送任何消息到websocket
+
+
+@command("mc_new", "发送Minecraft NEW动作 - 提交新的JavaScript代码", "/mc_new [代码]")
+async def cmd_mc_new(args: List[str]) -> Optional[MessageBase]:
+    """发送Minecraft NEW动作"""
+    # 默认代码
+    default_code = """
+def run(api):
+    api.chat("Hello, Minecraft world!")
+    api.step_forward()
+    """
+
+    # 如果提供了自定义代码，使用用户提供的代码
+    code = " ".join(args) if args else default_code
+
+    action = {"action_type_name": MinecraftActionType.get_name(MinecraftActionType.NEW), "code": code}
+
+    return build_message(json.dumps(action))
+
+
+@command("mc_chat", "发送Minecraft CHAT动作 - 发送聊天消息", "/mc_chat [消息]")
+async def cmd_mc_chat(args: List[str]) -> Optional[MessageBase]:
+    """发送Minecraft CHAT动作"""
+    # 默认消息
+    message = " ".join(args) if args else "Hello, world!"
+
+    action = {"action_type_name": MinecraftActionType.get_name(MinecraftActionType.CHAT_OP), "message": message}
+
+    return build_message(json.dumps(action))
+
+
+@command("mc_low_level", "发送自定义低级动作", "/mc_low_level [val1] [val2] [val3] [val4] [val5] [val6] [val7] [val8]")
+async def cmd_mc_low_level(args: List[str]) -> Optional[MessageBase]:
+    """发送Minecraft低级动作
+
+    用法: /mc_low_level <val1> <val2> <val3> <val4> <val5> <val6> <val7> <val8>
+    默认: 0 0 0 0 0 0 0 0 (空闲)
+    示例动作:
+    - 前进: 0 1 0 0 0 0 0 0
+    - 后退: 0 -1 0 0 0 0 0 0
+    - 向左: -1 0 0 0 0 0 0 0
+    - 向右: 1 0 0 0 0 0 0 0
+    - 跳跃: 0 0 0 1 0 0 0 0
+    - 攻击: 0 0 0 0 1 0 0 0
+    - 使用: 0 0 0 0 0 1 0 0
+    """
+    # 默认全为0的低级动作
+    values = [0, 0, 0, 0, 0, 0, 0, 0]
+
+    # 如果用户提供了参数，覆盖相应位置的值
+    for i, arg in enumerate(args):
+        if i < 8:  # 只处理前8个参数
+            try:
+                values[i] = int(arg)
+            except ValueError:
+                print(f"{COLOR_RED}警告: 参数 '{arg}' 不是有效整数，使用默认值0{COLOR_RESET}")
+
+    action = {"values": values}
+
+    return build_message(json.dumps(action))
+
+
+# 命令描述工具函数
+def get_action_description(action_type: MinecraftActionType) -> str:
+    """获取动作类型的描述文本"""
+    descriptions = {
+        MinecraftActionType.NO_OP: "不执行任何操作",
+        MinecraftActionType.NEW: "提交新的JavaScript代码",
+        MinecraftActionType.RESUME: "恢复执行代码",
+        MinecraftActionType.CHAT: "发送聊天消息",
+        MinecraftActionType.CHAT_OP: "发送聊天消息",
+    }
+    return descriptions.get(action_type, f"未知动作类型 ({action_type.value})")
+
+
+async def handle_command(cmd_line: str):
+    """处理命令行输入，解析命令和参数"""
+    if not cmd_line.startswith("/"):
+        return None
+
+    # 去除前导斜杠并分割命令和参数
+    parts = cmd_line[1:].strip().split()
+    if not parts:
+        return None
+
+    cmd_name = parts[0].lower()
+    args = parts[1:]
+
+    if cmd_name in commands:
+        cmd_func = commands[cmd_name]["callback"]
+        try:
+            return await cmd_func(args)
+        except Exception as e:
+            logger.error(f"执行命令 '{cmd_name}' 时出错: {e}", exc_info=True)
+            print(f"{COLOR_RED}执行命令 '{cmd_name}' 时出错: {e}{COLOR_RESET}")
+            return None
+    else:
+        print(f"{COLOR_RED}未知命令: '{cmd_name}'. 输入 /help 查看可用命令。{COLOR_RESET}")
+        return None
+
+
 async def console_input_loop():
     """异步监听控制台输入并广播消息。"""
     loop = asyncio.get_running_loop()
-    logger.info("启动控制台输入监听。输入 'quit' 或 'exit' 退出。")
+    logger.info("启动控制台输入监听。输入 '/help' 查看可用命令，输入 'quit' 或 'exit' 退出。")
+
+    # 启动时显示帮助信息
+    await cmd_help([])
+
     while True:
         try:
             # 使用 run_in_executor 在单独的线程中运行阻塞的 input()
@@ -191,22 +367,16 @@ async def console_input_loop():
                 [task.cancel() for task in tasks]
                 break
 
-            # 处理sendEmoji命令
-            if line == "sendRandomEmoji":
-                emoji_data = get_random_emoji()
-                if emoji_data:
-                    message_to_send = build_message(emoji_data, "emoji")
-                    logger.debug(f"准备从控制台发送表情消息: {message_to_send}")
+            # 处理命令
+            if line.startswith("/"):
+                message_to_send = await handle_command(line)
+                if message_to_send:
                     await broadcast_message(message_to_send)
-                else:
-                    logger.warning("无法发送表情消息：没有可用的表情包")
                 continue
 
-            # 构造消息字典
+            # 处理普通消息
             message_to_send = build_message(line)
             logger.debug(f"准备从控制台发送消息: {message_to_send}")
-
-            # 广播消息
             await broadcast_message(message_to_send)
 
         except (EOFError, KeyboardInterrupt):
@@ -235,6 +405,7 @@ def load_config() -> dict:
         logger.error(
             f"读取配置文件 {CONFIG_FILE_PATH} 时发生其他错误: {e}，将使用默认配置: ws://{DEFAULT_HOST}:{DEFAULT_PORT}"
         )
+    return {}
 
 
 async def main():
