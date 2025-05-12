@@ -72,6 +72,22 @@ class MinecraftPlugin(BasePlugin):
         self.group_id_str: Optional[str] = minecraft_config.get("group_id")
         self.nickname: str = minecraft_config.get("nickname", "Minecraft Observer")
 
+        # --- 加载Template Items配置 ---
+        self.enable_template_info = minecraft_config.get("enable_template_info", True)
+        self.template_items = {}
+        # 如果配置中有template_items，则使用配置中的值
+        if self.enable_template_info and "template_items" in minecraft_config:
+            self.template_items = minecraft_config.get("template_items", {})
+
+        # 上下文标签配置
+        self.context_tags: Optional[List[str]] = minecraft_config.get("context_tags")
+        if not isinstance(self.context_tags, list):
+            if self.context_tags is not None:
+                self.logger.warning(
+                    f"Config 'context_tags' is not a list ({type(self.context_tags)}), will fetch all context."
+                )
+            self.context_tags = None
+
         # Mineland 实例
         self.mland: Optional[mineland.MineLand] = None
         # Mineland 状态变量
@@ -157,6 +173,18 @@ class MinecraftPlugin(BasePlugin):
 
         format_info = FormatInfo(content_format="text", accept_format="text")  # 保持文本格式，内容是JSON字符串
 
+        # --- 构建Template Info ---
+        final_template_info_value = None
+        if self.enable_template_info:
+            # 创建一个包含提示词的模板项字典
+            template_items = self.template_items.copy() if self.template_items else {}
+
+            # 使用'reasoning_prompt_main'作为主提示词的键
+            template_items["reasoning_prompt_main"] = prompted_message_content
+
+            # 直接构建最终的template_info结构
+            final_template_info_value = {"template_items": template_items}
+
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             message_id=message_id,
@@ -167,19 +195,22 @@ class MinecraftPlugin(BasePlugin):
             additional_config={
                 "source_plugin": "minecraft",
             },
-            template_info=None,
+            template_info=final_template_info_value,  # 使用构建好的template_info
         )
 
-        message_segment = Seg(type="text", data=prompted_message_content)
+        # 当使用template_info时，消息内容可以简化
+        message_text = "请分析Minecraft状态并作出决策" if final_template_info_value else prompted_message_content
+        message_segment = Seg(type="text", data=message_text)
 
         msg_to_maicore = MessageBase(
-            message_info=message_info, message_segment=message_segment, raw_message=prompted_message_content
+            message_info=message_info, message_segment=message_segment, raw_message=message_text
         )
 
         await self.core.send_to_maicore(msg_to_maicore)
         action_mode = "低级 (数值数组)" if self.enable_low_level_action else "高级 (JavaScript)"
+        template_mode = "通过template_info" if final_template_info_value else "通过消息内容"
         self.logger.info(
-            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}, 偏好动作模式: {action_mode}) 发送给 MaiCore。"
+            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}, 偏好动作模式: {action_mode}, 提示词模式: {template_mode}) 发送给 MaiCore。"
         )
         self.logger.debug(f"发送给 MaiCore 的状态详情: {prompted_message_content[:300]}...")
 
