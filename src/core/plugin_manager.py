@@ -5,18 +5,6 @@ import os
 import sys
 from typing import TYPE_CHECKING, Dict, Any, Optional, Type
 
-# 尝试导入 tomllib (Python 3.11+), 否则使用 toml
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import toml as tomllib  # type: ignore
-    except ModuleNotFoundError:
-        # 这个错误理论上不应该在这里发生，因为 main.py 启动时会检查
-        # 但为了模块独立性，保留一个最小的警告
-        print("警告：TOML 解析库未找到，插件的独立配置文件可能无法加载。", file=sys.stderr)
-        tomllib = None
-
 # 避免循环导入，使用 TYPE_CHECKING
 if TYPE_CHECKING:
     from .amaidesu_core import AmaidesuCore

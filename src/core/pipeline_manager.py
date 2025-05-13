@@ -1,20 +1,10 @@
 from abc import ABC, abstractmethod
-import asyncio
 import importlib
 import inspect
 import os
 import sys
 
-# 尝试导入 tomllib (Python 3.11+), 否则使用 toml
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import toml as tomllib  # type: ignore
-    except ModuleNotFoundError:
-        print("错误：需要安装 TOML 解析库。请运行 'pip install toml'", file=sys.stderr)
-        sys.exit(1)
-from typing import Dict, List, Optional, Any, Type, TypeVar, Set, Callable
+from typing import Dict, List, Optional, Any, Type
 
 from maim_message import MessageBase
 from src.utils.logger import get_logger
@@ -65,7 +55,7 @@ class MessagePipeline(ABC):
 
         默认实现为空操作。
         """
-        pass
+        self.logger.debug("管道已连接")
 
     async def on_disconnect(self) -> None:
         """
@@ -74,7 +64,7 @@ class MessagePipeline(ABC):
 
         默认实现为空操作。
         """
-        pass
+        self.logger.debug("管道已断开")
 
 
 class PipelineManager:
