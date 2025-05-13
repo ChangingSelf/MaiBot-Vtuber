@@ -15,7 +15,7 @@ Amaidesu!
   ![forks](https://img.shields.io/badge/分支数-一点点-green)
   ![stars](https://img.shields.io/github/stars/ChangingSelf/Amaidesu?style=flat&label=星标数)
   ![issues](https://img.shields.io/github/issues/ChangingSelf/Amaidesu)
-
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ChangingSelf/Amaidesu)
 
 
 ## 📝 项目简介
