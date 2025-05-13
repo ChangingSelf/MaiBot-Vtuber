@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+from typing import Dict, Any
 
 # 尝试导入 tomllib (Python 3.11+), 否则使用 toml
 try:
@@ -150,6 +151,88 @@ def check_and_setup_main_config(
 
     logger.info("主配置文件检查完成。")
     return config_copied
+
+
+def load_component_specific_config(
+    component_dir_path: str, component_name: str, component_type_name: str = "组件"
+) -> Dict[str, Any]:
+    """
+    加载组件自身目录下的 config.toml。
+
+    Args:
+        component_dir_path: 组件包的绝对路径 (例如 /path/to/src/plugins/my_plugin)
+        component_name: 组件的名称 (例如 my_plugin)
+        component_type_name: 组件类型名称，用于日志 (例如 "插件", "管道")
+
+    Returns:
+        配置字典，若配置文件不存在或加载失败则返回空字典
+    """
+    config_path = os.path.join(component_dir_path, "config.toml")
+    component_config_data = {}
+
+    # tomllib 应该在文件顶部被导入和检查
+    if tomllib and os.path.exists(config_path):
+        try:
+            with open(config_path, "rb") as f:
+                loaded_data = tomllib.load(f)
+                # 检查组件自身的配置文件是否包含一个与组件名同名的配置段
+                # (例如 [bili_danmaku] 在 bili_danmaku/config.toml 中)
+                # 如果是，则使用该配置段作为插件的独立配置。
+                # 否则，假设整个文件内容都是该插件的配置（例如，根级别就是键值对）。
+                if isinstance(loaded_data.get(component_name), dict):
+                    component_config_data = loaded_data.get(component_name, {}).copy()
+                    logger.debug(
+                        f"从 '{config_path}' 加载了{component_type_name} '{component_name}' 的 '{component_name}' 特定配置段。"
+                    )
+                elif isinstance(loaded_data, dict):  # 允许配置文件根就是配置
+                    component_config_data = loaded_data.copy()
+                    logger.debug(
+                        f"从 '{config_path}' 加载了{component_type_name} '{component_name}' 的根配置 (未找到名为 '{component_name}' 的特定配置段)."
+                    )
+                else:
+                    logger.warning(
+                        f"{component_type_name} '{component_name}' 的配置文件 '{config_path}' 内容不是预期的字典格式。"
+                    )
+        except Exception as e:
+            logger.error(
+                f"加载{component_type_name} '{component_name}' 的独立配置文件 '{config_path}' 失败: {e}", exc_info=True
+            )
+    elif not tomllib:
+        logger.warning(
+            f"TOML库不可用，无法加载{component_type_name} '{component_name}' 的独立配置文件 '{config_path}'。"
+        )
+    else:  # tomllib is available but config_path does not exist
+        logger.debug(f"{component_type_name} '{component_name}' 无独立配置文件 '{config_path}'。")
+    return component_config_data
+
+
+def merge_component_configs(
+    specific_config: Dict[str, Any],
+    global_override_config: Dict[str, Any],
+    component_name: str,
+    component_type_name: str = "组件",
+) -> Dict[str, Any]:
+    """
+    合并组件的特定配置和全局覆盖配置。全局配置优先。
+    这样做是为了提供一个集中的控制点。主配置文件 (config.toml) 中的设置
+    应具有最高优先级（文件配置层面），允许用户或部署环境方便地覆盖
+    插件自带的默认配置，而无需修改插件目录内的文件。
+    这使得全局调整和环境特定配置更加直接和可管理。
+
+    Args:
+        specific_config: 组件自身的配置。
+        global_override_config: 从主配置文件中提取的、针对该组件的全局覆盖配置。
+        component_name: 组件的名称，用于日志。
+        component_type_name: 组件类型名称，用于日志。
+
+    Returns:
+        合并后的配置字典。
+    """
+    final_config = specific_config.copy()
+    final_config.update(global_override_config)
+    # 日志可以更简洁一些，或者在调用处记录更详细的信息
+    logger.debug(f"{component_type_name} '{component_name}' 合并后配置: {final_config}")
+    return final_config
 
 
 # 可以在此添加一个统一的设置函数，如果需要的话

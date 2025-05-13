@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .amaidesu_core import AmaidesuCore
 
 from src.utils.logger import get_logger
+from src.utils.config import load_component_specific_config, merge_component_configs
 
 
 # --- 插件基类 (可选但推荐) ---
@@ -145,45 +146,12 @@ class PluginManager:
                         self.logger.debug(f"从主配置为插件 '{plugin_name}' 获取的配置: {main_provided_config}")
 
                         # 2. 加载插件自身目录下的 config.toml (如果存在)
-                        plugin_own_config_path = os.path.join(item_path, "config.toml")
-                        plugin_own_config_data = {}
-                        if tomllib and os.path.exists(plugin_own_config_path):
-                            try:
-                                with open(plugin_own_config_path, "rb") as f:
-                                    loaded_data = tomllib.load(f)
-                                    # 检查插件自身的配置文件是否包含一个与插件同名的配置段
-                                    # (例如 [bili_danmaku] 在 bili_danmaku/config.toml 中)
-                                    # 如果是，则使用该配置段作为插件的独立配置。
-                                    # 否则，假设整个文件内容都是该插件的配置（例如，根级别就是键值对）。
-                                    if isinstance(loaded_data.get(plugin_name), dict):
-                                        plugin_own_config_data = loaded_data.get(plugin_name, {}).copy()
-                                        self.logger.debug(
-                                            f"从 '{plugin_own_config_path}' 加载了插件 '{plugin_name}' 的 '{plugin_name}' 特定配置段: {plugin_own_config_data}"
-                                        )
-                                    else:
-                                        plugin_own_config_data = loaded_data.copy()  # 假设配置文件的根就是插件的配置
-                                        self.logger.debug(
-                                            f"从 '{plugin_own_config_path}' 加载了插件 '{plugin_name}' 的根配置 (未找到名为 '{plugin_name}' 的特定配置段): {plugin_own_config_data}"
-                                        )
-                            except Exception as e:
-                                self.logger.error(
-                                    f"加载插件 '{plugin_name}' 的独立配置文件 '{plugin_own_config_path}' 失败: {e}"
-                                )
-                        elif not tomllib:
-                            self.logger.warning(
-                                f"TOML库不可用，无法加载插件 '{plugin_name}' 的独立配置文件 '{plugin_own_config_path}'。"
-                            )
+                        plugin_own_config_data = load_component_specific_config(item_path, plugin_name, "插件")
 
                         # 3. 合并配置：主配置覆盖插件独立配置
-                        #    这样做是为了提供一个集中的控制点。主配置文件 (config.toml) 中的设置
-                        #    应具有最高优先级（文件配置层面），允许用户或部署环境方便地覆盖
-                        #    插件自带的默认配置，而无需修改插件目录内的文件。
-                        #    这使得全局调整和环境特定配置更加直接和可管理。
-                        # final_plugin_config 最初是插件独立配置的一份拷贝
-                        final_plugin_config = plugin_own_config_data.copy()
-                        # 然后用主配置中的项来更新（或添加）
-                        final_plugin_config.update(main_provided_config)
-                        self.logger.debug(f"插件 '{plugin_name}' 合并后的最终配置: {final_plugin_config}")
+                        final_plugin_config = merge_component_configs(
+                            plugin_own_config_data, main_provided_config, plugin_name, "插件"
+                        )
 
                         self.logger.debug(f"准备实例化插件: {plugin_class.__name__}")
                         # 将合并后的最终配置传递给插件

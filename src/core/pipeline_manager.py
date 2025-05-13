@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Any, Type, TypeVar, Set, Callable
 
 from maim_message import MessageBase
 from src.utils.logger import get_logger
+from src.utils.config import load_component_specific_config, merge_component_configs
 
 
 class MessagePipeline(ABC):
@@ -139,51 +140,6 @@ class PipelineManager:
 
         return current_message
 
-    def _load_pipeline_own_config(self, pipeline_package_path: str, pipeline_name_snake: str) -> Dict[str, Any]:
-        """
-        加载管道自身目录下的 config.toml。
-        与 PluginManager 加载插件独立配置的逻辑类似。
-
-        Args:
-            pipeline_package_path: 管道包的绝对路径 (例如 /path/to/src/pipelines/my_pipeline)
-            pipeline_name_snake: 管道的蛇形名称 (例如 my_pipeline)
-
-        Returns:
-            配置字典，若配置文件不存在或加载失败则返回空字典
-        """
-        config_path = os.path.join(pipeline_package_path, "config.toml")
-        pipeline_own_config_data = {}
-
-        if tomllib and os.path.exists(config_path):
-            try:
-                with open(config_path, "rb") as f:
-                    loaded_data = tomllib.load(f)
-                    # 检查管道自身的配置文件是否包含一个与管道蛇形命名同名的配置段
-                    if isinstance(loaded_data.get(pipeline_name_snake), dict):
-                        pipeline_own_config_data = loaded_data.get(pipeline_name_snake, {}).copy()
-                        self.logger.debug(
-                            f"从 '{config_path}' 加载了管道 '{pipeline_name_snake}' 的 '{pipeline_name_snake}' 特定配置段."
-                        )
-                    elif isinstance(loaded_data, dict):  # 允许配置文件根就是配置
-                        pipeline_own_config_data = loaded_data.copy()
-                        self.logger.debug(
-                            f"从 '{config_path}' 加载了管道 '{pipeline_name_snake}' 的根配置 (未找到名为 '{pipeline_name_snake}' 的特定配置段)."
-                        )
-                    else:
-                        self.logger.warning(
-                            f"管道 '{pipeline_name_snake}' 的配置文件 '{config_path}' 内容不是预期的字典格式。"
-                        )
-
-            except Exception as e:
-                self.logger.error(
-                    f"加载管道 '{pipeline_name_snake}' 的独立配置文件 '{config_path}' 失败: {e}", exc_info=True
-                )
-        elif not tomllib:
-            self.logger.warning(f"TOML库不可用，无法加载管道 '{pipeline_name_snake}' 的独立配置文件 '{config_path}'。")
-        else:
-            self.logger.debug(f"管道 '{pipeline_name_snake}' 无独立配置文件 '{config_path}'。")
-        return pipeline_own_config_data
-
     async def load_pipelines(
         self, pipeline_base_dir: str = "src/pipelines", root_config_pipelines_section: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -248,12 +204,15 @@ class PipelineManager:
             self.logger.debug(f"管道 '{pipeline_name_snake}' 的全局覆盖配置: {global_override_config}")
 
             # 2. 加载管道自身的独立配置
-            pipeline_specific_config = self._load_pipeline_own_config(pipeline_package_path, pipeline_name_snake)
+            pipeline_specific_config = load_component_specific_config(
+                pipeline_package_path, pipeline_name_snake, "管道"
+            )
 
             # 3. 合并配置：全局覆盖配置优先
-            final_pipeline_config = pipeline_specific_config.copy()
-            final_pipeline_config.update(global_override_config)
-            self.logger.debug(f"管道 '{pipeline_name_snake}' 合并后的最终配置: {final_pipeline_config}")
+            final_pipeline_config = merge_component_configs(
+                pipeline_specific_config, global_override_config, pipeline_name_snake, "管道"
+            )
+            # self.logger.debug(f"管道 '{pipeline_name_snake}' 合并后的最终配置: {final_pipeline_config}") # 此日志现在由 merge_component_configs 处理
 
             # 4. 导入并实例化管道
             try:
