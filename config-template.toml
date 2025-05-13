@@ -23,13 +23,20 @@ callback_path = "/maicore_callback"
 
 # 管道配置
 [pipelines]
-# 已启用的管道及其优先级（数字越小优先级越高）
-# 未配置的管道默认不启用
-message_logger = 100         # 消息日志管道
-throttle = 200               # 限流管道
-similar_message_filter = 300 # 相似消息过滤管道
-# 其他管道示例
-# custom_pipeline = 200
+# 示例：启用并配置 throttle 管道
+# [pipelines.throttle]
+# priority = 100        # 数字越小优先级越高，此行存在即表示启用
+# global_rate_limit = 1 # 可选：覆盖 throttle/config.toml 中的 global_rate_limit
+# user_rate_limit = 5    # 可选：覆盖 throttle/config.toml 中的 user_rate_limit
+
+# 示例：启用 message_logger 管道，使用其默认配置
+# [pipelines.message_logger]
+# priority = 200
+
+# 示例：启用 similar_message_filter 管道，并覆盖其时间窗口
+# [pipelines.similar_message_filter]
+# priority = 300
+# time_window = 10.0 # 覆盖 similar_message_filter/config.toml 中的 time_window
 
 # 插件全局配置
 [plugins]

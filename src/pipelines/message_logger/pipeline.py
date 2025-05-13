@@ -4,6 +4,10 @@ from typing import Dict, Optional, List, Iterator, Any
 
 from maim_message import MessageBase
 from src.core.pipeline_manager import MessagePipeline
+from src.utils.logger import get_logger
+
+# 为静态方法准备一个模块级 logger
+static_logger = get_logger("MessageLoggerPipelineUtils")
 
 
 class MessageLoggerPipeline(MessagePipeline):
@@ -17,27 +21,24 @@ class MessageLoggerPipeline(MessagePipeline):
 
     priority = 900  # 设置较低的优先级，让其他处理管道先处理消息
 
-    def __init__(
-        self,
-        logs_dir: str = "logs/messages",  # 日志文件存储目录
-        file_prefix: str = "messages_",  # 日志文件名前缀
-        file_extension: str = ".jsonl",  # 日志文件扩展名
-        default_group_id: str = "default",  # 当没有群组ID时使用的默认ID
-    ):
+    def __init__(self, config: Dict[str, Any]):
         """
         初始化消息日志管道。
 
         Args:
-            logs_dir: 日志文件存储目录
-            file_prefix: 日志文件名前缀
-            file_extension: 日志文件扩展名
-            default_group_id: 当没有群组ID时使用的默认ID
+            config: 合并后的配置字典，期望包含以下键:
+                logs_dir (str): 日志文件存储目录 (默认: "logs/messages")
+                file_prefix (str): 日志文件名前缀 (默认: "messages_")
+                file_extension (str): 日志文件扩展名 (默认: ".jsonl")
+                default_group_id (str): 当没有群组ID时使用的默认ID (默认: "default")
         """
-        super().__init__()
-        self._logs_dir = logs_dir
-        self._file_prefix = file_prefix
-        self._file_extension = file_extension
-        self._default_group_id = default_group_id
+        super().__init__(config)
+
+        # 从配置中读取参数，如果未提供则使用默认值
+        self._logs_dir = self.config.get("logs_dir", "logs/messages")
+        self._file_prefix = self.config.get("file_prefix", "messages_")
+        self._file_extension = self.config.get("file_extension", ".jsonl")
+        self._default_group_id = self.config.get("default_group_id", "default")
 
         # 确保日志目录存在
         os.makedirs(self._logs_dir, exist_ok=True)
@@ -45,7 +46,7 @@ class MessageLoggerPipeline(MessagePipeline):
         # 记录已打开的文件句柄
         self._file_handles: Dict[str, object] = {}
 
-        self.logger.info(f"消息日志管道初始化: 日志目录={logs_dir}")
+        self.logger.info(f"消息日志管道初始化: 日志目录={self._logs_dir}")
 
     async def on_connect(self) -> None:
         """连接建立时确保日志目录存在"""
@@ -170,7 +171,7 @@ class MessageLoggerPipeline(MessagePipeline):
                     if line.strip():  # 忽略空行
                         messages.append(json.loads(line))
         except Exception as e:
-            self.logger.error(f"读取JSONL文件 {file_path} 时出错: {e}")
+            static_logger.error(f"读取JSONL文件 {file_path} 时出错: {e}")
         return messages
 
     @staticmethod
@@ -190,7 +191,7 @@ class MessageLoggerPipeline(MessagePipeline):
                     if line.strip():  # 忽略空行
                         yield json.loads(line)
         except Exception as e:
-            self.logger.error(f"流式读取JSONL文件 {file_path} 时出错: {e}")
+            static_logger.error(f"流式读取JSONL文件 {file_path} 时出错: {e}")
 
     @staticmethod
     def extract_messages_by_user(file_path: str, user_id: str) -> List[dict]:
@@ -222,5 +223,5 @@ class MessageLoggerPipeline(MessagePipeline):
                     except json.JSONDecodeError:
                         continue
         except Exception as e:
-            self.logger.error(f"从JSONL文件 {file_path} 提取用户 {user_id} 的消息时出错: {e}")
+            static_logger.error(f"从JSONL文件 {file_path} 提取用户 {user_id} 的消息时出错: {e}")
         return messages

@@ -1,6 +1,6 @@
 import time
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from collections import defaultdict, deque
 
 from maim_message import MessageBase
@@ -18,24 +18,21 @@ class ThrottlePipeline(MessagePipeline):
 
     priority = 100  # 设置默认优先级
 
-    def __init__(
-        self,
-        global_rate_limit: int = 100,  # 全局每分钟最大消息数
-        user_rate_limit: int = 10,  # 每个用户每分钟最大消息数
-        window_size: int = 60,  # 时间窗口大小（秒）
-    ):
+    def __init__(self, config: Dict[str, Any]):
         """
         初始化限流管道。
 
         Args:
-            global_rate_limit: 全局每分钟最大消息数量
-            user_rate_limit: 每个用户每分钟最大消息数量
-            window_size: 滑动窗口大小（秒）
+            config: 合并后的配置字典，期望包含以下键:
+                global_rate_limit (int): 全局每分钟最大消息数量 (默认: 100)
+                user_rate_limit (int): 每个用户每分钟最大消息数量 (默认: 10)
+                window_size (int): 滑动窗口大小（秒）(默认: 60)
         """
-        super().__init__()
-        self._global_rate_limit = global_rate_limit
-        self._user_rate_limit = user_rate_limit
-        self._window_size = window_size
+        super().__init__(config)  # 调用基类构造函数并传递配置
+
+        self._global_rate_limit = self.config.get("global_rate_limit", 100)
+        self._user_rate_limit = self.config.get("user_rate_limit", 10)
+        self._window_size = self.config.get("window_size", 60)
 
         # 存储时间戳的数据结构
         self._global_timestamps = deque()  # 全局消息时间戳队列
@@ -48,7 +45,7 @@ class ThrottlePipeline(MessagePipeline):
         self._throttled_count = 0
 
         self.logger.info(
-            f"限流管道初始化: 全局限制={global_rate_limit}/分钟, 用户限制={user_rate_limit}/分钟, 窗口={window_size}秒"
+            f"限流管道初始化: 全局限制={self._global_rate_limit}/分钟, 用户限制={self._user_rate_limit}/分钟, 窗口={self._window_size}秒"
         )
 
     async def on_connect(self) -> None:

@@ -18,31 +18,26 @@ class SimilarMessageFilterPipeline(MessagePipeline):
     # 默认优先级，介于较早处理和较晚处理之间
     priority = 500
 
-    def __init__(
-        self,
-        message_types: List[str] = None,
-        similarity_threshold: float = 0.85,
-        time_window: float = 5.0,
-        min_message_length: int = 3,
-        cross_user_filter: bool = True,  # 是否跨用户过滤相似消息
-    ):
+    def __init__(self, config: Dict[str, Any]):
         """
         初始化相似消息过滤管道。
 
         Args:
-            message_types: 要处理的消息类型列表，只有符合这些类型的消息才会被考虑过滤
-            similarity_threshold: 消息相似度阈值（0.0-1.0），高于此值的消息被视为相似
-            time_window: 检查窗口的时间范围（秒），只检查此时间范围内的消息
-            min_message_length: 最小处理消息长度，低于此长度的消息不会被过滤
-            cross_user_filter: 是否跨用户过滤相似消息，如果为True则忽略用户ID
+            config: 合并后的配置字典，期望包含以下键:
+                message_types (List[str]): 要处理的消息类型列表 (默认: ["text", "danmu", "comment"])
+                similarity_threshold (float): 消息相似度阈值 (0.0-1.0) (默认: 0.85)
+                time_window (float): 检查窗口的时间范围（秒）(默认: 5.0)
+                min_message_length (int): 最小处理消息长度 (默认: 3)
+                cross_user_filter (bool): 是否跨用户过滤相似消息 (默认: True)
         """
-        super().__init__()
-        # 配置参数
-        self.message_types = message_types or ["text", "danmu", "comment"]
-        self.similarity_threshold = similarity_threshold
-        self.time_window = time_window
-        self.min_message_length = min_message_length
-        self.cross_user_filter = cross_user_filter
+        super().__init__(config)  # 调用基类构造函数并传递配置
+
+        # 从配置中读取参数，如果未提供则使用默认值
+        self.message_types = self.config.get("message_types", ["text", "danmu", "comment"])
+        self.similarity_threshold = self.config.get("similarity_threshold", 0.85)
+        self.time_window = self.config.get("time_window", 5.0)
+        self.min_message_length = self.config.get("min_message_length", 3)
+        self.cross_user_filter = self.config.get("cross_user_filter", True)
 
         # 消息缓存，按群组ID分组存储
         # 结构: {group_id: deque([(timestamp, message_id, content, user_id), ...]}
@@ -59,8 +54,8 @@ class SimilarMessageFilterPipeline(MessagePipeline):
         self._last_cleanup_time = time.time()
 
         self.logger.info(
-            f"相似消息过滤管道初始化: 相似度阈值={similarity_threshold}, 时间窗口={time_window}秒, "
-            f"处理的消息类型={message_types}, 跨用户过滤={cross_user_filter}"
+            f"相似消息过滤管道初始化: 相似度阈值={self.similarity_threshold}, 时间窗口={self.time_window}秒, "
+            f"处理的消息类型={self.message_types}, 跨用户过滤={self.cross_user_filter}"
         )
 
     async def on_connect(self) -> None:
