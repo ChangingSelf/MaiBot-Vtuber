@@ -3,7 +3,6 @@ import signal
 import sys
 import os
 import argparse  # 导入 argparse
-import shutil  # <<<<<<<<<<<<<<<<<<<< Added import
 
 # 尝试导入 tomllib (Python 3.11+), 否则使用 toml
 try:
@@ -20,138 +19,12 @@ from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import PluginManager
 from src.core.pipeline_manager import PipelineManager  # 导入管道管理器
 from src.utils.logger import get_logger
+from src.utils.config import initialize_configurations  # Updated import
 
 logger = get_logger("Main")
 
-# 获取 main.py 文件所在的目录
+# 获取 main.py 文件所在的目录 (项目根目录)
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-def load_config(config_filename: str = "config.toml") -> dict:
-    """加载位于脚本同目录下的 TOML 配置文件。"""
-    config_path = os.path.join(_BASE_DIR, config_filename)
-    logger.debug(f"尝试加载配置文件: {config_path}")
-    try:
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载配置文件: {config_path}")
-            return config
-    except FileNotFoundError:
-        logger.error(f"错误：配置文件 '{config_path}' 未找到。请确保它在 main.py 文件的同级目录下。")
-        sys.exit(1)
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"错误：配置文件 '{config_path}' 格式无效: {e}")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"加载配置文件 '{config_path}' 时发生未知错误: {e}", exc_info=True)
-        sys.exit(1)
-
-
-# --- 新增：通用的组件配置检查和设置函数 ---
-def _ensure_component_configs(component_base_dir: str, component_type_name: str) -> bool:
-    """
-    通用函数：检查指定类型组件目录中的 config.toml。
-    如果不存在但存在 config-template.toml，则复制模板。
-    返回 True 如果有任何文件被复制，否则返回 False。
-    """
-    config_copied = False
-    logger.info(f"开始检查{component_type_name}配置文件...")
-    try:
-        # 确保组件基础目录存在
-        if not os.path.isdir(component_base_dir):
-            logger.error(f"指定的{component_type_name}目录 '{component_base_dir}' 不存在或不是一个目录。")
-            return False  # 无法继续
-
-        # 遍历组件基础目录中的所有项目
-        for item_name in os.listdir(component_base_dir):
-            component_item_path = os.path.join(component_base_dir, item_name)
-
-            # 检查是否是目录，并且不是像 __pycache__ 这样的特殊目录
-            if os.path.isdir(component_item_path) and not item_name.startswith("__"):
-                config_path = os.path.join(component_item_path, "config.toml")
-                template_path = os.path.join(component_item_path, "config-template.toml")
-
-                logger.debug(f"检查{component_type_name}目录: {item_name}")
-
-                template_exists = os.path.exists(template_path)
-                config_exists = os.path.exists(config_path)
-
-                if template_exists and not config_exists:
-                    try:
-                        # 使用 copy2 保留元数据
-                        shutil.copy2(template_path, config_path)
-                        logger.info(
-                            f"在{component_type_name} '{item_name}' 中: config.toml 不存在，已从 config-template.toml 复制。"
-                        )
-                        config_copied = True  # 标记发生了复制
-                    except Exception as e:
-                        logger.error(f"在{component_type_name} '{item_name}' 中: 从模板复制配置文件失败: {e}")
-                elif not template_exists and not config_exists:
-                    logger.debug(
-                        f"在{component_type_name} '{item_name}' 中: 未找到 config.toml 或 config-template.toml。"
-                    )
-                elif template_exists and config_exists:
-                    logger.debug(f"在{component_type_name} '{item_name}' 中: config.toml 已存在。")
-                # else: # config_exists and not template_exists - 也无需操作
-
-        return config_copied
-
-    except Exception as e:
-        logger.error(f"检查{component_type_name}配置文件时出错: {e}", exc_info=True)
-        return False  # 出错时返回 False
-
-
-# --- 修改：检查并设置插件配置文件的函数 ---
-def check_and_setup_plugin_configs(plugin_base_dir: str) -> bool:
-    """
-    检查插件目录中的 config.toml。如果不存在但存在 config-template.toml，则复制模板。
-    返回 True 如果有任何文件被复制，否则返回 False。
-    """
-    return _ensure_component_configs(plugin_base_dir, "插件")
-
-
-# --- 修改：检查并设置管道配置文件的函数 ---
-def check_and_setup_pipeline_configs(pipeline_base_dir: str) -> bool:
-    """
-    检查管道目录中的 config.toml。如果不存在但存在 config-template.toml，则复制模板。
-    返回 True 如果有任何文件被复制，否则返回 False。
-    """
-    return _ensure_component_configs(pipeline_base_dir, "管道")
-
-
-# --- 检查并设置主配置文件的函数 ---
-def check_and_setup_main_config(base_dir: str) -> bool:
-    """
-    检查主 config.toml。如果不存在但存在 config-template.toml，则复制模板。
-    返回 True 如果文件被复制，否则返回 False。
-    """
-    config_path = os.path.join(base_dir, "config.toml")
-    template_path = os.path.join(base_dir, "config-template.toml")
-    config_copied = False
-
-    logger.info("开始检查主配置文件...")
-
-    template_exists = os.path.exists(template_path)
-    config_exists = os.path.exists(config_path)
-
-    if template_exists and not config_exists:
-        try:
-            shutil.copy2(template_path, config_path)
-            logger.info(f"主配置文件 config.toml 不存在，已从 config-template.toml 复制。")
-            config_copied = True
-        except Exception as e:
-            logger.error(f"从模板复制主配置文件失败: {e}")
-            # 如果主配置复制失败，应该阻止启动
-            return False  # 返回 False 可能不直观，但 load_config 会处理 FileNotFoundError
-    elif not config_exists:
-        # 如果 config.toml 不存在，并且模板也不存在，load_config 会处理错误并退出
-        logger.debug("主配置文件 config.toml 不存在，且模板文件 config-template.toml 也不存在。")
-        # 让 load_config 去处理 FileNotFoundError
-    else:
-        logger.debug("主配置文件 config.toml 已存在。")
-
-    logger.info("主配置文件检查完成。")
-    return config_copied
 
 
 async def main():
@@ -220,9 +93,25 @@ async def main():
 
     logger.info("启动 Amaidesu 应用程序...")
 
-    # --- 检查并设置主配置 ---
-    main_config_copied = check_and_setup_main_config(_BASE_DIR)
-    if main_config_copied:
+    # --- 初始化所有配置 ---
+    try:
+        config, main_cfg_copied, plugin_cfg_copied, pipeline_cfg_copied = initialize_configurations(
+            base_dir=_BASE_DIR,
+            main_cfg_name="config.toml",  # Default, but explicit
+            main_template_name="config-template.toml",  # Default, but explicit
+            plugin_dir_name="src/plugins",  # Default, but explicit
+            pipeline_dir_name="src/pipelines",  # Default, but explicit
+        )
+    except (IOError, FileNotFoundError) as e:  # Catch errors from config_manager
+        logger.critical(f"配置文件初始化失败: {e}")
+        logger.critical("请检查错误信息并确保配置文件或模板存在且可访问。")
+        sys.exit(1)
+    except Exception as e:  # Catch any other unexpected error during config init
+        logger.critical(f"加载配置时发生未知严重错误: {e}", exc_info=True)
+        sys.exit(1)
+
+    # --- 处理配置文件复制后的用户提示和退出 ---
+    if main_cfg_copied:
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         logger.warning("!! 主配置文件 config.toml 已根据模板创建。                 !!")
         logger.warning("!! 请检查根目录下的 config.toml 文件，并根据需要进行修改。   !!")
@@ -230,32 +119,21 @@ async def main():
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         sys.exit(0)  # 正常退出，让用户去修改配置
 
-    # --- 加载主配置 ---
-    config = load_config()
-
-    # --- 检查并设置插件配置 ---
-    plugin_config_dir = os.path.join(_BASE_DIR, "src", "plugins")
-    plugin_configs_copied = check_and_setup_plugin_configs(plugin_config_dir)
-
-    # --- 检查并设置管道配置 ---
-    pipeline_config_dir = os.path.join(_BASE_DIR, "src", "pipelines")
-    pipeline_configs_copied = check_and_setup_pipeline_configs(pipeline_config_dir)
-
-    if plugin_configs_copied or pipeline_configs_copied:
-        # 如果有任何配置文件是从模板复制的，打印提示并退出
+    if plugin_cfg_copied or pipeline_cfg_copied:
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        if plugin_configs_copied:
+        if plugin_cfg_copied:
             logger.warning("!! 已根据模板创建了部分插件的 config.toml 文件。          !!")
             logger.warning("!! 请检查 src/plugins/ 下各插件目录中的 config.toml 文件， !!")
-        if pipeline_configs_copied:
+        if pipeline_cfg_copied:
             logger.warning("!! 已根据模板创建了部分管道的 config.toml 文件。          !!")
             logger.warning("!! 请检查 src/pipelines/ 下各管道目录中的 config.toml 文件，!!")
         logger.warning("!! 特别是 API 密钥、房间号、设备名称等需要您修改的配置。   !!")
         logger.warning("!! 修改完成后，请重新运行程序。                           !!")
         logger.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         sys.exit(0)  # 正常退出，让用户去修改配置
-    else:
-        # 如果所有配置文件都已存在，或者无需创建，则继续
+
+    # 如果没有配置文件被复制，config_manager 已经记录了相关信息，可以简单记录继续
+    if not main_cfg_copied and not plugin_cfg_copied and not pipeline_cfg_copied:
         logger.info("所有必要的配置文件已存在或已处理。继续正常启动...")
 
     # 从配置中提取参数，提供默认值或进行错误处理
@@ -277,14 +155,14 @@ async def main():
 
     # --- 加载管道 ---
     pipeline_manager = None
-    if config.get("pipelines", {}):
+    if pipeline_config:
         pipeline_load_dir = os.path.join(_BASE_DIR, "src", "pipelines")  # 确保变量名不冲突且清晰
         logger.info(f"准备加载管道 (从目录: {pipeline_load_dir})...")
 
         try:
             # 创建管道管理器并加载管道
             pipeline_manager = PipelineManager()
-            await pipeline_manager.load_pipelines(pipeline_load_dir, config.get("pipelines", {}))
+            await pipeline_manager.load_pipelines(pipeline_load_dir, pipeline_config)
             if len(pipeline_manager._pipelines) > 0:
                 logger.info(f"管道加载完成，共 {len(pipeline_manager._pipelines)} 个管道。")
             else:
