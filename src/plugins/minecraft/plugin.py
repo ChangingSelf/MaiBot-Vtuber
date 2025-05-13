@@ -8,35 +8,10 @@ from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
 
-from src.utils.logger import get_logger
 from src.plugins.minecraft.core.prompt_builder import build_state_analysis, build_prompt
 from src.plugins.minecraft.core.action_handler import parse_mineland_action, execute_mineland_action
 
-logger = get_logger("MinecraftPlugin")
-
-
-def load_plugin_config() -> Dict[str, Any]:
-    """加载Minecraft插件配置文件"""
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    try:
-        with open(config_path, "rb") as f:
-            if hasattr(tomllib, "load"):
-                return tomllib.load(f)
-            else:
-                try:
-                    import toml
-
-                    with open(config_path, "r", encoding="utf-8") as rf:
-                        return toml.load(rf)
-                except ImportError:
-                    logger.exception("toml package needed for Python < 3.11.")
-                    return {}
-                except FileNotFoundError:
-                    logger.warning(f"Config file not found: {config_path}")
-                    return {}
-    except Exception as e:
-        logger.exception(f"Error loading config: {config_path}: {e}", exc_info=True)
-        return {}
+# logger = get_logger("MinecraftPlugin") # 已由基类初始化
 
 
 class MinecraftPlugin(BasePlugin):
@@ -45,8 +20,9 @@ class MinecraftPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
 
-        self.plugin_config = load_plugin_config()
-        minecraft_config = self.plugin_config.get("minecraft", {})
+        # self.plugin_config = load_plugin_config() # 基类已将正确的 plugin_config 赋值给 self.plugin_config
+        # minecraft_config = self.plugin_config.get("minecraft", {}) # self.plugin_config 已经是 minecraft 插件的配置
+        minecraft_config = self.plugin_config
 
         # 从配置文件加载所有配置
         self.task_id: str = minecraft_config.get("mineland_task_id", "playground")

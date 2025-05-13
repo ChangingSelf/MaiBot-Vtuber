@@ -9,36 +9,6 @@ import asyncio  # 引入 asyncio
 # Use absolute imports relative to the src directory
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
-from src.utils.logger import get_logger
-
-logger = get_logger("PromptContextPlugin")
-
-
-# --- Helper Function ---
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's configuration from config.toml."""
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    try:
-        with open(config_path, "rb") as f:
-            # Python 3.11+ use tomllib
-            if hasattr(tomllib, "load"):
-                return tomllib.load(f)
-            else:
-                # Fallback for older Python versions (requires toml package)
-                try:
-                    import toml
-
-                    with open(config_path, "r", encoding="utf-8") as rf:
-                        return toml.load(rf)
-                except ImportError:
-                    logger.error("Toml package not found. Please install it (`pip install toml`) for Python < 3.11.")
-                    return {}
-                except FileNotFoundError:
-                    logger.warning(f"Configuration file not found at {config_path}")
-                    return {}
-    except Exception as e:
-        logger.error(f"Error loading configuration from {config_path}: {e}", exc_info=True)
-        return {}
 
 
 # --- Type Definition for Context Provider Data ---
@@ -62,10 +32,9 @@ class PromptContextPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
-        self.config = plugin_config.get("prompt_context", {})
-        self.formatting_config = plugin_config.get("formatting", {})
-        self.limits_config = plugin_config.get("limits", {})
+        self.config = self.plugin_config
+        self.formatting_config = self.plugin_config.get("formatting", {})
+        self.limits_config = self.plugin_config.get("limits", {})
 
         # --- Store for Context Providers ---
         # Key: provider_name, Value: ContextProviderData

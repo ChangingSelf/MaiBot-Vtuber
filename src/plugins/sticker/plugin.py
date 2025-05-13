@@ -14,34 +14,9 @@ from maim_message.message_base import MessageBase
 # 从 core 导入基类和核心类
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from src.utils.logger import get_logger
-
-logger = get_logger("StickerPlugin")
 
 
 # --- Helper Function ---
-def load_plugin_config() -> Dict[str, Any]:
-    # (Config loading logic - keep for now, might be needed)
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    try:
-        with open(config_path, "rb") as f:
-            if hasattr(tomllib, "load"):
-                return tomllib.load(f)
-            else:
-                try:
-                    import toml
-
-                    with open(config_path, "r", encoding="utf-8") as rf:
-                        return toml.load(rf)
-                except ImportError:
-                    logger.error("toml package needed for Python < 3.11.")
-                    return {}
-                except FileNotFoundError:
-                    logger.warning(f"Config file not found: {config_path}")
-                    return {}
-    except Exception as e:
-        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
-        return {}
 
 
 # --- Plugin Class ---
@@ -54,10 +29,7 @@ class StickerPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
-
-        loaded_config = load_plugin_config()
-        self.config = loaded_config.get("sticker", {})
+        self.config = self.plugin_config
         self.enabled = self.config.get("enabled", True)
         # 添加表情贴纸配置
         self.sticker_size = self.config.get("sticker_size", 0.33)
@@ -71,8 +43,6 @@ class StickerPlugin(BasePlugin):
         self.cool_down_seconds = self.config.get("cool_down_seconds", 5)
         self.last_trigger_time: float = 0.0
         self.display_duration_seconds = self.config.get("display_duration_seconds", 3)
-
-        self.logger.info("表情贴纸插件初始化完成")
 
     def resize_image_base64(self, base64_str: str) -> str:
         """将base64图片调整为配置中指定的大小，保持原始比例"""

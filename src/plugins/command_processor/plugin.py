@@ -11,34 +11,36 @@ from typing import Any, Dict
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # 假设 MessageBase 可以从 maim_message 导入
-from src.utils.logger import get_logger
+# 移除多余的 get_logger 和 logger 初始化
+# from src.utils.logger import get_logger
 
-logger = get_logger("CommandProcessorPlugin")
+# logger = get_logger("CommandProcessorPlugin") # 已由基类初始化
 
 
 # --- Helper Function ---
-def load_plugin_config() -> Dict[str, Any]:
-    # (Config loading logic - similar to other plugins)
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    try:
-        with open(config_path, "rb") as f:
-            if hasattr(tomllib, "load"):
-                return tomllib.load(f)
-            else:
-                try:
-                    import toml
-
-                    with open(config_path, "r", encoding="utf-8") as rf:
-                        return toml.load(rf)
-                except ImportError:
-                    logger.error("toml package needed for Python < 3.11.")
-                    return {}
-                except FileNotFoundError:
-                    logger.warning(f"Config file not found: {config_path}")
-                    return {}
-    except Exception as e:
-        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
-        return {}
+# 移除旧的配置加载函数
+# def load_plugin_config() -> Dict[str, Any]:
+#     # (Config loading logic - similar to other plugins)
+#     config_path = os.path.join(os.path.dirname(__file__), "config.toml")
+#     try:
+#         with open(config_path, "rb") as f:
+#             if hasattr(tomllib, "load"):
+#                 return tomllib.load(f)
+#             else:
+#                 try:
+#                     import toml
+#
+#                     with open(config_path, "r", encoding="utf-8") as rf:
+#                         return toml.load(rf)
+#                 except ImportError:
+#                     logger.error("toml package needed for Python < 3.11.")
+#                     return {}
+#                 except FileNotFoundError:
+#                     logger.warning(f"Config file not found: {config_path}")
+#                     return {}
+#     except Exception as e:
+#         logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
+#         return {}
 
 
 # --- Plugin Class ---
@@ -52,8 +54,9 @@ class CommandProcessorPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
-        self.config = plugin_config.get("command_processor", {})
+        # self.logger = logger # 已由基类初始化
+        # self.config = plugin_config.get("command_processor", {}) # plugin_config 已是本插件的配置
+        self.config = self.plugin_config  # 直接使用注入的 plugin_config
         self.enabled = self.config.get("enabled", True)
 
         if not self.enabled:

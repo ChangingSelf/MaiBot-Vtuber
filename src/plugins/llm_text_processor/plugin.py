@@ -24,32 +24,6 @@ except ModuleNotFoundError:
 # --- Amaidesu Core Imports ---
 from core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from src.utils.logger import get_logger
-
-logger = get_logger("LLMTextProcessorPlugin")
-
-# --- Plugin Configuration Loading ---
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
-
-
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's specific config.toml file."""
-    if tomllib is None:
-        logger.error("TOML library not available, cannot load LLMTextProcessor plugin config.")
-        return {}
-    try:
-        with open(_CONFIG_FILE, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载 LLM 文本处理器配置文件: {_CONFIG_FILE}")
-            return config
-    except FileNotFoundError:
-        logger.error(f"LLM 文本处理器配置文件未找到: {_CONFIG_FILE}。将使用默认值或禁用功能。")
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"LLM 文本处理器配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值或禁用功能。")
-    except Exception as e:
-        logger.error(f"加载 LLM 文本处理器配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
-    return {}
 
 
 class LLMTextProcessorPlugin(BasePlugin):
@@ -61,9 +35,7 @@ class LLMTextProcessorPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
-        loaded_config = load_plugin_config()
-        self.config = loaded_config.get("llm_text_processor", {})
+        self.config = self.plugin_config
         self.enabled = self.config.get("enabled", True)
 
         if not self.enabled:

@@ -45,32 +45,30 @@ except ModuleNotFoundError:
 from core.plugin_manager import BasePlugin
 from core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # Import MessageBase for type hint
-from src.utils.logger import get_logger
-
-logger = get_logger("TTSPlugin")
 
 # --- Plugin Configuration Loading ---
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
-
-
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's specific config.toml file."""
-    if tomllib is None:
-        logger.error("TOML library not available, cannot load TTS plugin config.")
-        return {}
-    try:
-        with open(_CONFIG_FILE, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载 TTS 插件配置文件: {_CONFIG_FILE}")
-            return config
-    except FileNotFoundError:
-        logger.warning(f"TTS 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"TTS 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
-    except Exception as e:
-        logger.error(f"加载 TTS 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
-    return {}
+# 移除旧的配置加载相关变量和函数
+# _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+# _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
+#
+#
+# def load_plugin_config() -> Dict[str, Any]:
+#     """Loads the plugin's specific config.toml file."""
+#     if tomllib is None:
+#         logger.error("TOML library not available, cannot load TTS plugin config.")
+#         return {}
+#     try:
+#         with open(_CONFIG_FILE, "rb") as f:
+#             config = tomllib.load(f)
+#             logger.info(f"成功加载 TTS 插件配置文件: {_CONFIG_FILE}")
+#             return config
+#     except FileNotFoundError:
+#         logger.warning(f"TTS 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
+#     except tomllib.TOMLDecodeError as e:
+#         logger.error(f"TTS 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
+#     except Exception as e:
+#         logger.error(f"加载 TTS 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
+#     return {}
 
 
 class TTSPlugin(BasePlugin):
@@ -82,7 +80,7 @@ class TTSPlugin(BasePlugin):
         # Note: plugin_config from PluginManager is the global [plugins] config
         # We load our own specific config here.
         super().__init__(core, plugin_config)
-        self.tts_config = load_plugin_config()  # Load src/plugins/tts/config.toml
+        self.tts_config = self.plugin_config  # 直接使用注入的 plugin_config
 
         # --- TTS Service Initialization (from tts_service.py) ---
         tts_settings = self.tts_config.get("tts", {})

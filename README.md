@@ -74,6 +74,7 @@ sequenceDiagram
     - 在首次运行 `python main.py` 之前，请确保根目录下存在 `config-template.toml`。
     - 首次运行会自动检查并根据 `config-template.toml` 创建 `config.toml`。
     - 同时，它也会检查 `src/plugins/` 和 `src/pipelines/` 下各个子目录，如果存在 `config-template.toml` 但不存在 `config.toml`，也会自动复制生成。
+    - **插件配置加载**: 插件在运行时会加载其各自目录下的 `config.toml` 文件。您可以在这些文件中为插件设置特定的参数。如果需要在全局层面覆盖某个插件的特定配置项，可以在根目录的 `config.toml` 文件中的 `[plugins.插件名]` 部分进行设置（例如，对于名为 "tts" 的插件，配置段为 `[plugins.tts]`）。全局配置会覆盖插件目录下 `config.toml` 中的同名配置项。最终生效的配置会传递给插件实例。
     - **重要**: 自动生成配置文件后，程序会提示并退出。请务必检查新生成的 `config.toml` 文件（包括根目录和插件/管道目录下的），填入必要的配置信息（如 API 密钥、设备名称、房间号等），然后再重新运行程序。
 
 2.  **启动程序**: 
@@ -179,12 +180,25 @@ flowchart TD
 
 ```python
 from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore # 确保导入 AmaidesuCore
+from typing import Dict, Any # 确保导入 Dict 和 Any
 from maim_message.message_base import MessageBase
 
 class MyPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
+        # 此时，self.plugin_config 已经包含了此插件的最终配置
+        # (已合并插件目录下的 config.toml 和根目录下 config.toml 中可能的覆盖项)
+        # 例如，从插件的配置中获取一个设置：
+        # self.my_specific_setting = self.plugin_config.get("my_key", "default_value")
+        # self.logger.info(f"MyPlugin '{self.__class__.__name__}' loaded with config: {self.plugin_config}")
+        
         # 自己的初始化逻辑
+        # 例如:
+        # self.api_url = self.plugin_config.get("api_url")
+        # if not self.api_url:
+        #     self.logger.error("api_url not configured for MyPlugin!")
+        #     self.enabled = False # 可以根据配置决定是否启用插件
 
     async def setup(self):
         # 注册消息处理器
@@ -193,12 +207,16 @@ class MyPlugin(BasePlugin):
         self.core.register_service("vts_control", self)
     
     async def handle_message(self, message: MessageBase):
-        # 处理MaiCore传递回来的消息
+        # 处理从 AmaidesuCore (通常是 MaiCore 转发) 传递回来的消息
+        # self.logger.debug(f"MyPlugin received message: {message.message_segment.data}")
         pass
     
     async def cleanup(self):
-        # 清理资源
-        pass
+        # 清理插件使用的资源，例如关闭网络连接、释放文件句柄等
+        self.logger.info(f"MyPlugin '{self.__class__.__name__}' cleaning up...")
+        await super().cleanup() # 调用父类的 cleanup 方法
+        self.logger.info(f"MyPlugin '{self.__class__.__name__}' cleanup complete.")
+
 ```
 
 ## 管道系统

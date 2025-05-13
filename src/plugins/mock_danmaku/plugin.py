@@ -27,33 +27,35 @@ from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase
 
 # 已移除导入: from src.utils.message_utils import deserialize_messagebase
-from src.utils.logger import get_logger
+# 移除多余的 get_logger 和 logger 初始化
+# from src.utils.logger import get_logger
 
 # --- 此插件的特定 Logger ---
-logger = get_logger("MockDanmakuPlugin")
+# logger = get_logger("MockDanmakuPlugin") # 已由基类初始化
 
 
 # --- 用于加载配置的辅助函数 (可复用) ---
-def load_plugin_config(plugin_name: str = "mock_danmaku") -> Dict[str, Any]:
-    # 构建相对于此文件目录的路径
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    default_config = {}  # 文件未找到或出错时的默认配置
-
-    if not os.path.exists(config_path):
-        logger.warning(f"配置文件未找到: {config_path}, 使用默认配置。")
-        return default_config
-
-    if tomllib is None:
-        logger.error("未找到 toml/tomllib 库。请安装 (`pip install toml` 适用于 Python < 3.11)。无法加载配置。")
-        return default_config
-
-    try:
-        with open(config_path, "rb") as f:
-            loaded_config = tomllib.load(f)
-            return loaded_config.get(plugin_name, default_config)  # 返回特定部分
-    except Exception as e:
-        logger.error(f"加载或解析配置时出错: {config_path}: {e}", exc_info=True)
-        return default_config
+# 移除旧的配置加载函数
+# def load_plugin_config(plugin_name: str = "mock_danmaku") -> Dict[str, Any]:
+#     # 构建相对于此文件目录的路径
+#     config_path = os.path.join(os.path.dirname(__file__), "config.toml")
+#     default_config = {}  # 文件未找到或出错时的默认配置
+#
+#     if not os.path.exists(config_path):
+#         logger.warning(f"配置文件未找到: {config_path}, 使用默认配置。")
+#         return default_config
+#
+#     if tomllib is None:
+#         logger.error("未找到 toml/tomllib 库。请安装 (`pip install toml` 适用于 Python < 3.11)。无法加载配置。")
+#         return default_config
+#
+#     try:
+#         with open(config_path, "rb") as f:
+#             loaded_config = tomllib.load(f)
+#             return loaded_config.get(plugin_name, default_config)  # 返回特定部分
+#     except Exception as e:
+#         logger.error(f"加载或解析配置时出错: {config_path}: {e}", exc_info=True)
+#         return default_config
 
 
 # --- 插件类 ---
@@ -64,15 +66,16 @@ class MockDanmakuPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
+        # self.logger = logger # 已由基类初始化
 
         # --- 加载自身配置 ---
-        self.config = load_plugin_config("mock_danmaku")  # 加载 [mock_danmaku] 部分
+        # self.config = load_plugin_config("mock_danmaku")  # 加载 [mock_danmaku] 部分
+        self.config = self.plugin_config  # 直接使用注入的 plugin_config
 
         self.enabled = self.config.get("enabled", False)  # 如果未指定，默认为 False
 
         if not self.enabled:
-            self.logger.warning("模拟弹幕插件已在配置中禁用。")
+            self.logger.warning("模拟弹幕插件已在配置中禁用。")  # 此处 logger 已是 self.logger
             return
 
         # --- 配置值 ---
@@ -89,20 +92,20 @@ class MockDanmakuPlugin(BasePlugin):
         # 确保 data 目录存在
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
-            self.logger.debug(f"确保数据目录存在: {data_dir}")
+            self.logger.debug(f"确保数据目录存在: {data_dir}")  # 此处 logger 已是 self.logger
         except OSError as e:
-            self.logger.error(f"创建数据目录失败: {data_dir}: {e}", exc_info=True)
+            self.logger.error(f"创建数据目录失败: {data_dir}: {e}", exc_info=True)  # 此处 logger 已是 self.logger
             # 根据需要决定是否禁用插件
             # self.enabled = False
             # return
 
         # 最终的日志文件路径
         self.log_file_path = data_dir / log_filename
-        self.logger.info(f"将在插件数据目录中查找日志文件: {self.log_file_path}")
+        self.logger.info(f"将在插件数据目录中查找日志文件: {self.log_file_path}")  # 此处 logger 已是 self.logger
 
         # 检查最终路径是否存在
         if not self.log_file_path.exists():
-            self.logger.warning(
+            self.logger.warning(  # 此处 logger 已是 self.logger
                 f"日志文件不存在: {self.log_file_path}。插件在setup时会尝试加载，如果文件仍不存在则无法发送消息。"
             )
             # 注意：这里不再因为文件不存在而立即禁用插件，允许后续创建文件
@@ -117,10 +120,10 @@ class MockDanmakuPlugin(BasePlugin):
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
-        self.logger.info(
-            f"模拟弹幕插件初始化完成。源: '{self.log_file_path}', "
-            f"间隔: {self.send_interval}s, 循环: {self.loop_playback}, 立即启动: {self.start_immediately}"
-        )
+        # self.logger.info( # 此日志可移除或保留，基类有通用初始化日志
+        #     f"模拟弹幕插件初始化完成。源: '{self.log_file_path}', "
+        #     f"间隔: {self.send_interval}s, 循环: {self.loop_playback}, 立即启动: {self.start_immediately}"
+        # )
 
     async def setup(self):
         await super().setup()
