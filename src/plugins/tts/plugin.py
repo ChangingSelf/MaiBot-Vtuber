@@ -42,8 +42,8 @@ except ModuleNotFoundError:
         dependencies_ok = False
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # Import MessageBase for type hint
 
 # --- Plugin Configuration Loading ---
@@ -73,8 +73,6 @@ from maim_message import MessageBase  # Import MessageBase for type hint
 
 class TTSPlugin(BasePlugin):
     """处理文本消息，执行 TTS 播放，可选 Cleanup LLM 和 UDP 广播。"""
-
-    _is_amaidesu_plugin: bool = True  # Plugin marker
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         # Note: plugin_config from PluginManager is the global [plugins] config

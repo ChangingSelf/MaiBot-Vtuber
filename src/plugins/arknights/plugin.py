@@ -5,7 +5,7 @@ from typing import Any, Dict
 from maim_message.message_base import MessageBase
 
 # 从 core 导入基类和核心类
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 
 # logger = get_logger("ArknightsPlugin")
@@ -41,8 +41,6 @@ class ArknightsPlugin(BasePlugin):
     """
     让麦麦游玩明日方舟
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

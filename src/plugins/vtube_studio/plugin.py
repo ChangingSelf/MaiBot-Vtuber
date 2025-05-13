@@ -11,7 +11,7 @@ from maim_message.message_base import MessageBase
 import pyvts
 
 # 从 core 导入基类和核心类
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 
 
@@ -24,8 +24,6 @@ class VTubeStudioPlugin(BasePlugin):
     Connects to VTube Studio, allows triggering hotkeys,
     and registers available actions to PromptContext.
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

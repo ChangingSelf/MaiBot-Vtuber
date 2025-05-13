@@ -12,7 +12,7 @@ import base64
 from maim_message.message_base import MessageBase
 
 # 从 core 导入基类和核心类
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 
 
@@ -24,8 +24,6 @@ class StickerPlugin(BasePlugin):
     """
     将麦麦发送的表情图片作为表情贴纸发送给VTS
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

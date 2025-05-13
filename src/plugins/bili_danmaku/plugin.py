@@ -20,7 +20,7 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
 
@@ -28,8 +28,6 @@ from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, Form
 # --- Plugin Class ---
 class BiliDanmakuPlugin(BasePlugin):
     """Bilibili 直播弹幕插件，连接到直播间并接收弹幕/礼物等事件。"""
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

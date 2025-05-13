@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 from maim_message.message_base import MessageBase
 
 # 从 core 导入基类和核心类
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 
 # logger = get_logger("EmotionJudgePlugin")
@@ -44,8 +44,6 @@ class EmotionJudgePlugin(BasePlugin):
     """
     根据麦麦的回复，判断麦麦的情感状态，并触发对应的Live2D热键。
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

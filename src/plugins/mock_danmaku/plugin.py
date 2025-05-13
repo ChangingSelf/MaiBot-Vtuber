@@ -20,7 +20,7 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu 核心导入 ---
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 
 # 直接导入 MessageBase 及其组件以供 from_dict 使用
@@ -61,8 +61,6 @@ from maim_message import MessageBase
 # --- 插件类 ---
 class MockDanmakuPlugin(BasePlugin):
     """模拟弹幕插件，从 JSONL 文件读取消息并按设定速率发送。"""
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

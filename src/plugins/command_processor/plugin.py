@@ -8,8 +8,8 @@ import tomllib
 import os
 from typing import Any, Dict
 
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # 假设 MessageBase 可以从 maim_message 导入
 # 移除多余的 get_logger 和 logger 初始化
 # from src.utils.logger import get_logger
@@ -49,8 +49,6 @@ class CommandProcessorPlugin(BasePlugin):
     Intercepts messages from MaiCore, processes embedded commands (e.g., %{command:args}%),
     executes them via services, and removes them from the message text before further processing.
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

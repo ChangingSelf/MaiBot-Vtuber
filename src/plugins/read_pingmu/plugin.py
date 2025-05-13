@@ -31,8 +31,8 @@ try:
 except ImportError:
     Image = None
 
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 
 
 # --- Helper Function ---

@@ -7,8 +7,8 @@ import os
 import asyncio  # 引入 asyncio
 
 # Use absolute imports relative to the src directory
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 
 
 # --- Type Definition for Context Provider Data ---
@@ -27,8 +27,6 @@ class PromptContextPlugin(BasePlugin):
     Other plugins can register context providers, and message-sending plugins
     can retrieve the aggregated context.
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

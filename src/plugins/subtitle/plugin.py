@@ -13,8 +13,8 @@ try:
 except ImportError:
     tk = None  # 标记 tkinter 不可用
 
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 
 
 # --- Helper Function ---
@@ -26,8 +26,6 @@ class SubtitlePlugin(BasePlugin):
     Receives speech text from other services (like TTS)
     and displays it in a dedicated, always-on-top window using Tkinter.
     """
-
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

@@ -28,9 +28,6 @@ from src.utils.logger import get_logger
 class BasePlugin:
     """所有插件的基础类，定义插件的基本接口。"""
 
-    # 添加一个类级别的标记属性
-    _is_amaidesu_plugin: bool = True
-
     def __init__(self, core: "AmaidesuCore", plugin_config: Dict[str, Any]):
         """
         初始化插件。
@@ -129,13 +126,15 @@ class PluginManager:
                         self.logger.debug(
                             f"在模块 '{module_import_path}' 中找到入口点 'plugin_entrypoint' 指向: {entrypoint}"
                         )
-                        # 检查 entrypoint 是否是类，并且具有我们的标记属性
-                        if inspect.isclass(entrypoint) and getattr(entrypoint, "_is_amaidesu_plugin", False):
+                        # 检查 entrypoint 是否是类，并且是 BasePlugin 的子类
+                        if inspect.isclass(entrypoint) and issubclass(entrypoint, BasePlugin):
                             plugin_class = entrypoint
-                            self.logger.debug(f"入口点验证成功 (通过标记属性)，插件类为: {plugin_class.__name__}")
+                            self.logger.debug(
+                                f"入口点验证成功 (通过继承 BasePlugin)，插件类为: {plugin_class.__name__}"
+                            )
                         else:
                             self.logger.warning(
-                                f"模块 '{module_import_path}' 中的 'plugin_entrypoint' ({entrypoint}) 不是有效的插件类 (缺少标记或不是类)。"
+                                f"模块 '{module_import_path}' 中的 'plugin_entrypoint' ({entrypoint}) 不是 BasePlugin 的有效子类。"
                             )
                     else:
                         self.logger.warning(f"在模块 '{module_import_path}' 中未找到入口点 'plugin_entrypoint'。")

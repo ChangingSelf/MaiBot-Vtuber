@@ -17,7 +17,7 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
@@ -47,8 +47,6 @@ from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg,
 
 class ConsoleInputPlugin(BasePlugin):
     """通过控制台接收用户输入并发送消息的插件"""
-
-    _is_amaidesu_plugin: bool = True  # Plugin marker
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)

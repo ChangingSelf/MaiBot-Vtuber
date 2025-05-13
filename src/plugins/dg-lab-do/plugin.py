@@ -15,8 +15,8 @@ try:
 except ImportError:
     aiohttp = None
 
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import VupNextCore  # TODO: 确认是否应为 AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore  # TODO: 确认是否应为 AmaidesuCore
 from maim_message import MessageBase  # 导入 MessageBase
 
 
@@ -52,9 +52,7 @@ class ElectricityMonitorPlugin(BasePlugin):
     则通过 HTTP API 控制 DG-LAB 设备设置强度和波形。
     """
 
-    _is_amaidesu_plugin: bool = True  # 修正属性名称
-
-    def __init__(self, core: VupNextCore, plugin_config: Dict[str, Any]):  # TODO: 确认 core 类型
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):  # TODO: 确认 core 类型
         super().__init__(core, plugin_config)
 
         # --- 加载配置 ---

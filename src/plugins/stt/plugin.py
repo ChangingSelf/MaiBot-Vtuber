@@ -44,8 +44,8 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
 # --- Plugin Configuration Loading ---
@@ -88,8 +88,6 @@ class STTPlugin(BasePlugin):
     使用 sounddevice 捕获音频，通过 VAD 判断话语起止，实时发送到讯飞，
     并将最终识别结果包装成 MessageBase 发送回 Core。
     """
-
-    _is_amaidesu_plugin: bool = True  # Plugin marker
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)  # Initialize BasePlugin
