@@ -136,6 +136,7 @@ async def main():
     if not main_cfg_copied and not plugin_cfg_copied and not pipeline_cfg_copied:
         logger.info("所有必要的配置文件已存在或已处理。继续正常启动...")
 
+    # --- 提取配置部分 ---
     # 从配置中提取参数，提供默认值或进行错误处理
     general_config = config.get("general", {})
     maicore_config = config.get("maicore", {})
@@ -175,6 +176,16 @@ async def main():
     else:
         logger.info("配置中未启用管道功能")
 
+    # 从配置中读取上下文管理器配置
+    context_manager_config = config.get("context_manager", {})
+    logger.info("已读取上下文管理器配置")
+
+    # 创建上下文管理器实例
+    from src.core.context_manager import ContextManager
+
+    context_manager = ContextManager(context_manager_config)
+    logger.info("已创建上下文管理器实例")
+
     # --- 初始化核心 ---
     core = AmaidesuCore(
         platform=platform_id,
@@ -184,6 +195,7 @@ async def main():
         http_port=http_port,
         http_callback_path=http_callback_path,
         pipeline_manager=pipeline_manager,  # 传入加载好的管道管理器或None
+        context_manager=context_manager,  # 传入创建好的上下文管理器
         # maicore_token=maicore_token # 如果 core 需要 token
     )
 

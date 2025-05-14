@@ -8,6 +8,7 @@ from aiohttp import web
 from maim_message import Router, RouteConfig, TargetConfig, MessageBase
 from src.utils.logger import get_logger
 from .pipeline_manager import PipelineManager
+from .context_manager import ContextManager  # 导入ContextManager
 
 
 class AmaidesuCore:
@@ -24,6 +25,7 @@ class AmaidesuCore:
         http_port: Optional[int] = None,
         http_callback_path: str = "/callback",
         pipeline_manager: Optional[PipelineManager] = None,
+        context_manager: Optional[ContextManager] = None,  # 修改为接收ContextManager实例
     ):
         """
         初始化 Amaidesu Core。
@@ -36,6 +38,7 @@ class AmaidesuCore:
             http_port: (可选) 监听 HTTP 回调的端口。
             http_callback_path: (可选) 接收 HTTP 回调的路径。
             pipeline_manager: (可选) 已配置的管道管理器。如果为None则禁用管道处理。
+            context_manager: (可选) 已配置的上下文管理器。如果为None则创建默认实例。
         """
         # 初始化 AmaidesuCore 自己的 logger
         self.logger = get_logger("AmaidesuCore")
@@ -69,6 +72,11 @@ class AmaidesuCore:
             self.logger.info("管道处理功能已禁用")
         else:
             self.logger.info("管道处理功能已启用")
+
+        # 设置上下文管理器
+        self._context_manager = context_manager if context_manager is not None else ContextManager({})
+        self.register_service("prompt_context", self._context_manager)  # 兼容以前通过服务发现调用上下文管理器的插件
+        self.logger.info("上下文管理器已注册为服务")
 
         self._setup_router()
         if self._http_host and self._http_port:
@@ -510,3 +518,13 @@ class AmaidesuCore:
     # --- 未来可以添加内部事件分发机制 ---
     # async def dispatch_event(self, event_name: str, **kwargs): ...
     # def subscribe_event(self, event_name: str, handler: Callable): ...
+
+    def get_context_manager(self) -> ContextManager:
+        """
+        获取上下文管理器实例。
+        这是一个便捷方法，等同于 get_service("prompt_context")，但提供了类型提示。
+
+        Returns:
+            上下文管理器实例
+        """
+        return self._context_manager

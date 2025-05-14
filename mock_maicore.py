@@ -8,6 +8,10 @@
 ```bash
 python mock_maicore.py
 ```
+
+命令行参数:
+--debug    启用DEBUG级别日志输出
+--filter   仅显示指定模块的INFO/DEBUG级别日志
 """
 
 import asyncio
@@ -17,6 +21,8 @@ import time
 import os
 import random
 import base64
+import sys
+import argparse  # 导入 argparse
 from typing import Set, Dict, Callable, List, Any, Optional
 from enum import Enum
 
@@ -369,6 +375,34 @@ def load_config() -> dict:
 
 
 async def main():
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description="Mock MaiCore 服务模拟器")
+    # 添加 --debug 参数，用于控制日志级别
+    parser.add_argument("--debug", action="store_true", help="启用 DEBUG 级别日志输出")
+    # 解析命令行参数
+    args = parser.parse_args()
+
+    # --- 配置日志 ---
+    base_level = "DEBUG" if args.debug else "INFO"
+    log_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{line: <4}</cyan> | <cyan>{extra[module]}</cyan> - <level>{message}</level>"
+
+    # 清除所有预设的 handler (包括 src/utils/logger.py 中添加的)
+    logger.remove()
+
+    # 添加最终的 handler，应用过滤器（如果定义了）
+    logger.add(
+        sys.stderr,
+        level=base_level,
+        colorize=True,
+        format=log_format,
+    )
+
+    # 打印日志级别和过滤器状态相关的提示信息
+    if args.debug:
+        logger.info("已启用 DEBUG 日志级别。")
+    else:
+        logger.info("已启用 INFO 日志级别。")
+
     config = load_config()
 
     host = config.get("host", DEFAULT_HOST)
