@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, Optional, List
 import time
 import mineland
@@ -45,6 +46,11 @@ class MinecraftPlugin(BasePlugin):
         self.user_id: str = minecraft_config.get("user_id", "minecraft_bot")
         self.group_id_str: Optional[str] = minecraft_config.get("group_id")
         self.nickname: str = minecraft_config.get("nickname", "Minecraft Observer")
+
+        # 添加定期发送状态的配置
+        self.auto_send_interval: float = minecraft_config.get("auto_send_interval", 30.0)  # 默认30秒
+        self._auto_send_task: Optional[asyncio.Task] = None
+        self._last_response_time: float = 0.0
 
         # --- 加载Template Items配置 ---
         self.enable_template_info = minecraft_config.get("enable_template_info", True)
@@ -100,13 +106,39 @@ class MinecraftPlugin(BasePlugin):
 
             self.logger.info(f"MineLand 环境已重置，收到初始观察: {len(self.current_obs)} 个智能体。")
 
+            # 等待几秒钟，确保 MaiCore 连接
+            await asyncio.sleep(5)
+
             # 发送初始状态给 MaiCore
             await self._send_state_to_maicore()
+
+            # 启动自动发送任务
+            self._auto_send_task = asyncio.create_task(self._auto_send_loop(), name="MinecraftAutoSend")
+            self.logger.info(f"已启动自动发送状态任务，间隔: {self.auto_send_interval}秒")
 
         except Exception as e:
             self.logger.exception(f"初始化 MineLand 环境失败: {e}", exc_info=True)
             # 可以在这里决定是否阻止插件加载或进行其他处理
             return  # 阻止进一步设置
+
+    async def _auto_send_loop(self):
+        """定期发送状态的循环任务"""
+        while True:
+            try:
+                await asyncio.sleep(self.auto_send_interval)
+
+                # 检查是否收到过响应
+                current_time = time.time()
+                if current_time - self._last_response_time > self.auto_send_interval:
+                    self.logger.info("未收到响应，重新发送状态...")
+                    await self._send_state_to_maicore()
+
+            except asyncio.CancelledError:
+                self.logger.info("自动发送状态任务被取消")
+                break
+            except Exception as e:
+                self.logger.error(f"自动发送状态时出错: {e}", exc_info=True)
+                await asyncio.sleep(1)  # 出错时等待一秒再继续
 
     async def _send_state_to_maicore(self):
         """构建并发送当前Mineland状态给AmaidesuCore。"""
@@ -154,7 +186,7 @@ class MinecraftPlugin(BasePlugin):
             template_items = self.template_items.copy() if self.template_items else {}
 
             # 使用'reasoning_prompt_main'作为主提示词的键
-            template_items["reasoning_prompt_main"] = prompted_message_content
+            template_items["heart_flow_prompt"] = prompted_message_content
 
             # 直接构建最终的template_info结构
             final_template_info_value = {"template_items": template_items}
@@ -191,6 +223,9 @@ class MinecraftPlugin(BasePlugin):
     async def handle_maicore_response(self, message: MessageBase):
         """处理从 MaiCore 返回的动作指令。"""
         self.logger.info(f"收到来自 MaiCore 的响应: {message.message_segment.data}")
+
+        # 更新最后响应时间
+        self._last_response_time = time.time()
 
         if not self.mland:
             self.logger.exception("收到 MaiCore 响应，但 MineLand 环境未初始化。忽略消息。")
@@ -255,6 +290,17 @@ class MinecraftPlugin(BasePlugin):
 
     async def cleanup(self):
         self.logger.info("正在清理 Minecraft 插件...")
+
+        # 停止自动发送任务
+        if self._auto_send_task:
+            self.logger.info("正在停止自动发送状态任务...")
+            self._auto_send_task.cancel()
+            try:
+                await self._auto_send_task
+            except asyncio.CancelledError:
+                pass
+            self._auto_send_task = None
+
         if self.mland:
             try:
                 self.logger.info("正在关闭 MineLand 环境...")
