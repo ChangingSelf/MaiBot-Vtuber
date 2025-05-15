@@ -164,7 +164,9 @@ class PluginManager:
 
         # 注意：不再需要在每次循环后清理 sys.path，因为我们添加的是 src 目录
 
-        self.logger.info(f"插件加载完成，共加载 {len(self.loaded_plugins)} 个插件。")
+        self.logger.info(
+            f"插件加载完成，共加载 {len(self.loaded_plugins)} 个插件:{','.join(self.loaded_plugins.keys())}"
+        )
 
     async def unload_plugins(self):
         """卸载所有已加载的插件，调用它们的 cleanup 方法。"""
