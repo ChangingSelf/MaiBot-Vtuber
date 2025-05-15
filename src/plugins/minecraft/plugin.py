@@ -8,8 +8,8 @@ from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
 
-from src.plugins.minecraft.core.prompt_builder import build_state_analysis, build_prompt
-from src.plugins.minecraft.core.action_handler import parse_mineland_action, execute_mineland_action
+from .core.prompt_builder import build_state_analysis, build_prompt
+from .core.action_handler import parse_mineland_action, execute_mineland_action
 
 # logger = get_logger("MinecraftPlugin") # 已由基类初始化
 
