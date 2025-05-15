@@ -34,3 +34,6 @@ mineland_enable_low_level_action = false
 
 # 每步对应的游戏 tick 数
 mineland_ticks_per_step = 20
+
+# 自动发送状态的间隔时间（秒）
+auto_send_interval = 30.0
