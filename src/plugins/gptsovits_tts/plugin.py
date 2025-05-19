@@ -39,8 +39,8 @@ except ModuleNotFoundError:
         dependencies_ok = False
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # Import MessageBase for type hint
 
 logger = logging.getLogger(__name__)
@@ -651,7 +651,7 @@ class TTSPlugin(BasePlugin):
                         return
                 else:
                     # 不是WAV格式或是后续数据块，直接当作PCM数据处理
-                    self.logger.debug("收到的不是WAV格式数据或为后续数据块，当作PCM数据处理")
+                    # self.logger.debug("收到的不是WAV格式数据或为后续数据块，当作PCM数据处理")
                     pcm_data = wav_data
             else:
                 # 后续块或非WAV格式，直接当作PCM数据处理
@@ -665,13 +665,13 @@ class TTSPlugin(BasePlugin):
         # PCM数据缓冲处理
         async with self.input_pcm_queue_lock:
             self.input_pcm_queue.extend(pcm_data)
-            self.logger.debug(f"缓冲 {len(pcm_data)} 字节的PCM数据")
+            # self.logger.debug(f"缓冲 {len(pcm_data)} 字节的PCM数据")
 
         # 按需切割音频块
         while await self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
             raw_block = await self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
             self.audio_data_queue.append(raw_block)
-            self.logger.debug(f"成功添加 {BUFFER_REQUIRED_BYTES} 字节到音频播放队列")
+            # self.logger.debug(f"成功添加 {BUFFER_REQUIRED_BYTES} 字节到音频播放队列")
 
     def start_pcm_stream(self, samplerate=44100, channels=2, dtype=np.int16, blocksize=1024):
         """创建并启动音频流
@@ -824,7 +824,7 @@ class TTSPlugin(BasePlugin):
             # 异步处理音频数据块
             for chunk in audio_stream:
                 if chunk:
-                    self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
+                    # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
                     # 修改为异步调用
                     await self.decode_and_buffer(chunk)
                 else:
