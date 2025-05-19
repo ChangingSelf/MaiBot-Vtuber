@@ -1,5 +1,6 @@
 import asyncio
-import logging
+
+# import logging
 import os
 import sys
 import time
@@ -16,44 +17,41 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
-logger = logging.getLogger(__name__)
-
 # --- Plugin Configuration Loading ---
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
-
-
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's specific config.toml file."""
-    if tomllib is None:
-        logger.error("TOML library not available, cannot load Console Input plugin config.")
-        return {}
-    try:
-        with open(_CONFIG_FILE, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载 Console Input 插件配置文件: {_CONFIG_FILE}")
-            return config
-    except FileNotFoundError:
-        logger.warning(f"Console Input 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"Console Input 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
-    except Exception as e:
-        logger.error(f"加载 Console Input 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
-    return {}
+# _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+# _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
+#
+#
+# def load_plugin_config() -> Dict[str, Any]:
+#     """Loads the plugin's specific config.toml file."""
+#     if tomllib is None:
+#         logger.error("TOML library not available, cannot load Console Input plugin config.")
+#         return {}
+#     try:
+#         with open(_CONFIG_FILE, "rb") as f:
+#             config = tomllib.load(f)
+#             logger.info(f"成功加载 Console Input 插件配置文件: {_CONFIG_FILE}")
+#             return config
+#     except FileNotFoundError:
+#         logger.warning(f"Console Input 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
+#     except tomllib.TOMLDecodeError as e:
+#         logger.error(f"Console Input 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
+#     except Exception as e:
+#         logger.error(f"加载 Console Input 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
+#     return {}
 
 
 class ConsoleInputPlugin(BasePlugin):
     """通过控制台接收用户输入并发送消息的插件"""
 
-    _is_amaidesu_plugin: bool = True  # Plugin marker
-
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.config = load_plugin_config()
+        # self.config = load_plugin_config()
+        self.config = self.plugin_config  # 直接使用注入的 plugin_config
         self.enabled = True
 
         # --- Dependency Check ---

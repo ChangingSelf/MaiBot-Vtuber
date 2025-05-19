@@ -1,7 +1,8 @@
 # Amaidesu TTS Plugin: src/plugins/tts/plugin.py
 
 import asyncio
-import logging
+
+# import logging
 import os
 import sys
 import socket
@@ -41,46 +42,43 @@ except ModuleNotFoundError:
         dependencies_ok = False
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # Import MessageBase for type hint
 
-logger = logging.getLogger(__name__)
-
 # --- Plugin Configuration Loading ---
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
-
-
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's specific config.toml file."""
-    if tomllib is None:
-        logger.error("TOML library not available, cannot load TTS plugin config.")
-        return {}
-    try:
-        with open(_CONFIG_FILE, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载 TTS 插件配置文件: {_CONFIG_FILE}")
-            return config
-    except FileNotFoundError:
-        logger.warning(f"TTS 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"TTS 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
-    except Exception as e:
-        logger.error(f"加载 TTS 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
-    return {}
+# 移除旧的配置加载相关变量和函数
+# _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+# _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
+#
+#
+# def load_plugin_config() -> Dict[str, Any]:
+#     """Loads the plugin's specific config.toml file."""
+#     if tomllib is None:
+#         logger.error("TOML library not available, cannot load TTS plugin config.")
+#         return {}
+#     try:
+#         with open(_CONFIG_FILE, "rb") as f:
+#             config = tomllib.load(f)
+#             logger.info(f"成功加载 TTS 插件配置文件: {_CONFIG_FILE}")
+#             return config
+#     except FileNotFoundError:
+#         logger.warning(f"TTS 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
+#     except tomllib.TOMLDecodeError as e:
+#         logger.error(f"TTS 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
+#     except Exception as e:
+#         logger.error(f"加载 TTS 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
+#     return {}
 
 
 class TTSPlugin(BasePlugin):
     """处理文本消息，执行 TTS 播放，可选 Cleanup LLM 和 UDP 广播。"""
 
-    _is_amaidesu_plugin: bool = True  # Plugin marker
-
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         # Note: plugin_config from PluginManager is the global [plugins] config
         # We load our own specific config here.
         super().__init__(core, plugin_config)
-        self.tts_config = load_plugin_config()  # Load src/plugins/tts/config.toml
+        self.tts_config = self.plugin_config  # 直接使用注入的 plugin_config
 
         # --- TTS Service Initialization (from tts_service.py) ---
         tts_settings = self.tts_config.get("tts", {})
@@ -275,9 +273,9 @@ class TTSPlugin(BasePlugin):
                 self.logger.info("TTS 播放完成。")
 
             except (sf.SoundFileError, sd.PortAudioError, edge_tts.exceptions.NoAudioReceived, Exception) as e:
-                log_level = logging.ERROR
+                log_level = "ERROR"
                 if isinstance(e, edge_tts.exceptions.NoAudioReceived):
-                    log_level = logging.WARNING  # Treat no audio as a warning maybe
+                    log_level = "WARNING"  # Treat no audio as a warning maybe
                 self.logger.log(
                     log_level,
                     f"TTS 处理或播放时发生错误: {type(e).__name__} - {e}",

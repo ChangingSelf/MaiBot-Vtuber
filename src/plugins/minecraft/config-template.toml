@@ -1,0 +1,39 @@
+[minecraft]
+enable = true
+# Minecraft WebSocket server host
+# 服务监听的主机地址
+server_host = "0.0.0.0"
+
+# Minecraft WebSocket server port
+# 服务监听的端口
+server_port = 8766
+
+# 用于从 Minecraft 发送消息的用户 ID (发送给 MaiCore 时使用)
+user_id = "minecraft_bot"
+
+# 用于从 Minecraft 发送消息的群组 ID (发送给 MaiCore 时使用，如果适用)
+# group_id = "minecraft_server"
+
+# Minecraft 观察者的昵称 (发送给 MaiCore 时使用)
+nickname = "Minecraft Observer"
+
+# 提示 MaiCore 以 JSON 格式返回动作指令的前缀
+json_prompt_prefix = "Minecraft环境状态如下，请提供JSON格式的动作指令："
+
+# MineLand 任务 ID
+mineland_task_id = "playground"
+
+# 是否以无头模式运行 MineLand
+mineland_headless = true
+
+# 期望的RGB观察图像尺寸 (高, 宽)
+mineland_image_size = [180, 320]
+
+# 是否启用低级动作
+mineland_enable_low_level_action = false
+
+# 每步对应的游戏 tick 数
+mineland_ticks_per_step = 20
+
+# 自动发送状态的间隔时间（秒）
+auto_send_interval = 30.0

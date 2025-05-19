@@ -8,34 +8,35 @@ from openai import AsyncOpenAI
 from maim_message.message_base import MessageBase
 
 # 从 core 导入基类和核心类
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from src.utils.logger import logger
+
+# logger = get_logger("EmotionJudgePlugin")
 
 
 # --- Helper Function ---
-def load_plugin_config() -> Dict[str, Any]:
-    # (Config loading logic - keep for now, might be needed)
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    try:
-        with open(config_path, "rb") as f:
-            if hasattr(tomllib, "load"):
-                return tomllib.load(f)
-            else:
-                try:
-                    import toml
-
-                    with open(config_path, "r", encoding="utf-8") as rf:
-                        return toml.load(rf)
-                except ImportError:
-                    logger.error("toml package needed for Python < 3.11.")
-                    return {}
-                except FileNotFoundError:
-                    logger.warning(f"Config file not found: {config_path}")
-                    return {}
-    except Exception as e:
-        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
-        return {}
+# def load_plugin_config() -> Dict[str, Any]:
+#     # (Config loading logic - keep for now, might be needed)
+#     config_path = os.path.join(os.path.dirname(__file__), "config.toml")
+#     try:
+#         with open(config_path, "rb") as f:
+#             if hasattr(tomllib, "load"):
+#                 return tomllib.load(f)
+#             else:
+#                 try:
+#                     import toml
+#
+#                     with open(config_path, "r", encoding="utf-8") as rf:
+#                         return toml.load(rf)
+#                 except ImportError:
+#                     logger.error("toml package needed for Python < 3.11.")
+#                     return {}
+#                 except FileNotFoundError:
+#                     logger.warning(f"Config file not found: {config_path}")
+#                     return {}
+#     except Exception as e:
+#         logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
+#         return {}
 
 
 # --- Plugin Class ---
@@ -44,14 +45,13 @@ class EmotionJudgePlugin(BasePlugin):
     根据麦麦的回复，判断麦麦的情感状态，并触发对应的Live2D热键。
     """
 
-    _is_amaidesu_plugin: bool = True
-
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
+        # self.logger = logger # 已由基类初始化
         # 使用插件自己的配置 section 名称，例如 "emotion_judge"
-        loaded_config = load_plugin_config()
-        self.config = loaded_config.get("emotion_judge", {})
+        # loaded_config = load_plugin_config()
+        # self.config = loaded_config.get("emotion_judge", {})
+        self.config = self.plugin_config  # 直接使用注入的 plugin_config
         self.enabled = self.config.get("enabled", True)
         self.model = self.config.get("model", {})
         self.base_url = self.config.get("base_url", "https://api.siliconflow.cn/v1/")
@@ -63,7 +63,7 @@ class EmotionJudgePlugin(BasePlugin):
         # 初始化 OpenAI 客户端
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
-        self.logger.info("EmotionJudgePlugin initialized.")
+        # self.logger.info("EmotionJudgePlugin initialized.") # 基类已有通用初始化日志
 
     async def setup(self):
         await super().setup()
@@ -145,7 +145,7 @@ class EmotionJudgePlugin(BasePlugin):
         self.logger.debug(f"获取到的热键列表: {hotkey_name_list}")
 
         # 将热键列表转换为字符串，以便拼接到 prompt 中
-        hotkey_list_str = "\n".join(hotkey_name_list)  # 使用换行符分隔
+        hotkey_list_str = "\\n".join(hotkey_name_list)  # 使用换行符分隔
 
         try:
             response = await self.client.chat.completions.create(
@@ -155,7 +155,7 @@ class EmotionJudgePlugin(BasePlugin):
                         "role": "system",
                         "content": self.model.get(
                             "system_prompt",
-                            "你是一个主播的助手，根据主播的文本内容，判断主播的情感状态，确定触发哪一个Live2D热键以帮助主播更好地表达情感。只输出热键名称，不要包含其他任何文字或解释。以下为热键列表：\n",
+                            "你是一个主播的助手，根据主播的文本内容，判断主播的情感状态，确定触发哪一个Live2D热键以帮助主播更好地表达情感。只输出热键名称，不要包含其他任何文字或解释。以下为热键列表：\\n",
                         )
                         + hotkey_list_str,
                     },
@@ -169,7 +169,7 @@ class EmotionJudgePlugin(BasePlugin):
                 # 提取 LLM 返回的情感标签
                 emotion = response.choices[0].message.content.strip()
                 # 简单的后处理，去除可能的引号
-                emotion = emotion.strip("'\"")
+                emotion = emotion.strip("'\\\"")
                 self.logger.info(f"文本 '{text[:30]}...' 的情感判断结果: {emotion}")
 
                 # 根据情感结果触发热键

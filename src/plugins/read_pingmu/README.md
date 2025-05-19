@@ -172,8 +172,8 @@ async def _query_vl_model(self, base64_image: str) -> Optional[str]:
 其他插件可以通过 `prompt_context` 服务获取最新的屏幕内容描述。以下是使用示例：
 
 ```python
-from core.amaidesu_core import AmaidesuCore
-from core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
 from typing import Dict, Any
 
 class YourPlugin(BasePlugin):

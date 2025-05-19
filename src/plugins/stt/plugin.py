@@ -1,7 +1,8 @@
 # Amaidesu STT Plugin: src/plugins/stt/plugin.py
 
 import asyncio
-import logging
+
+# import logging
 import os
 import sys
 import base64
@@ -43,34 +44,32 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
-logger = logging.getLogger(__name__)
-
 # --- Plugin Configuration Loading ---
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
-
-
-def load_plugin_config() -> Dict[str, Any]:
-    """Loads the plugin's specific config.toml file."""
-    if tomllib is None:
-        logger.error("TOML library not available, cannot load STT plugin config.")
-        return {}
-    try:
-        with open(_CONFIG_FILE, "rb") as f:
-            config = tomllib.load(f)
-            logger.info(f"成功加载 STT 插件配置文件: {_CONFIG_FILE}")
-            return config
-    except FileNotFoundError:
-        logger.warning(f"STT 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
-    except tomllib.TOMLDecodeError as e:
-        logger.error(f"STT 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
-    except Exception as e:
-        logger.error(f"加载 STT 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
-    return {}
+# _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+# _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
+#
+#
+# def load_plugin_config() -> Dict[str, Any]:
+#     """Loads the plugin's specific config.toml file."""
+#     if tomllib is None:
+#         logger.error("TOML library not available, cannot load STT plugin config.")
+#         return {}
+#     try:
+#         with open(_CONFIG_FILE, "rb") as f:
+#             config = tomllib.load(f)
+#             logger.info(f"成功加载 STT 插件配置文件: {_CONFIG_FILE}")
+#             return config
+#     except FileNotFoundError:
+#         logger.warning(f"STT 插件配置文件未找到: {_CONFIG_FILE}。将使用默认值。")
+#     except tomllib.TOMLDecodeError as e:
+#         logger.error(f"STT 插件配置文件 '{_CONFIG_FILE}' 格式无效: {e}。将使用默认值。")
+#     except Exception as e:
+#         logger.error(f"加载 STT 插件配置文件 '{_CONFIG_FILE}' 时发生未知错误: {e}", exc_info=True)
+#     return {}
 
 
 # Status for iFlytek frames
@@ -90,13 +89,11 @@ class STTPlugin(BasePlugin):
     并将最终识别结果包装成 MessageBase 发送回 Core。
     """
 
-    _is_amaidesu_plugin: bool = True  # Plugin marker
-
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)  # Initialize BasePlugin
-        self.config = load_plugin_config()  # Load plugin-specific config
+        self.config = self.plugin_config  # 直接使用注入的 plugin_config
         self.enabled = True  # Assume enabled unless dependencies fail
-        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")  # More specific logger
+        # self.logger = logger  # 已由基类初始化
 
         # --- Basic Dependency Check ---
         if torch is None or sd is None or aiohttp is None or tomllib is None:

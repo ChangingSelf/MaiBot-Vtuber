@@ -20,51 +20,20 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
+from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
-from src.utils.logger import logger
-
-
-# --- Helper Function ---
-def load_plugin_config() -> Dict[str, Any]:
-    # (Config loading logic - similar to other plugins)
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
-    try:
-        with open(config_path, "rb") as f:
-            if hasattr(tomllib, "load"):
-                return tomllib.load(f)
-            else:
-                try:
-                    import toml
-
-                    with open(config_path, "r", encoding="utf-8") as rf:
-                        return toml.load(rf)
-                except ImportError:
-                    logger.error("toml package needed for Python < 3.11.")
-                    return {}
-                except FileNotFoundError:
-                    logger.warning(f"Config file not found: {config_path}")
-                    return {}
-    except Exception as e:
-        logger.error(f"Error loading config: {config_path}: {e}", exc_info=True)
-        return {}
 
 
 # --- Plugin Class ---
 class BiliDanmakuPlugin(BasePlugin):
     """Bilibili 直播弹幕插件，连接到直播间并接收弹幕/礼物等事件。"""
 
-    _is_amaidesu_plugin: bool = True
-
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        self.logger = logger
 
         # --- 显式加载自己目录下的 config.toml ---
-        loaded_config = load_plugin_config()
-        # 从加载的配置中获取 bili_danmaku 段
-        self.config = loaded_config.get("bili_danmaku", {})
+        self.config = self.plugin_config
 
         self.enabled = self.config.get("enabled", True)
 
@@ -117,8 +86,6 @@ class BiliDanmakuPlugin(BasePlugin):
             self.template_items = self.config.get("template_items", {})
             if not self.template_items:
                 self.logger.warning("BiliDanmaku 配置启用了 template_info，但在 config.toml 中未找到 template_items。")
-
-        self.logger.info(f"BiliDanmakuPlugin 初始化完成 (房间: {self.room_id}, 间隔: {self.poll_interval}s)。")
 
     async def setup(self):
         await super().setup()

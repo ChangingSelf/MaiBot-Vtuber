@@ -9,15 +9,13 @@ from typing import TYPE_CHECKING, Dict, Any, Optional, Type
 if TYPE_CHECKING:
     from .amaidesu_core import AmaidesuCore
 
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+from src.utils.config import load_component_specific_config, merge_component_configs
 
 
 # --- 插件基类 (可选但推荐) ---
 class BasePlugin:
     """所有插件的基础类，定义插件的基本接口。"""
-
-    # 添加一个类级别的标记属性
-    _is_amaidesu_plugin: bool = True
 
     def __init__(self, core: "AmaidesuCore", plugin_config: Dict[str, Any]):
         """
@@ -29,7 +27,7 @@ class BasePlugin:
         """
         self.core = core
         self.plugin_config = plugin_config
-        self.logger = logger
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info(f"初始化插件: {self.__class__.__name__}")
 
     async def setup(self):
@@ -62,7 +60,7 @@ class PluginManager:
         self.global_plugin_config = global_plugin_config
         self.loaded_plugins: Dict[str, BasePlugin] = {}
         # 初始化 PluginManager 自己的 logger
-        self.logger = logger
+        self.logger = get_logger("PluginManager")
         self.logger.debug("PluginManager 初始化完成")
 
     async def load_plugins(self, plugin_dir: str = "src/plugins"):
@@ -117,22 +115,35 @@ class PluginManager:
                         self.logger.debug(
                             f"在模块 '{module_import_path}' 中找到入口点 'plugin_entrypoint' 指向: {entrypoint}"
                         )
-                        # 检查 entrypoint 是否是类，并且具有我们的标记属性
-                        if inspect.isclass(entrypoint) and getattr(entrypoint, "_is_amaidesu_plugin", False):
+                        # 检查 entrypoint 是否是类，并且是 BasePlugin 的子类
+                        if inspect.isclass(entrypoint) and issubclass(entrypoint, BasePlugin):
                             plugin_class = entrypoint
-                            self.logger.debug(f"入口点验证成功 (通过标记属性)，插件类为: {plugin_class.__name__}")
+                            self.logger.debug(
+                                f"入口点验证成功 (通过继承 BasePlugin)，插件类为: {plugin_class.__name__}"
+                            )
                         else:
                             self.logger.warning(
-                                f"模块 '{module_import_path}' 中的 'plugin_entrypoint' ({entrypoint}) 不是有效的插件类 (缺少标记或不是类)。"
+                                f"模块 '{module_import_path}' 中的 'plugin_entrypoint' ({entrypoint}) 不是 BasePlugin 的有效子类。"
                             )
                     else:
                         self.logger.warning(f"在模块 '{module_import_path}' 中未找到入口点 'plugin_entrypoint'。")
 
                     if plugin_class:
-                        plugin_specific_config = self.global_plugin_config.get(plugin_name, {})
-                        self.logger.debug(f"为插件 '{plugin_class.__name__}' 加载特定配置: {plugin_specific_config}")
+                        # 1. 获取主 config.toml 中 [plugins.plugin_name] 下的配置
+                        main_provided_config = self.global_plugin_config.get(plugin_name, {}).copy()
+                        self.logger.debug(f"从主配置为插件 '{plugin_name}' 获取的配置: {main_provided_config}")
+
+                        # 2. 加载插件自身目录下的 config.toml (如果存在)
+                        plugin_own_config_data = load_component_specific_config(item_path, plugin_name, "插件")
+
+                        # 3. 合并配置：主配置覆盖插件独立配置
+                        final_plugin_config = merge_component_configs(
+                            plugin_own_config_data, main_provided_config, plugin_name, "插件"
+                        )
+
                         self.logger.debug(f"准备实例化插件: {plugin_class.__name__}")
-                        plugin_instance = plugin_class(self.core, plugin_specific_config)
+                        # 将合并后的最终配置传递给插件
+                        plugin_instance = plugin_class(self.core, final_plugin_config)
                         self.logger.debug(f"插件 '{plugin_class.__name__}' 实例化完成，准备调用 setup()")
                         await plugin_instance.setup()
                         self.loaded_plugins[plugin_name] = plugin_instance
@@ -146,14 +157,16 @@ class PluginManager:
                         f"导入插件模块 '{module_import_path if module else plugin_name}' 失败: {e}", exc_info=True
                     )
                 except Exception as e:
-                    self.logger.error(f"加载或设置插件 '{plugin_name}' 时发生错误: {e}", exc_info=True)
+                    self.logger.exception(f"加载或设置插件 '{plugin_name}' 时发生错误: {e}", exc_info=True)
             # else: # 可以选择性地记录非插件目录的项
             #     if item != "__pycache__" and not item.startswith("."):
             #         logger.debug(f"跳过非插件目录项: {item}")
 
         # 注意：不再需要在每次循环后清理 sys.path，因为我们添加的是 src 目录
 
-        self.logger.info(f"插件加载完成，共加载 {len(self.loaded_plugins)} 个插件。")
+        self.logger.info(
+            f"插件加载完成，共加载 {len(self.loaded_plugins)} 个插件:{','.join(self.loaded_plugins.keys())}"
+        )
 
     async def unload_plugins(self):
         """卸载所有已加载的插件，调用它们的 cleanup 方法。"""

@@ -6,7 +6,9 @@ from typing import Callable, Dict, Any, Optional
 from aiohttp import web
 
 from maim_message import Router, RouteConfig, TargetConfig, MessageBase
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+from .pipeline_manager import PipelineManager
+from .context_manager import ContextManager  # 导入ContextManager
 
 
 class AmaidesuCore:
@@ -22,6 +24,8 @@ class AmaidesuCore:
         http_host: Optional[str] = None,
         http_port: Optional[int] = None,
         http_callback_path: str = "/callback",
+        pipeline_manager: Optional[PipelineManager] = None,
+        context_manager: Optional[ContextManager] = None,  # 修改为接收ContextManager实例
     ):
         """
         初始化 Amaidesu Core。
@@ -33,9 +37,11 @@ class AmaidesuCore:
             http_host: (可选) 监听 HTTP 回调的主机地址。如果为 None，则不启动 HTTP 服务器。
             http_port: (可选) 监听 HTTP 回调的端口。
             http_callback_path: (可选) 接收 HTTP 回调的路径。
+            pipeline_manager: (可选) 已配置的管道管理器。如果为None则禁用管道处理。
+            context_manager: (可选) 已配置的上下文管理器。如果为None则创建默认实例。
         """
         # 初始化 AmaidesuCore 自己的 logger
-        self.logger = logger
+        self.logger = get_logger("AmaidesuCore")
         self.logger.debug("AmaidesuCore 初始化开始")
 
         self.platform = platform
@@ -60,6 +66,18 @@ class AmaidesuCore:
         self._ws_task: Optional[asyncio.Task] = None  # 添加用于存储 WebSocket 运行任务的属性
         self._monitor_task: Optional[asyncio.Task] = None  # 添加用于监控 ws_task 的任务
 
+        # 管道管理器
+        self._pipeline_manager = pipeline_manager
+        if self._pipeline_manager is None:
+            self.logger.info("管道处理功能已禁用")
+        else:
+            self.logger.info("管道处理功能已启用")
+
+        # 设置上下文管理器
+        self._context_manager = context_manager if context_manager is not None else ContextManager({})
+        self.register_service("prompt_context", self._context_manager)  # 兼容以前通过服务发现调用上下文管理器的插件
+        self.logger.info("上下文管理器已注册为服务")
+
         self._setup_router()
         if self._http_host and self._http_port:
             self._setup_http_server()
@@ -78,7 +96,7 @@ class AmaidesuCore:
         self._router = Router(route_config)
         # 注册内部处理函数，用于接收所有来自 MaiCore 的消息
         self._router.register_class_handler(self._handle_maicore_message)
-        logger.info(f"Router 配置完成，目标 MaiCore: {self.ws_url}")
+        self.logger.info(f"Router 配置完成，目标 MaiCore: {self.ws_url}")
 
     def _setup_http_server(self):
         """配置 aiohttp 应用和路由。"""
@@ -87,7 +105,7 @@ class AmaidesuCore:
         self._http_app = web.Application()
         # 注册统一的 HTTP 回调处理入口
         self._http_app.router.add_post(self._http_callback_path, self._handle_http_request)
-        logger.info(f"HTTP 服务器配置完成，监听路径: {self._http_callback_path}")
+        self.logger.info(f"HTTP 服务器配置完成，监听路径: {self._http_callback_path}")
 
     async def connect(self):
         """启动 WebSocket 连接后台任务和 HTTP 服务器（如果配置了）。"""
@@ -173,6 +191,14 @@ class AmaidesuCore:
             if self._ws_task and not self._ws_task.done():
                 self.logger.info("WebSocket 连接初步建立，标记核心为已连接。")
                 self._is_connected = True
+
+                # 通知所有管道连接已建立
+                if self._pipeline_manager is not None:
+                    try:
+                        await self._pipeline_manager.notify_connect()
+                        self.logger.info("已通知所有管道连接已建立")
+                    except Exception as e:
+                        self.logger.error(f"通知管道连接事件时出错: {e}", exc_info=True)
             else:
                 self.logger.warning("WebSocket 任务在监控开始前已结束，连接失败。")
                 self._is_connected = False
@@ -187,6 +213,14 @@ class AmaidesuCore:
         except Exception as e:
             self.logger.error(f"WebSocket 连接监控任务异常退出: {e}", exc_info=True)
         finally:
+            # 通知所有管道连接已断开（如果之前已连接）
+            if self._is_connected and self._pipeline_manager is not None:
+                try:
+                    await self._pipeline_manager.notify_disconnect()
+                    self.logger.info("已通知所有管道连接已断开")
+                except Exception as e:
+                    self.logger.error(f"通知管道断开连接事件时出错: {e}", exc_info=True)
+
             self.logger.info("WebSocket 连接监控任务已结束。")
             self._is_connected = False  # 最终确保状态为未连接
             self._ws_task = None  # 清理任务引用
@@ -212,6 +246,14 @@ class AmaidesuCore:
     async def disconnect(self):
         """取消 WebSocket 任务并停止 HTTP 服务器。"""
         async with self._connect_lock:
+            # 如果已连接，主动通知管道断开连接
+            if self._is_connected and self._pipeline_manager is not None:
+                try:
+                    await self._pipeline_manager.notify_disconnect()
+                    self.logger.info("已通知所有管道连接即将断开")
+                except Exception as e:
+                    self.logger.error(f"通知管道断开连接事件时出错: {e}", exc_info=True)
+
             tasks = []
             # 停止 WebSocket 任务
             if self._ws_task and not self._ws_task.done():
@@ -256,31 +298,45 @@ class AmaidesuCore:
     async def send_to_maicore(self, message: MessageBase):
         """
         向 MaiCore 发送 MessageBase 消息。
+        消息将首先通过所有注册的管道处理，再发送到 MaiCore。
 
         Args:
             message: 要发送的 MessageBase 对象。
         """
         if not self._is_connected or not self._router:
-            logger.warning(f"核心未连接，无法发送消息: {message.message_info.message_id}")
+            self.logger.warning(f"核心未连接，无法发送消息: {message.message_info.message_id}")
             # 可以考虑将消息放入待发队列
             return
 
-        logger.debug(f"准备向 MaiCore 发送消息: {message.message_info.message_id}")
+        self.logger.debug(f"准备向 MaiCore 发送消息: {message.message_info.message_id}")
+
+        # 如果有管道管理器，通过管道处理消息
+        processed_message = message
+        if self._pipeline_manager is not None:
+            processed_message = await self._pipeline_manager.process_message(message)
+            if processed_message is None:
+                self.logger.info(f"消息 {message.message_info.message_id} 被管道拦截，不会发送到 MaiCore")
+                return
+        else:
+            self.logger.debug("管道管理器未配置，跳过管道处理")
+
         try:
             # Add debug log for the message content just before sending via router
             try:
-                message_dict_for_log = message.to_dict()
-                logger.debug(f"发送给 Router 的消息内容: {str(message_dict_for_log)}...")  # Log partial dict string
+                message_dict_for_log = processed_message.to_dict()
+                self.logger.debug(
+                    f"发送给 Router 的消息内容: {str(message_dict_for_log)}..."
+                )  # Log partial dict string
             except Exception as log_err:
-                logger.error(f"在记录消息日志时出错: {log_err}")  # Log error during logging itself
-                logger.debug(f"发送给 Router 的消息对象 (repr): {repr(message)}")  # Fallback to repr
+                self.logger.error(f"在记录消息日志时出错: {log_err}")  # Log error during logging itself
+                self.logger.debug(f"发送给 Router 的消息对象 (repr): {repr(processed_message)}")  # Fallback to repr
 
-            await self._router.send_message(message)
-            logger.info(
-                f"消息已发送: {message.message_info.message_id} (Type: {message.message_segment.type if message.message_segment else 'N/A'})"
+            await self._router.send_message(processed_message)
+            self.logger.info(
+                f"消息已发送: {processed_message.message_info.message_id} (Type: {processed_message.message_segment.type if processed_message.message_segment else 'N/A'})"
             )
         except Exception as e:
-            logger.error(f"发送消息到 MaiCore 时出错: {e}", exc_info=True)
+            self.logger.error(f"发送消息到 MaiCore 时出错: {e}", exc_info=True)
             # 发送失败处理，例如重试或通知插件
 
     async def _handle_maicore_message(self, message_data: Dict[str, Any]):
@@ -291,10 +347,10 @@ class AmaidesuCore:
         Args:
             message_data: 从 Router 收到的原始消息字典。
         """
-        logger.debug(f"收到来自 MaiCore 的原始数据: {str(message_data)[:200]}...")
+        self.logger.debug(f"收到来自 MaiCore 的原始数据: {str(message_data)[:200]}...")
         try:
             message_base = MessageBase.from_dict(message_data)
-            logger.info(
+            self.logger.info(
                 f"收到并解析消息: {message_base.message_info.message_id} (Type: {message_base.message_segment.type if message_base.message_segment else 'N/A'})"
             )
 
@@ -309,26 +365,28 @@ class AmaidesuCore:
             # 查找并调用处理器
             if dispatch_key in self._message_handlers:
                 handlers = self._message_handlers[dispatch_key]
-                logger.info(
+                self.logger.info(
                     f"为消息 {message_base.message_info.message_id} 找到 {len(handlers)} 个 '{dispatch_key}' 处理器"
                 )
                 # 并发执行所有匹配的处理器
                 tasks = [asyncio.create_task(handler(message_base)) for handler in handlers]
                 await asyncio.gather(*tasks, return_exceptions=True)  # return_exceptions=True 方便调试
             else:
-                logger.info(f"没有找到适用于消息类型 '{dispatch_key}' 的处理器: {message_base.message_info.message_id}")
+                self.logger.info(
+                    f"没有找到适用于消息类型 '{dispatch_key}' 的处理器: {message_base.message_info.message_id}"
+                )
 
             # 也可以有一个处理所有消息的 "通配符" 处理器列表
             if "*" in self._message_handlers:
                 wildcard_handlers = self._message_handlers["*"]
-                logger.info(
+                self.logger.info(
                     f"为消息 {message_base.message_info.message_id} 找到 {len(wildcard_handlers)} 个通配符处理器"
                 )
                 tasks = [asyncio.create_task(handler(message_base)) for handler in wildcard_handlers]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         except Exception as e:
-            logger.error(f"处理 MaiCore 消息时发生错误: {e}", exc_info=True)
+            self.logger.error(f"处理 MaiCore 消息时发生错误: {e}", exc_info=True)
 
     def register_websocket_handler(self, message_type_or_key: str, handler: Callable[[MessageBase], asyncio.Task]):
         """
@@ -341,20 +399,20 @@ class AmaidesuCore:
             handler: 一个异步函数，接收 MessageBase 对象作为参数。
         """
         if not asyncio.iscoroutinefunction(handler):
-            logger.warning(f"注册的 WebSocket 处理器 '{handler.__name__}' 不是一个异步函数 (async def)。")
+            self.logger.warning(f"注册的 WebSocket 处理器 '{handler.__name__}' 不是一个异步函数 (async def)。")
             # raise TypeError("Handler must be an async function")
 
         if message_type_or_key not in self._message_handlers:
             self._message_handlers[message_type_or_key] = []
         self._message_handlers[message_type_or_key].append(handler)
-        logger.info(f"成功注册 WebSocket 消息处理器: Key='{message_type_or_key}', Handler='{handler.__name__}'")
+        self.logger.info(f"成功注册 WebSocket 消息处理器: Key='{message_type_or_key}', Handler='{handler.__name__}'")
 
     async def _handle_http_request(self, request: web.Request) -> web.Response:
         """
         内部方法，处理所有到达指定回调路径的 HTTP POST 请求。
         负责初步解析请求并将其分发给已注册的 HTTP 处理器。
         """
-        logger.info(f"收到来自 {request.remote} 的 HTTP 请求: {request.method} {request.path}")
+        self.logger.info(f"收到来自 {request.remote} 的 HTTP 请求: {request.method} {request.path}")
         # --- HTTP 请求分发逻辑 ---
         # 这里需要更复杂的分发策略，例如根据 request.path, headers, 或请求体内容
         # 简单示例：使用固定 key "http_callback" 分发给所有注册的 HTTP 处理器
@@ -363,12 +421,12 @@ class AmaidesuCore:
         response_tasks = []
         if dispatch_key in self._http_request_handlers:
             handlers = self._http_request_handlers[dispatch_key]
-            logger.info(f"为 HTTP 请求找到 {len(handlers)} 个 '{dispatch_key}' 处理器")
+            self.logger.info(f"为 HTTP 请求找到 {len(handlers)} 个 '{dispatch_key}' 处理器")
             # 让每个 handler 处理请求，它们应该返回 web.Response 或引发异常
             for handler in handlers:
                 response_tasks.append(asyncio.create_task(handler(request)))
         else:
-            logger.warning(f"没有找到适用于 HTTP 回调 Key='{dispatch_key}' 的处理器")
+            self.logger.warning(f"没有找到适用于 HTTP 回调 Key='{dispatch_key}' 的处理器")
             return web.json_response(
                 {"status": "error", "message": "No handler configured for this request"}, status=404
             )
@@ -389,12 +447,12 @@ class AmaidesuCore:
                 if final_response is None:  # 取第一个有效响应
                     final_response = result
             elif isinstance(result, Exception):
-                logger.error(f"处理 HTTP 请求时，某个 handler 抛出异常: {result}", exc_info=result)
+                self.logger.error(f"处理 HTTP 请求时，某个 handler 抛出异常: {result}", exc_info=result)
                 if first_exception is None:
                     first_exception = result
 
         if final_response:
-            logger.info(f"HTTP 请求处理完成，返回状态: {final_response.status}")
+            self.logger.info(f"HTTP 请求处理完成，返回状态: {final_response.status}")
             return final_response
         elif first_exception:
             # 如果有异常但没有成功响应，返回 500
@@ -403,7 +461,7 @@ class AmaidesuCore:
             )
         else:
             # 如果没有 handler 返回响应也没有异常 (可能 handler 设计为不返回)，返回一个默认成功响应
-            logger.info("HTTP 请求处理完成，没有显式响应，返回默认成功状态。")
+            self.logger.info("HTTP 请求处理完成，没有显式响应，返回默认成功状态。")
             return web.json_response({"status": "accepted"}, status=202)  # 202 Accepted 表示已接受处理
 
     def register_http_handler(self, key: str, handler: Callable[[web.Request], asyncio.Task]):
@@ -415,13 +473,13 @@ class AmaidesuCore:
             handler: 一个异步函数，接收 aiohttp.web.Request 对象，并应返回 aiohttp.web.Response 对象。
         """
         if not asyncio.iscoroutinefunction(handler):
-            logger.warning(f"注册的 HTTP 处理器 '{handler.__name__}' 不是一个异步函数 (async def)。")
+            self.logger.warning(f"注册的 HTTP 处理器 '{handler.__name__}' 不是一个异步函数 (async def)。")
             # raise TypeError("Handler must be an async function")
 
         if key not in self._http_request_handlers:
             self._http_request_handlers[key] = []
         self._http_request_handlers[key].append(handler)
-        logger.info(f"成功注册 HTTP 请求处理器: Key='{key}', Handler='{handler.__name__}'")
+        self.logger.info(f"成功注册 HTTP 请求处理器: Key='{key}', Handler='{handler.__name__}'")
 
     # --- 服务注册与发现 ---
     def register_service(self, name: str, service_instance: Any):
@@ -460,3 +518,13 @@ class AmaidesuCore:
     # --- 未来可以添加内部事件分发机制 ---
     # async def dispatch_event(self, event_name: str, **kwargs): ...
     # def subscribe_event(self, event_name: str, handler: Callable): ...
+
+    def get_context_manager(self) -> ContextManager:
+        """
+        获取上下文管理器实例。
+        这是一个便捷方法，等同于 get_service("prompt_context")，但提供了类型提示。
+
+        Returns:
+            上下文管理器实例
+        """
+        return self._context_manager
