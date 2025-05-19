@@ -6,6 +6,7 @@ import os
 import sys
 import socket
 import tempfile
+import struct  # 添加struct模块导入，用于解析WAV数据
 from typing import Dict, Any, Optional
 import numpy as np  # 确保导入 numpy
 from collections import deque
@@ -15,11 +16,6 @@ import base64
 # Try importing required libraries and inform the user if they are missing.
 # Actual error will be caught later if import fails during use.
 dependencies_ok = True
-try:
-    import edge_tts
-except ImportError:
-    print("依赖缺失: 请运行 'pip install edge-tts' 来使用 TTS 功能。", file=sys.stderr)
-    dependencies_ok = False
 try:
     import sounddevice as sd
     import soundfile as sf
@@ -55,8 +51,8 @@ _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
 
 
 # 音频流参数（根据实际播放器配置）
-SAMPLERATE = 44100  # 采样率
-CHANNELS = 2  # 声道数
+SAMPLERATE = 32000  # 采样率
+CHANNELS = 1  # 声道数
 DTYPE = np.int16  # 样本类型
 BLOCKSIZE = 1024  # 每次播放的帧数
 
@@ -522,7 +518,7 @@ class TTSModel:
             "batch_threshold": batch_threshold,
             "speed_factor": speed_factor,
             "streaming_mode": True,  # 强制使用流式模式
-            "media_type": media_type,
+            "media_type": "wav",
             "repetition_penalty": repetition_penalty,
             "sample_steps": sample_steps,
             "super_sampling": super_sampling,
@@ -562,6 +558,7 @@ class TTSPlugin(BasePlugin):
             self.output_device_name = ""
         self.output_device_index = self._find_device_index(self.output_device_name, kind="output")
         self.tts_lock = asyncio.Lock()
+        # 使用threading.Lock而不是asyncio.Lock，因为decode_and_buffer是同步方法
         self.input_pcm_queue_lock = asyncio.Lock()
 
         self.logger.info(f"TTS 服务组件初始化。输出设备: {self.output_device_name or '默认设备'}")
@@ -599,62 +596,82 @@ class TTSPlugin(BasePlugin):
             self.logger.error(f"查找音频设备时出错: {e}，将使用 None (由 sounddevice 选择)", exc_info=True)
             return None
 
-    def decode_and_buffer(self, base64_str):
-        """将 Base64 PCM 数据解码，并合并入缓冲区，按需切割成完整块"""
-        pcm_bytes = base64.b64decode(base64_str)
+    async def decode_and_buffer(self, wav_chunk):
+        """异步解析分块的WAV数据，提取PCM音频并缓冲
 
-        # with self.input_pcm_queue_lock:
-        self.input_pcm_queue.extend(pcm_bytes)
-        self.logger.debug(f"解码并缓冲 {len(pcm_bytes)} 字节的 PCM 数据。")
-
-        # 后台处理缓冲区 → 拆分成完整 BLOCKSIZE 的音频块
-        while self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
-            raw_block = self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
-            self.audio_data_queue.append(raw_block)
-
-    def decode_and_buffer(self, base64_str):
-        """解析分块的WAV数据，提取PCM音频并缓冲"""
-        # 解码Base64
-        wav_data = base64.b64decode(base64_str)
-        
-        # 解析WAV数据
+        Args:
+            wav_chunk: 字节格式的WAV切块数据（可能是Base64编码的）
+        """
+        # 检查是否为Base64编码的数据
         try:
-            # 验证RIFF头
-            if wav_data[:4] != b'RIFF':
-                raise ValueError("无效的WAV数据，缺少RIFF头")
-                
-            if wav_data[8:12] != b'WAVE':
-                raise ValueError("无效的WAV格式标识")
-                
-            # 查找data块位置（搜索"data"标识符）
-            pos = 12
-            while pos < len(wav_data):
-                chunk_id = wav_data[pos:pos+4]
-                if chunk_id == b'data':
-                    break
-                chunk_size = struct.unpack('<I', wav_data[pos+4:pos+8])[0]
-                pos += 8 + chunk_size
-                
-            if chunk_id != b'data':
-                raise ValueError("未找到WAV数据块")
-                
-            # 提取PCM数据
-            data_start = pos + 8
-            data_end = pos + 8 + struct.unpack('<I', wav_data[pos+4:pos+8])[0]
-            pcm_data = wav_data[data_start:data_end]
-            
-            # 缓冲处理
-            # with self.input_pcm_queue_lock:
-                self.input_pcm_queue.extend(pcm_data)
-                self.logger.debug(f"解码并缓冲 {len(pcm_data)} 字节的PCM数据（源自WAV块）")
-                
-            # 按需切割音频块（保持原有逻辑）
-            while self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
-                raw_block = self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
-                self.audio_data_queue.append(raw_block)
-                
+            # 尝试Base64解码
+            if isinstance(wav_chunk, str):
+                wav_data = base64.b64decode(wav_chunk)
+            else:
+                wav_data = wav_chunk  # 已经是字节格式
+
+            # 保存第一个块的WAV头信息，用于后续处理
+            async with self.input_pcm_queue_lock:
+                is_first_chunk = len(self.input_pcm_queue) == 0
+
+            # 解析WAV头
+            if is_first_chunk and len(wav_data) >= 44:  # 标准WAV头至少44字节
+                # 验证是否是WAV格式的第一个块
+                if wav_data[:4] == b"RIFF" and wav_data[8:12] == b"WAVE":
+                    self.logger.debug(f"检测到WAV头部，正在解析第一个块，大小: {len(wav_data)} 字节")
+
+                    # 查找data块位置（搜索"data"标识符）
+                    pos = 12
+                    data_found = False
+                    while pos < len(wav_data) - 8:  # 至少需要8字节来读取块ID和长度
+                        chunk_id = wav_data[pos : pos + 4]
+                        if chunk_id == b"data":
+                            data_found = True
+                            break
+                        chunk_size = struct.unpack("<I", wav_data[pos + 4 : pos + 8])[0]
+                        pos += 8 + chunk_size
+
+                    if data_found:
+                        # 提取PCM数据
+                        chunk_size = struct.unpack("<I", wav_data[pos + 4 : pos + 8])[0]
+                        data_start = pos + 8
+                        data_end = data_start + chunk_size
+
+                        if data_end > len(wav_data):
+                            # 当前块只包含部分PCM数据
+                            pcm_data = wav_data[data_start:]
+                            self.logger.debug(f"从第一个WAV块中提取了 {len(pcm_data)} 字节的PCM数据")
+                        else:
+                            # 当前块包含完整PCM数据
+                            pcm_data = wav_data[data_start:data_end]
+                            self.logger.debug(f"从WAV中提取了 {len(pcm_data)} 字节的PCM数据")
+                    else:
+                        # WAV头部块可能不包含data块，直接处理下一个块
+                        self.logger.debug("第一个块可能只包含WAV头部信息，未找到data块")
+                        return
+                else:
+                    # 不是WAV格式或是后续数据块，直接当作PCM数据处理
+                    self.logger.debug("收到的不是WAV格式数据或为后续数据块，当作PCM数据处理")
+                    pcm_data = wav_data
+            else:
+                # 后续块或非WAV格式，直接当作PCM数据处理
+                self.logger.debug(f"处理非WAV头部数据块，大小: {len(wav_data)} 字节，当作PCM数据处理")
+                pcm_data = wav_data
+
         except Exception as e:
             self.logger.error(f"处理WAV数据失败: {str(e)}")
+            return
+
+        # PCM数据缓冲处理
+        async with self.input_pcm_queue_lock:
+            self.input_pcm_queue.extend(pcm_data)
+            self.logger.debug(f"缓冲 {len(pcm_data)} 字节的PCM数据")
+
+        # 按需切割音频块
+        while await self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
+            raw_block = await self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
+            self.audio_data_queue.append(raw_block)
+            self.logger.debug(f"成功添加 {BUFFER_REQUIRED_BYTES} 字节到音频播放队列")
 
     def start_pcm_stream(self, samplerate=44100, channels=2, dtype=np.int16, blocksize=1024):
         """创建并启动音频流
@@ -686,20 +703,24 @@ class TTSPlugin(BasePlugin):
 
         return stream
 
-    def get_available_pcm_bytes(self):
-        with self.input_pcm_queue_lock:
+    async def get_available_pcm_bytes(self):
+        """异步获取可用PCM字节数"""
+        async with self.input_pcm_queue_lock:
             return len(self.input_pcm_queue)
 
-    def read_from_pcm_buffer(self, nbytes):
-        with self.input_pcm_queue_lock:
+    async def read_from_pcm_buffer(self, nbytes):
+        """从PCM缓冲区异步读取指定字节数"""
+        async with self.input_pcm_queue_lock:
             data = bytes(self.input_pcm_queue)[:nbytes]
-            del self.input_pcm_queue[:nbytes]
+            # 从队列中删除已经读取的字节
+            for _ in range(min(nbytes, len(self.input_pcm_queue))):
+                self.input_pcm_queue.popleft()
             return data
 
     async def setup(self):
         """注册处理来自 MaiCore 的 'text' 类型消息。"""
         await super().setup()
-        # 注册处理函数，监听所有 WebSocket 消息
+        # 注册处理函数，监听所有 WebSocket 消消息
         # 我们将在处理函数内部检查消息类型是否为 'text'
         self.core.register_websocket_handler("*", self.handle_maicore_message)
         self.logger.info("TTS 插件已设置，监听所有 MaiCore WebSocket 消息。")
@@ -774,35 +795,45 @@ class TTSPlugin(BasePlugin):
             pass
 
     async def _speak(self, text: str):
-        """执行 Edge TTS 合成和播放，并通知 Subtitle Service。"""
+        """执行 TTS 合成和播放，并通知 Subtitle Service。"""
 
         self.logger.info(f"请求播放: '{text[:30]}...'")
-        # async with self.tts_lock:
-        # self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
-        # duration_seconds: Optional[float] = 10.0  # 初始化时长变量
-        # subtitle_service = self.core.get_service("subtitle_service")
-        # if subtitle_service:
-        #     self.logger.debug("找到 subtitle_service，准备记录语音信息...")
-        #     try:
-        #         # 异步调用，不阻塞播放
-        #         asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
-        #     except AttributeError:
-        #         self.logger.error("获取到的 'subtitle_service' 没有 'record_speech' 方法。")
-        #     except Exception as e:
-        #         self.logger.error(f"调用 subtitle_service.record_speech 时出错: {e}", exc_info=True)
-        audio_stream = self.tts_model.tts_stream(text)
-        self.logger.info("开始播放音频流...")
-        print(audio_stream)
-        # async with self.stream:
-        for chunk in audio_stream:
-            # print(chunk)
-            if chunk:
-                self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
-                self.decode_and_buffer(chunk)
-            else:
-                self.logger.warning("收到空音频块，跳过。")
-                continue
+        async with self.tts_lock:
+            self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
+            duration_seconds: Optional[float] = 10.0  # 初始化时长变量
+            subtitle_service = self.core.get_service("subtitle_service")
+            if subtitle_service:
+                self.logger.debug("找到 subtitle_service，准备记录语音信息...")
+                try:
+                    # 异步调用，不阻塞播放
+                    asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
+                except AttributeError:
+                    self.logger.error("获取到的 'subtitle_service' 没有 'record_speech' 方法。")
+                except Exception as e:
+                    self.logger.error(f"调用 subtitle_service.record_speech 时出错: {e}", exc_info=True)
+
+        try:
+            # 获取音频流
+            audio_stream = self.tts_model.tts_stream(text)
+            self.logger.info("开始处理音频流...")
+
+            # 确保音频流已启动
+            if self.stream and not self.stream.active:
+                self.stream.start()
+
+            # 异步处理音频数据块
+            for chunk in audio_stream:
+                if chunk:
+                    self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
+                    # 修改为异步调用
+                    await self.decode_and_buffer(chunk)
+                else:
+                    self.logger.warning("收到空音频块，跳过。")
+                    continue
+
+            self.logger.info(f"音频流播放完成: '{text[:30]}...'")
+        except Exception as e:
+            self.logger.error(f"音频流处理出错: {e}", exc_info=True)
 
 
-# --- Plugin Entry Point ---
 plugin_entrypoint = TTSPlugin

@@ -1,13 +1,13 @@
-# Amaidesu TTS 插件
+# Amaidesu GPTSoVITS TTS 插件
 
-TTS（语音合成）插件是 Amaidesu VTuber 项目的核心组件，负责将文本消息转换为语音并播放给用户。插件使用 Microsoft Edge TTS 引擎实现高质量语音合成，并支持与其他插件如文本清理服务和字幕服务的集成。
+TTS（语音合成）插件是 Amaidesu VTuber 项目的核心组件，负责将文本消息转换为语音并播放给用户。插件使用 GPTSoVITS 引擎实现高质量语音合成，并支持与其他插件如文本清理服务和字幕服务的集成。
 
 ## 功能特点
 
 - 接收并处理 WebSocket 文本消息
-- 使用 Edge TTS 进行语音合成
+- 使用 GPTSoVITS 进行语音合成（流式传输）
 - 支持选择不同语音角色和输出音频设备
-- 支持通过 UDP 广播 TTS 内容（用于外部监听）
+- 支持预设角色配置（包括参考音频和提示文本）
 - 集成文本清理服务（可选）
 - 发送播放信息到字幕服务（可选）
 - 智能错误处理和资源管理
@@ -16,9 +16,8 @@ TTS（语音合成）插件是 Amaidesu VTuber 项目的核心组件，负责将
 
 ### 必需依赖
 
-- `edge-tts`: Microsoft Edge TTS 引擎
+- `GPTSoVITS`：AI语音克隆引擎
 - `sounddevice`: 音频播放
-- `soundfile`: 音频文件处理
 - `numpy`: 用于音频数据处理
 
 ### 可选服务依赖
@@ -32,11 +31,11 @@ TTS 插件处理流程如下：
 
 1. **消息接收**：监听来自 MaiCore 的所有 WebSocket 消息，过滤出文本类型消息
 2. **文本清理**（可选）：通过 `text_cleanup` 服务优化文本内容
-3. **UDP 广播**（可选）：将最终文本通过 UDP 广播到外部监听者
-4. **语音合成**：使用 Edge TTS 将文本合成为语音并保存为临时文件
-5. **播放前处理**：计算音频时长并通知字幕服务
-6. **音频播放**：通过 sounddevice 播放音频
-7. **资源清理**：播放完成后删除临时文件
+3. **语音合成**：使用 GPTSoVITS 将文本转换为流式音频数据
+4. **播放前处理**：计算估计音频时长并通知字幕服务
+5. **音频流处理**：接收WAV音频流数据并实时解码为PCM数据
+6. **缓冲处理**：将PCM数据分块并缓冲到音频播放队列
+7. **音频播放**：通过 sounddevice 流式播放音频
 
 ## 时序图
 
@@ -46,8 +45,7 @@ sequenceDiagram
     participant TTS as TTS插件
     participant Cleanup as 文本清理服务
     participant Subtitle as 字幕服务
-    participant UDP as UDP监听器
-    participant EdgeTTS as Edge TTS引擎
+    participant GPTSoVITS as GPTSoVITS引擎
     participant Audio as 音频设备
 
     MaiCore->>TTS: 发送文本消息
@@ -57,23 +55,17 @@ sequenceDiagram
         Cleanup-->>TTS: 返回优化后文本
     end
     
-    alt UDP广播已启用
-        TTS->>UDP: 广播最终文本
+    TTS->>Subtitle: 通知字幕服务（预估时长）
+    TTS->>GPTSoVITS: 请求流式语音合成
+    
+    loop 对每个音频块
+        GPTSoVITS-->>TTS: 返回WAV音频数据块
+        TTS->>TTS: 解码WAV为PCM
+        TTS->>TTS: 缓冲PCM数据
+        TTS->>Audio: 播放音频块
     end
     
-    TTS->>EdgeTTS: 请求语音合成
-    EdgeTTS-->>TTS: 返回音频数据
-    
-    TTS->>TTS: 计算音频时长
-    
-    alt 字幕服务可用
-        TTS->>Subtitle: 发送文本和时长 (record_speech)
-    end
-    
-    TTS->>Audio: 播放音频
     Audio-->>TTS: 播放完成
-    
-    TTS->>TTS: 清理临时文件
 ```
 
 ## 核心服务使用
@@ -98,12 +90,10 @@ if cleanup_service:
 TTS 插件在播放音频前会通知字幕服务展示对应文本：
 
 ```python
-# 通知字幕服务
-if duration_seconds is not None and duration_seconds > 0:
-    subtitle_service = self.core.get_service("subtitle_service")
-    if subtitle_service:
-        # 异步调用，不阻塞播放
-        asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
+subtitle_service = self.core.get_service("subtitle_service")
+if subtitle_service:
+    # 异步调用，不阻塞播放
+    asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
 ```
 
 ## 核心代码解析
@@ -117,23 +107,25 @@ async def handle_maicore_message(self, message: MessageBase):
     if message.message_segment and message.message_segment.type == "text":
         original_text = message.message_segment.data
         if not isinstance(original_text, str) or not original_text.strip():
+            self.logger.debug("收到非字符串或空文本消息段，跳过 TTS。")
             return
 
         original_text = original_text.strip()
+        self.logger.info(f"收到文本消息，准备 TTS: '{original_text[:50]}...'")
+
         final_text = original_text
 
         # 1. (可选) 清理文本 - 通过服务调用
         cleanup_service = self.core.get_service("text_cleanup")
         if cleanup_service:
-            cleaned = await cleanup_service.clean_text(original_text)
-            if cleaned:
-                final_text = cleaned
+            try:
+                cleaned = await cleanup_service.clean_text(original_text)
+                if cleaned:
+                    final_text = cleaned
+            except Exception as e:
+                self.logger.error(f"调用 text_cleanup 服务时出错: {e}")
 
-        # 2. (可选) UDP 广播
-        if self.udp_enabled and self.udp_socket and self.udp_dest:
-            self._broadcast_text(final_text)
-
-        # 3. 执行 TTS
+        # 2. 执行 TTS
         await self._speak(final_text)
 ```
 
@@ -141,48 +133,62 @@ async def handle_maicore_message(self, message: MessageBase):
 
 ```python
 async def _speak(self, text: str):
-    """执行 Edge TTS 合成和播放，并通知 Subtitle Service。"""
+    """执行 GPTSoVITS 合成和播放，并通知 Subtitle Service。"""
     async with self.tts_lock:
-        try:
-            # --- TTS 合成 ---
-            communicate = edge_tts.Communicate(text, self.voice)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-                tmp_filename = tmp_file.name
-            await asyncio.to_thread(communicate.save_sync, tmp_filename)
-            
-            # --- 读取音频并计算时长 ---
-            audio_data, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype="float32")
-            if samplerate > 0 and isinstance(audio_data, np.ndarray):
-                duration_seconds = len(audio_data) / samplerate
-                
-                # --- 通知 Subtitle Service ---
-                if duration_seconds > 0:
-                    subtitle_service = self.core.get_service("subtitle_service")
-                    if subtitle_service:
-                        asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
-            
-            # --- 播放音频 ---
-            await asyncio.to_thread(
-                sd.play, audio_data, samplerate=samplerate, 
-                device=self.output_device_index, blocking=True
-            )
-        finally:
-            # --- 清理临时文件 ---
-            if tmp_filename and os.path.exists(tmp_filename):
-                os.remove(tmp_filename)
+        # 通知字幕服务（预估时长）
+        duration_seconds = 10.0  # 初始化时长变量
+        subtitle_service = self.core.get_service("subtitle_service")
+        if subtitle_service:
+            asyncio.create_task(subtitle_service.record_speech(text, duration_seconds))
+
+    try:
+        # 获取音频流
+        audio_stream = self.tts_model.tts_stream(text)
+        
+        # 确保音频流已启动
+        if self.stream and not self.stream.active:
+            self.stream.start()
+
+        # 异步处理音频数据块
+        for chunk in audio_stream:
+            if chunk:
+                await self.decode_and_buffer(chunk)
+            else:
+                continue
+
+    except Exception as e:
+        self.logger.error(f"音频流处理出错: {e}")
 ```
 
-### 3. 广播机制
+### 3. 音频流处理函数
 
 ```python
-def _broadcast_text(self, text: str):
-    """通过 UDP 发送文本 (用于外部监听)。"""
-    if self.udp_socket and self.udp_dest:
-        try:
-            message_bytes = text.encode("utf-8")
-            self.udp_socket.sendto(message_bytes, self.udp_dest)
-        except Exception as e:
-            self.logger.warning(f"发送 TTS 内容到 UDP 监听器失败: {e}")
+async def decode_and_buffer(self, wav_chunk):
+    """异步解析分块的WAV数据，提取PCM音频并缓冲"""
+    try:
+        # 解析WAV数据，提取PCM部分
+        if isinstance(wav_chunk, str):
+            wav_data = base64.b64decode(wav_chunk)
+        else:
+            wav_data = wav_chunk
+            
+        async with self.input_pcm_queue_lock:
+            is_first_chunk = len(self.input_pcm_queue) == 0
+            
+        # 解析WAV头并提取PCM数据
+        # ...处理WAV头和PCM数据提取逻辑...
+        
+        # PCM数据缓冲处理
+        async with self.input_pcm_queue_lock:
+            self.input_pcm_queue.extend(pcm_data)
+            
+        # 按需切割音频块进行播放
+        while await self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
+            raw_block = await self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
+            self.audio_data_queue.append(raw_block)
+            
+    except Exception as e:
+        self.logger.error(f"处理WAV数据失败: {str(e)}")
 ```
 
 ## 配置说明
@@ -191,32 +197,77 @@ def _broadcast_text(self, text: str):
 
 ```toml
 [tts]
-# 使用的 Edge TTS 语音模型
-voice = "zh-CN-XiaoxiaoNeural"
-# 指定输出音频设备名称 (留空或注释掉以使用系统默认设备)
-output_device_name = ""
-
-[udp_broadcast]
-# 是否将最终要播报的文本通过 UDP 广播出去
-enable = false
-# 广播的目标主机地址
+# 服务器配置
 host = "127.0.0.1"
-# 广播的目标 UDP 端口
-port = 9998
+port = 9880
+
+# 参考音频配置
+ref_audio_path = "path/to/reference.wav"
+prompt_text = "这是一段参考音频的文本提示"
+aux_ref_audio_paths = []
+
+# 语言设置
+text_language = "zh"
+prompt_language = "zh"
+
+# 媒体类型和流模式
+media_type = "wav"
+streaming_mode = true
+
+# 模型控制参数
+top_k = 20
+top_p = 0.6
+temperature = 0.3
+batch_size = 1
+batch_threshold = 0.7
+speed_factor = 1.0
+text_split_method = "latency"
+repetition_penalty = 1.0
+sample_steps = 10
+super_sampling = true
+
+[models]
+# 模型路径
+gpt_model = "path/to/gpt_model.ckpt"
+sovits_model = "path/to/sovits_model.pth"
+
+# 角色预设
+[models.presets.default]
+name = "默认角色"
+ref_audio = "path/to/reference.wav"
+prompt_text = "我是一个默认角色"
+
+[models.presets.other]
+name = "其他角色"
+ref_audio = "path/to/other_reference.wav"
+prompt_text = "我是另一个角色"
+gpt_model = "path/to/specific_gpt.ckpt"
+sovits_model = "path/to/specific_sovits.pth"
+
+[pipeline]
+# 默认使用的预设
+default_preset = "default"
+
+[plugin]
+# 输出设备名称，留空使用默认设备
+output_device = ""
+# 是否使用LLM清理文本
+llm_clean = true
 ```
 
 ## 优化与扩展
 
-1. **多语言支持**：可通过配置不同的 `voice` 值支持多种语言
-2. **高级音频控制**：可添加音量、语速等参数配置
-3. **并发处理**：当前使用互斥锁确保单个 TTS 任务执行，可扩展为队列机制
-4. **缓存机制**：对常用语句进行缓存以减少 TTS 调用
-5. **情感分析**：集成情感分析插件以自动选择合适的语音风格
+1. **多预设支持**：通过配置不同的角色预设，轻松切换不同的语音角色
+2. **流式传输**：实时接收和处理音频块，减少延迟
+3. **高级音频控制**：可通过参数调整语速、顿挫感等
+4. **模型热切换**：支持在运行时切换不同的模型和预设
+5. **情感分析集成**：可与情感分析插件集成以自动选择合适的语音风格
+6. **WAV/PCM流处理**：高效的音频流解析和缓冲机制
 
 ## 开发注意事项
 
-1. 确保正确安装所有依赖项
-2. 注意音频设备兼容性，特别是在跨平台场景
-3. 优先处理 `edge-tts` 和音频播放库的异常，确保程序稳定
+1. 确保GPTSoVITS服务已正确配置并运行
+2. 注意异步锁的正确使用，避免死锁和资源竞争
+3. 音频缓冲区应适当大小，过小可能导致音频播放不流畅
 4. 考虑长文本的分段处理以提高响应速度
-5. 确保临时文件的正确清理，避免磁盘空间占用 
+5. 注意异常处理，确保意外情况下不会阻塞其他功能
