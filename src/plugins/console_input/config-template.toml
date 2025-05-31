@@ -2,32 +2,32 @@
 # 用于配置 console_input 插件发送给 MaiCore 的消息结构
 
 [message_config]
-    # --- 用户信息 ---
-    user_id = 0
-    user_nickname = "admin"
-    user_cardname = "admin"
+# --- 用户信息 ---
+user_id = 0
+user_nickname = "admin"
+user_cardname = "admin"
 
-    # --- 群组信息 ---
-    enable_group_info = false
-    group_id = 0
-    group_name = "控制台"
+# --- 群组信息 ---
+enable_group_info = false
+group_id = 0
+group_name = "控制台"
 
-    # --- 格式信息 ---
-    content_format = ["text"]
-    accept_format = ["text"]
+# --- 格式信息 ---
+content_format = ["text"]
+accept_format = ["text", 'emoji', 'reply', "vtb_text"]
 
-    # Prompt Context 相关设置
-    context_tags = [] # 指定要从 prompt_context 获取的标签列表，空列表表示获取所有
+# Prompt Context 相关设置
+context_tags = [] # 指定要从 prompt_context 获取的标签列表，空列表表示获取所有
 
-    # --- 模板信息 ---
-    enable_template_info = true
-    template_name = "console_te"
-    template_default = false
+# --- 模板信息 ---
+enable_template_info = true
+template_name = "console_te"
+template_default = false
 
-    # --- 模板内容 ---
-    # 注意：TOML 允许通过 [parent.child] 的方式定义子表
-    [message_config.template_items]
-    reasoning_prompt_main = '''
+# --- 模板内容 ---
+# 注意：TOML 允许通过 [parent.child] 的方式定义子表
+[message_config.template_items]
+reasoning_prompt_main = '''
     {relation_prompt_all}
     {memory_prompt}
     {prompt_info}
@@ -76,10 +76,7 @@
     注意：admin为系统管理员，一般为你的dev组成员
     在请你读读之前的记录，{mood_prompt}
     '''
-    # other_template_item = "..." # 如果有其他模板项
+# other_template_item = "..." # 如果有其他模板项
 
-    # --- 附加配置 ---
-    # 注意：这里的值现在是一个 TOML 内联表
- 
-
-
+# --- 附加配置 ---
+# 注意：这里的值现在是一个 TOML 内联表

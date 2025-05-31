@@ -1,14 +1,26 @@
 # src/plugins/vtube_studio/plugin.py
 
 import asyncio
-import tomllib
-import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING, List
 import re
 
 from maim_message.message_base import MessageBase
 
-import pyvts
+# 尝试导入 openai，如果失败则设为 None
+try:
+    import openai
+except ImportError:
+    openai = None
+
+# 尝试导入 pyvts，如果失败则设为 None
+try:
+    import pyvts
+except ImportError:
+    pyvts = None
+
+# 类型检查时的导入
+if TYPE_CHECKING and pyvts is not None:
+    pass  # 暂时不需要特定的类型导入
 
 # 从 core 导入基类和核心类
 from src.core.plugin_manager import BasePlugin
@@ -31,11 +43,11 @@ class VTubeStudioPlugin(BasePlugin):
         self.enabled = self.config.get("enabled", True)
 
         # --- pyvts 实例 ---
-        self.vts: Optional[pyvts.vts] = None
+        self.vts: Optional[Any] = None  # 避免在 pyvts 未安装时的类型错误
         self._connection_task: Optional[asyncio.Task] = None
         self._is_connected_and_authenticated = False
         self._auth_token = None
-        self._auth_task = None
+        self._auth_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
 
         # --- 依赖检查 ---
@@ -57,12 +69,36 @@ class VTubeStudioPlugin(BasePlugin):
         self.vts_host = self.config.get("vts_host")  # None means use default
         self.vts_port = self.config.get("vts_port")  # None means use default
 
-        # Prompt Context 相关配置
+        # Prompt Context 相关配置（已弃用，保留兼容性）
         self.register_hotkeys = self.config.get("register_hotkeys_context", True)
         self.hotkeys_priority = self.config.get("hotkeys_context_priority", 50)
         self.hotkeys_prefix = self.config.get("hotkeys_context_prefix", "你可以触发以下模型热键：")
         self.hotkey_format = self.config.get("hotkey_format", "'%s' (ID: %s)")
         self.hotkeys_separator = self.config.get("hotkeys_separator", ", ")
+
+        # LLM 相关配置
+        self.llm_matching_enabled = self.config.get("llm_matching_enabled", True)
+        self.llm_api_key = self.config.get("llm_api_key", "")
+        self.llm_base_url = self.config.get("llm_base_url", "https://api.siliconflow.cn/v1")
+        self.llm_model = self.config.get("llm_model", "deepseek-chat")
+        self.llm_temperature = self.config.get("llm_temperature", 0.1)
+        self.llm_max_tokens = self.config.get("llm_max_tokens", 100)
+
+        # 预设的表情/热键库
+        self.emotion_hotkey_mapping = self.config.get(
+            "emotion_hotkey_mapping",
+            {
+                "happy": ["微笑", "笑", "开心", "高兴", "愉快", "喜悦"],
+                "surprised": ["惊讶", "吃惊", "震惊", "意外"],
+                "sad": ["难过", "伤心", "悲伤", "沮丧", "失落"],
+                "angry": ["生气", "愤怒", "不满", "恼火"],
+                "shy": ["害羞", "脸红", "羞涩", "不好意思"],
+                "wink": ["眨眼", "wink", "眨眨眼"],
+            },
+        )
+
+        # 缓存热键列表
+        self.hotkey_list: List[Dict[str, Any]] = []
 
         # --- 初始化 pyvts ---
         plugin_info = {
@@ -85,6 +121,21 @@ class VTubeStudioPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"Failed to initialize pyvts: {e}", exc_info=True)
             self.enabled = False
+
+        # --- OpenAI LLM 检查 ---
+        if self.llm_matching_enabled:
+            if openai is None:
+                self.logger.error(
+                    "openai library not found. Please install it (`pip install openai`). LLM匹配功能已禁用."
+                )
+                self.llm_matching_enabled = False
+            elif not self.llm_api_key:
+                self.logger.warning("LLM API key not configured. LLM匹配功能已禁用.")
+                self.llm_matching_enabled = False
+            else:
+                # 初始化OpenAI客户端
+                self.openai_client = openai.OpenAI(api_key=self.llm_api_key, base_url=self.llm_base_url)
+                self.logger.info(f"LLM客户端已初始化，使用模型: {self.llm_model}")
 
     async def setup(self):
         await super().setup()
@@ -126,11 +177,9 @@ class VTubeStudioPlugin(BasePlugin):
             if authenticated:
                 self.logger.info("Successfully authenticated with VTube Studio API.")
                 self._is_connected_and_authenticated = True
-                # --- 认证成功后，注册 Prompt 上下文 ---
-                if self.register_hotkeys:
-                    await self._register_hotkeys_context()
-                # --- 在这里可以添加注册其他上下文的逻辑 (如表情) ---
-                # if self.register_expressions: ...
+
+                # --- 认证成功后，获取热键列表 ---
+                await self._load_hotkeys()
 
                 # 测试微笑
                 await self.smile(0)
@@ -163,9 +212,12 @@ class VTubeStudioPlugin(BasePlugin):
             if not self._is_connected_and_authenticated:
                 self.logger.warning("VTS Connection/Authentication failed.")
                 # 可以在这里尝试关闭连接，防止 pyvts 内部状态问题
-                if self.vts and self.vts.ws and not self.vts.ws.closed:
-                    await self.vts.close()
-                    self.logger.debug("Closed VTS connection due to auth failure.")
+                if self.vts:
+                    try:
+                        await self.vts.close()
+                        self.logger.debug("Closed VTS connection due to auth failure.")
+                    except Exception as close_error:
+                        self.logger.debug(f"Error closing VTS connection: {close_error}")
 
     async def get_hotkey_list(self) -> Optional[list[Dict[str, Any]]]:
         """Requests the list of available hotkeys from VTube Studio.
@@ -193,61 +245,84 @@ class VTubeStudioPlugin(BasePlugin):
             self.logger.error(f"Error requesting hotkey list from VTS: {e}", exc_info=True)
             return None
 
-    async def _register_hotkeys_context(self):
-        """获取 VTS 热键并将其使用说明注册到 PromptContextPlugin。"""
-        prompt_ctx_service = self.core.get_service("prompt_context")
-        if not prompt_ctx_service:
-            self.logger.warning("未找到 PromptContext 服务。无法注册热键。")
+    async def _load_hotkeys(self):
+        """获取热键列表"""
+        # 获取热键列表
+        self.hotkey_list = await self.get_hotkey_list()
+        if not self.hotkey_list:
+            self.logger.warning("无法获取热键列表")
             return
 
-        hotkeys = None  # Initialize hotkeys variable
+        self.logger.info(f"成功加载 {len(self.hotkey_list)} 个热键")
+
+    async def _find_best_matching_hotkey_with_llm(self, text: str) -> Optional[str]:
+        """使用LLM从热键列表中选择最匹配的热键"""
+        if not self.llm_matching_enabled or not self.hotkey_list:
+            return None
+
+        # 构造热键列表字符串
+        hotkey_names = [hotkey.get("name", "") for hotkey in self.hotkey_list if hotkey.get("name")]
+        if not hotkey_names:
+            return None
+
+        hotkey_list_str = "\n".join([f"- {name}" for name in hotkey_names])
+
+        # 构造提示词
+        #         prompt = f"""你是一个VTube Studio热键匹配助手。根据用户的文本内容，从提供的热键列表中选择最合适的热键。
+
+        # 用户文本: "{text}"
+
+        # 可用热键列表:
+        # {hotkey_list_str}
+
+        # 规则:
+        # 1. 仔细分析用户文本的情感和动作意图
+        # 2. 从热键列表中选择最匹配的一个热键名称
+        # 3. 如果没有合适的匹配，返回 "NONE"
+        # 4. 只返回热键名称或"NONE"，不要其他解释
+
+        # 你的选择:"""
+        prompt = f"""你是一个VTube Studio热键匹配助手。根据用户的文本内容，从提供的热键列表中选择最合适的热键。
+
+用户文本: "{text}"
+
+可用热键列表:
+{hotkey_list_str}
+
+规则:
+1. 仔细分析用户文本的情感和动作意图
+2. 无论如何都从热键列表中选择最匹配的一个热键名称，只返回热键名称，不要其他解释
+
+你的选择:"""
+
         try:
-            # Call the new method to get the hotkey list
-            hotkeys = await self.get_hotkey_list()
-
-            instructional_text = "对于每一次回复，请在回复文本末尾添加指令标记来表达你现在的情感。对于日常聊天，进行情感与动作的表现是被鼓励的，通过热键名称可以看出该热键对应的情感。格式为 `%{vts_trigger_hotkey:热键名称}%`，例如 `%{vts_trigger_hotkey:微笑}%`。"
-            hotkey_list_text = ""
-
-            if hotkeys is not None:  # Check if get_hotkey_list was successful
-                if hotkeys:  # Check if the list is not empty
-                    formatted_hotkeys = [
-                        hotkey.get("name", "Unknown Hotkey") for hotkey in hotkeys
-                    ]  # Safer access with .get()
-                    hotkey_list_text = "可用的热键有：\n- " + "\n- ".join(formatted_hotkeys)
-                else:
-                    hotkey_list_text = "当前模型没有可用的热键。"
-            else:
-                # get_hotkey_list already logged the error
-                hotkey_list_text = "无法获取当前可用的热键信息。"
-
-            # 组合最终的上下文信息
-            context_info = instructional_text + "\n" + hotkey_list_text
-
-            # 注册或更新上下文
-            provider_name = "vts_hotkeys_instruction"  # 使用新名称
-            prompt_ctx_service.register_context_provider(
-                provider_name=provider_name,
-                context_info=context_info,
-                priority=self.hotkeys_priority,
-                tags=["vts", "action", "hotkey", "instruction"],  # 添加 instruction 标签
+            response = self.openai_client.chat.completions.create(
+                model=self.llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=self.llm_temperature,
+                max_tokens=self.llm_max_tokens,
             )
-            self.logger.info(f"成功注册/更新 '{provider_name}' 上下文。")
-            # 确保移除旧的或错误的注册（如果之前用过 vts_hotkeys）
-            prompt_ctx_service.unregister_context_provider("vts_hotkeys")
-            prompt_ctx_service.unregister_context_provider("vts_hotkeys_error")
+
+            if response and response.choices:
+                selected_hotkey = response.choices[0].message.content.strip()
+
+                # 验证返回的热键名称是否在列表中
+                if selected_hotkey != "NONE" and selected_hotkey in hotkey_names:
+                    self.logger.info(f"LLM为文本'{text}'选择了热键: {selected_hotkey}")
+                    return selected_hotkey
+                elif selected_hotkey == "NONE":
+                    self.logger.debug(f"LLM认为文本'{text}'没有合适的热键匹配")
+                    return None
+                else:
+                    self.logger.warning(f"LLM返回了无效的热键名称: {selected_hotkey}")
+                    return None
+            else:
+                self.logger.warning("LLM API返回了无效响应")
+                return None
 
         except Exception as e:
-            self.logger.error(f"获取或注册热键说明时出错: {e}", exc_info=True)
-            # 出错时注册错误信息
-            if prompt_ctx_service:
-                prompt_ctx_service.register_context_provider(
-                    provider_name="vts_hotkeys_error",
-                    context_info="系统提示：暂时无法获取 VTube Studio 的可用动作信息。",
-                    priority=self.hotkeys_priority,
-                )
-                # 同样，确保移除其他可能的注册
-                prompt_ctx_service.unregister_context_provider("vts_hotkeys")
-                prompt_ctx_service.unregister_context_provider("vts_hotkeys_instruction")
+            self.logger.error(f"使用LLM匹配热键时出错: {e}")
+            return None
 
     async def cleanup(self):
         self.logger.info("Cleaning up VTubeStudioPlugin...")
@@ -263,7 +338,7 @@ class VTubeStudioPlugin(BasePlugin):
                 pass  # Expected
 
         # 关闭 pyvts 连接
-        if self.vts and self.vts.ws and not self.vts.ws.closed:
+        if self.vts:
             try:
                 self.logger.info("Closing connection to VTube Studio...")
                 await self.vts.close()
@@ -271,47 +346,36 @@ class VTubeStudioPlugin(BasePlugin):
             except Exception as e:
                 self.logger.error(f"Error closing VTube Studio connection: {e}", exc_info=True)
 
-        # (可选) 取消注册服务，如果 Core 支持的话
-        # self.core.unregister_service("vts_control")
-
-        # (可选) 取消注册 Prompt 上下文，如果需要的话
-        prompt_ctx_service = self.core.get_service("prompt_context")
-        if prompt_ctx_service:
-            prompt_ctx_service.unregister_context_provider("vts_hotkeys")
-            # prompt_ctx_service.unregister_context_provider("vts_hotkeys_error") # 如果注册了错误信息
-            self.logger.debug("Unregistered VTS context providers.")
+        # 清理热键缓存
+        self.hotkey_list.clear()
 
         self._is_connected_and_authenticated = False
         await super().cleanup()
 
     # --- Public method for triggering hotkey (to be called by CommandProcessor) ---
     async def handle_maicore_message(self, message: MessageBase):
-        """处理从 MaiCore 收到的消息，如果是文本类型，则进行处理，触发热键。"""
-        # 检查消息段是否存在且类型为 'text'
-        if message.message_segment and message.message_segment.type == "text":
-            original_text = message.message_segment.data
-            if not isinstance(original_text, str) or not original_text.strip():
-                self.logger.debug("收到非字符串或空文本消息段，跳过")
+        """处理从 MaiCore 收到的消息，根据消息段类型进行不同的处理。"""
+        if not message.message_segment:
+            return
+
+        # 处理 vtb_text 类型的消息段（新的LLM匹配功能）
+        if message.message_segment.type == "vtb_text":
+            text_data = message.message_segment.data
+            if not isinstance(text_data, str) or not text_data.strip():
+                self.logger.debug("收到非字符串或空的vtb_text消息段，跳过")
                 return
 
-            original_text = original_text.strip()
-            self.logger.info(f"收到文本消息: '{original_text[:50]}...'")
+            text_data = text_data.strip()
+            self.logger.info(f"收到vtb_text消息: '{text_data[:50]}...'")
 
-            # 使用正则表达式匹配热键标记
-            hotkey_pattern = r"%\{vts_trigger_hotkey:([^}]+)\}%"
-            hotkey_matches = re.findall(hotkey_pattern, original_text)
-
-            # 触发所有匹配到的热键
-            for hotkey_name in hotkey_matches:
-                self.logger.info(f"尝试触发热键: {hotkey_name}")
-                await self.trigger_hotkey(hotkey_name)
-
-            # 移除所有热键标记，得到最终文本
-            final_text = re.sub(hotkey_pattern, "", original_text).strip()
-
-            # 如果最终文本不为空，可以在这里添加其他处理逻辑
-            if final_text:
-                self.logger.debug(f"处理后的文本: '{final_text[:50]}...'")
+            # 使用LLM找到最匹配的热键
+            if self.llm_matching_enabled:
+                best_hotkey = await self._find_best_matching_hotkey_with_llm(text_data)
+                if best_hotkey:
+                    self.logger.info(f"基于LLM为vtb_text触发热键: {best_hotkey}")
+                    await self.trigger_hotkey(best_hotkey)
+                else:
+                    self.logger.debug(f"未找到与vtb_text匹配的热键: {text_data}")
 
     async def trigger_hotkey(self, hotkey_id: str) -> bool:
         """
@@ -482,8 +546,8 @@ class VTubeStudioPlugin(BasePlugin):
 
     async def unload_item(
         self,
-        item_instance_id_list: list[str] = [],
-        file_name_list: list[str] = [],
+        item_instance_id_list: Optional[list[str]] = None,
+        file_name_list: Optional[list[str]] = None,
         unload_all_in_scene: bool = False,
         unload_all_loaded_by_this_plugin: bool = False,
         allow_unloading_items_loaded_by_user_or_other_plugins: bool = True,
@@ -491,6 +555,11 @@ class VTubeStudioPlugin(BasePlugin):
         """
         卸载挂件
         """
+        if item_instance_id_list is None:
+            item_instance_id_list = []
+        if file_name_list is None:
+            file_name_list = []
+
         data = {
             "unloadAllInScene": unload_all_in_scene,
             "unloadAllLoadedByThisPlugin": unload_all_loaded_by_this_plugin,
