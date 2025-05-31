@@ -2,78 +2,54 @@
 
 VTube Studio插件是一个用于连接[VTube Studio](https://denchisoft.com/)的Amaidesu组件，允许虚拟形象与聊天机器人交互，实现表情、动作和热键触发等功能。
 
-## 功能概述
+## 🎯 功能概述
 
+### 核心功能
 - 自动连接到VTube Studio API
 - 自动处理认证流程
-- 获取并注册可用热键到提示上下文
-- 从聊天消息中解析和触发热键
 - 提供面部参数控制（微笑、眨眼等）
 - 支持加载/卸载挂件
 
-## 依赖
+### ✨ 新功能：智能语义匹配 (v2.0+)
+- **基于embedding的智能热键匹配**：根据文本语义自动选择合适的表情热键
+- **双重匹配策略**：预设表情词汇 + 直接热键名称匹配
+- **可配置的相似度阈值**：精确控制匹配敏感度
+- **预设表情映射库**：内置常用中文表情词汇
+
+### 传统功能（保持兼容）
+- 从聊天消息中解析和触发热键标记
+- 获取并注册可用热键到提示上下文
+
+## 📦 依赖
 
 - Python 3.11+（推荐，内置`tomllib`）或Python 3.8+（需额外安装`toml`）
 - [pyvts](https://github.com/Genteki/pyvts)库
-- Core服务：
-  - `prompt_context` - 用于注册热键提示
-  - WebSocket消息处理系统
+- **新增**：[openai](https://github.com/openai/openai-python)库（用于embedding功能）
+- **新增**：[numpy](https://numpy.org/)库（用于相似度计算）
 
-## 安装
+## 🛠 安装
 
 1. 确保安装了必要的依赖：
+
    ```bash
-   pip install pyvts
+   pip install pyvts openai numpy
    ```
 
 2. 将插件目录复制到`src/plugins/`下
 
 3. 从模板创建配置文件：
+
    ```bash
    cp src/plugins/vtube_studio/config-template.toml src/plugins/vtube_studio/config.toml
    ```
 
-4. 编辑配置文件，根据需要调整参数
+4. 编辑配置文件，根据需要调整参数（特别是API密钥配置）
 
-## 消息处理流程
-
-插件通过以下流程处理消息和触发VTube Studio动作：
-
-1. 接收来自Core的WebSocket消息
-2. 解析消息中的热键触发标记
-3. 执行相应的VTube Studio API调用
-4. 返回结果或触发相应动作
-
-### Mermaid时序图
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Core as Amaidesu Core
-    participant Plugin as VTubeStudio Plugin
-    participant VTS as VTube Studio API
-
-    Plugin->>VTS: 连接请求
-    VTS-->>Plugin: 连接成功
-    Plugin->>VTS: 请求认证令牌
-    VTS-->>Plugin: 返回令牌
-    Plugin->>VTS: 认证请求
-    VTS-->>Plugin: 认证成功
-    Plugin->>VTS: 获取热键列表
-    VTS-->>Plugin: 返回热键列表
-    Plugin->>Core: 注册热键上下文
-
-    User->>Core: 发送消息
-    Core->>Plugin: 传递消息
-    Note over Plugin: 解析"%{vts_trigger_hotkey:热键名称}%"
-    Plugin->>VTS: 触发热键请求
-    VTS-->>Plugin: 热键触发响应
-    Plugin->>Core: 消息处理完成
-```
-
-## 配置说明
+## 🔧 配置说明
 
 配置文件位于`src/plugins/vtube_studio/config.toml`，包含以下主要选项：
+
+### 基础配置
 
 ```toml
 [vtube_studio]
@@ -83,10 +59,94 @@ developer = "mai-devs"  # 开发者名称
 authentication_token_path = "./src/plugins/vtube_studio/vts_token.txt"  # 令牌存储路径
 vts_host = "localhost"  # VTS API主机
 vts_port = 8001  # VTS API端口
+```
 
-# 提示上下文相关设置
-register_hotkeys_context = true  # 是否注册热键到提示
+### 🧠 Embedding智能匹配配置（推荐）
+
+```toml
+# Embedding 智能热键匹配功能配置
+embedding_enabled = true                # 是否启用基于embedding的智能热键匹配
+openai_api_key = "sk-your-api-key"     # OpenAI API密钥（必填）
+openai_base_url = "https://api.siliconflow.cn/v1"  # API基础URL（硅基流动推荐）
+embedding_model = "BAAI/bge-large-zh-v1.5"         # embedding模型名称
+similarity_threshold = 0.7              # 相似度阈值，超过此值才会触发热键
+
+# 预设表情/热键映射配置
+[vtube_studio.emotion_hotkey_mapping]
+开心 = ["微笑", "笑", "开心", "高兴", "愉快", "喜悦", "欢乐", "兴奋"]
+惊讶 = ["惊讶", "吃惊", "震惊", "意外", "诧异", "惊奇"]
+难过 = ["难过", "伤心", "悲伤", "沮丧", "失落", "忧郁", "哭泣"]
+生气 = ["生气", "愤怒", "不满", "恼火", "气愤", "暴怒"]
+害羞 = ["害羞", "脸红", "羞涩", "不好意思", "羞耻", "腼腆"]
+眨眼 = ["眨眼", "wink", "眨眨眼", "眨眼睛", "抛媚眼"]
+```
+
+### 传统配置（向后兼容）
+
+```toml
+# 提示上下文相关设置（已弃用，建议使用embedding功能）
+register_hotkeys_context = false  # 是否注册热键到提示
 hotkeys_context_priority = 50  # 上下文优先级
+```
+
+详细配置说明请查看 [CONFIG_GUIDE.md](./CONFIG_GUIDE.md)。
+
+## 📱 使用方法
+
+### 🆕 智能语义匹配（推荐）
+
+发送包含 `vtb_text` 类型的消息段，插件会自动分析文本语义并触发相应热键：
+
+```python
+# 示例：自动根据文本内容触发表情
+message_segment = MessageSegment(type="vtb_text", data="我今天真的很开心！")
+# 插件会自动分析"开心"的语义，找到最匹配的热键并触发
+```
+
+工作原理：
+1. 分析文本的语义向量
+2. 与预设表情词汇进行相似度比较
+3. 找到最匹配的表情类别
+4. 在VTube Studio热键中查找对应的热键
+5. 自动触发最佳匹配的热键
+
+### 传统标记方式（兼容）
+
+在消息中使用特定标记格式来触发热键：
+
+```
+%{vts_trigger_hotkey:热键名称}%
+```
+
+例如：
+
+```
+这是一个测试消息，我很高兴能帮助你！%{vts_trigger_hotkey:微笑}%
+```
+
+## 💬 消息处理流程
+
+### 新版本流程（Embedding模式）
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Core as Amaidesu Core
+    participant Plugin as VTubeStudio Plugin
+    participant VTS as VTube Studio API
+    participant API as OpenAI API
+
+    Plugin->>VTS: 连接&认证
+    Plugin->>VTS: 获取热键列表
+    Plugin->>API: 预计算热键embedding
+    Plugin->>API: 预计算表情词汇embedding
+    
+    User->>Core: 发送vtb_text消息
+    Core->>Plugin: 传递消息
+    Plugin->>API: 获取文本embedding
+    Note over Plugin: 计算相似度并找到最佳匹配
+    Plugin->>VTS: 触发匹配的热键
+    VTS-->>Plugin: 热键触发响应
 ```
 
 ## 核心代码讲解
