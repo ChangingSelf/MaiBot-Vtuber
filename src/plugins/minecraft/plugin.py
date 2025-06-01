@@ -44,20 +44,13 @@ class MinecraftPlugin(BasePlugin):
         self.ticks_per_step: int = minecraft_config.get("mineland_ticks_per_step", 20)
 
         self.user_id: str = minecraft_config.get("user_id", "minecraft_bot")
-        self.group_id_str: Optional[str] = minecraft_config.get("group_id")
+        self.group_id: Optional[str] = minecraft_config.get("group_id")
         self.nickname: str = minecraft_config.get("nickname", "Minecraft Observer")
 
         # 添加定期发送状态的配置
         self.auto_send_interval: float = minecraft_config.get("auto_send_interval", 30.0)  # 默认30秒
         self._auto_send_task: Optional[asyncio.Task] = None
         self._last_response_time: float = 0.0
-
-        # --- 加载Template Items配置 ---
-        self.enable_template_info = minecraft_config.get("enable_template_info", True)
-        self.template_items = {}
-        # 如果配置中有template_items，则使用配置中的值
-        if self.enable_template_info and "template_items" in minecraft_config:
-            self.template_items = minecraft_config.get("template_items", {})
 
         # 上下文标签配置
         self.context_tags: Optional[List[str]] = minecraft_config.get("context_tags")
@@ -166,37 +159,29 @@ class MinecraftPlugin(BasePlugin):
 
         user_info = UserInfo(platform=self.core.platform, user_id=str(self.user_id), user_nickname=self.nickname)
 
-        group_info_obj = None
-        if self.group_id_str:
-            try:
-                parsed_group_id = int(self.group_id_str)
-                group_info_obj = GroupInfo(
-                    platform=self.core.platform,
-                    group_id=parsed_group_id,
-                )
-            except ValueError:
-                self.logger.warning(f"配置的 group_id '{self.group_id_str}' 不是有效的整数。将忽略 GroupInfo。")
+        group_info = None
+        if self.group_id:
+            group_info = GroupInfo(
+                platform=self.core.platform,
+                group_id=self.group_id,
+            )
 
         format_info = FormatInfo(content_format="text", accept_format="text")  # 保持文本格式，内容是JSON字符串
 
         # --- 构建Template Info ---
         final_template_info_value = None
-        if self.enable_template_info:
-            # 创建一个包含提示词的模板项字典
-            template_items = self.template_items.copy() if self.template_items else {}
+        # 创建一个包含提示词的模板项字典
+        template_items = {"heart_flow_prompt": prompted_message_content}
 
-            # 使用'reasoning_prompt_main'作为主提示词的键
-            template_items["heart_flow_prompt"] = prompted_message_content
-
-            # 直接构建最终的template_info结构
-            final_template_info_value = {"template_items": template_items}
+        # 直接构建最终的template_info结构
+        final_template_info_value = {"template_items": template_items}
 
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             message_id=message_id,
             time=current_time,
             user_info=user_info,
-            group_info=group_info_obj,
+            group_info=group_info,
             format_info=format_info,
             additional_config={
                 "source_plugin": "minecraft",
