@@ -34,11 +34,11 @@ enable_group_info = true
 group_id = 0
 group_name = "funasr_default"
 content_format = ["text"]
-accept_format = ["text", "vts_command"]
+accept_format = ["text",'emoji','reply', "vtb_text"]
 enable_template_info = false
 template_name = "default"
 template_default = false
-context_tags = []                       # 留空获取所有上下文，或指定标签数组
+context_tags = []                    # 留空获取所有上下文，或指定标签数组
 
 [message_config.additional_config]
 is_from_adapter = true
