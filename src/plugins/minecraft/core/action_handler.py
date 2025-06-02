@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Any, Optional, Tuple, Dict, Union
 
 import mineland
@@ -8,20 +9,48 @@ from src.utils.logger import get_logger
 logger = get_logger("MinecraftAction")
 
 
+def _strip_markdown_codeblock(text: str) -> str:
+    """
+    去除markdown代码块包装
+
+    Args:
+        text: 可能包含markdown代码块的文本
+
+    Returns:
+        str: 去除代码块包装后的内容
+    """
+    text = text.strip()
+
+    # 匹配 ```json ... ``` 或 ``` ... ``` 格式
+    # 使用 re.DOTALL 让 . 匹配换行符
+    pattern = r"^```(?:json)?\s*\n?(.*?)\n?```$"
+    match = re.match(pattern, text, re.DOTALL)
+
+    if match:
+        # 如果匹配到代码块格式，返回内部内容
+        return match.group(1).strip()
+
+    # 如果不是代码块格式，返回原文本
+    return text
+
+
 def parse_mineland_action(action_json_str: str, agents_count: int, current_step_num: int) -> List[Action]:
     """
     解析从MaiCore收到的动作JSON字符串，并返回MineLand格式的动作
 
     Args:
-        action_json_str: JSON格式的动作字符串
+        action_json_str: JSON格式的动作字符串（可能包含markdown代码块包装）
         agents_count: 智能体数量
         current_step_num: 当前步数
 
     Returns:
         List[Action]: MineLand格式的动作列表
     """
+    # 预处理：去除可能的markdown代码块包装
+    cleaned_json_str = _strip_markdown_codeblock(action_json_str)
+
     try:
-        action_data = json.loads(action_json_str)
+        action_data = json.loads(cleaned_json_str)
     except json.JSONDecodeError as e:
         logger.exception(f"解析来自 MaiCore 的动作 JSON 失败: {e}. 原始数据: {action_json_str}")
         return mineland.Action.no_op(agents_count)
