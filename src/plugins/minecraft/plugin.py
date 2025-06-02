@@ -93,7 +93,7 @@ class MinecraftPlugin(BasePlugin):
                 agents_config=self.agents_config,
                 headless=self.headless,
                 image_size=self.image_size,
-                enable_low_level_action=self.enable_low_level_action,
+                enable_low_level_action=False,  # 全都使用高级动作
                 ticks_per_step=self.ticks_per_step,
             )
             self.logger.info(f"MineLand 环境 (Task ID: {self.task_id}) 初始化成功。")
@@ -152,7 +152,7 @@ class MinecraftPlugin(BasePlugin):
 
         # 分析当前游戏状态
         agent_obs = self.current_obs[0]  # 当前仅支持单智能体
-        status_prompts = build_state_analysis(agent_obs)
+        status_prompts = build_state_analysis(agent_obs, self.current_event, self.current_code_info)
 
         # 准备发送消息
         current_time = int(time.time())
@@ -171,7 +171,7 @@ class MinecraftPlugin(BasePlugin):
 
         # --- 构建Template Info ---
         # 创建一个包含提示词的模板项字典
-        template_items = build_prompt(status_prompts)
+        template_items = build_prompt(status_prompts, self.current_obs)
 
         # 直接构建最终的template_info结构
         template_info = TemplateInfo(template_items=template_items)
@@ -190,7 +190,7 @@ class MinecraftPlugin(BasePlugin):
         )
 
         # 当使用template_info时，消息内容可以简化
-        message_text = f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作。"
+        message_text = f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作，目标是收集64个原木（oak_log）。"
         message_segment = Seg(type="text", data=message_text)
 
         msg_to_maicore = MessageBase(
@@ -201,7 +201,6 @@ class MinecraftPlugin(BasePlugin):
         self.logger.info(
             f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
         )
-        self.logger.debug(f"发送给 MaiCore 的状态详情: {template_info[:300]}...")
 
     async def handle_maicore_response(self, message: MessageBase):
         """处理从 MaiCore 返回的动作指令。"""
@@ -224,11 +223,10 @@ class MinecraftPlugin(BasePlugin):
         self.logger.debug(f"从 MaiCore 收到原始动作指令: {action_json_str}...")
 
         # 解析动作
-        current_actions, parsed_action_for_log = parse_mineland_action(
+        current_actions = parse_mineland_action(
             action_json_str=action_json_str,
             agents_count=self.agents_count,
             current_step_num=self.current_step_num,
-            enable_low_level_action=self.enable_low_level_action,
         )
 
         # 在 MineLand 环境中执行动作
@@ -237,6 +235,7 @@ class MinecraftPlugin(BasePlugin):
                 mland=self.mland, current_actions=current_actions
             )
 
+            # 更新状态
             self.current_obs = next_obs
             self.current_code_info = next_code_info
             self.current_event = next_event
@@ -262,7 +261,7 @@ class MinecraftPlugin(BasePlugin):
                 self.current_done = False  # 重置 done 状态
                 self.current_task_info = {}
                 self.current_step_num = 0  # 为新的回合重置步数
-                self.logger.info(f"环境已重置，收到新的初始观察。")
+                self.logger.info("环境已重置，收到新的初始观察。")
 
             # 发送新的状态给 MaiCore
             await self._send_state_to_maicore()

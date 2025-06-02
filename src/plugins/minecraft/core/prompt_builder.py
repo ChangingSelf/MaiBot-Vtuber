@@ -2,12 +2,12 @@ import json
 from typing import List, Dict, Any, Optional
 
 from src.utils.logger import get_logger
-from mineland import Observation
+from mineland import Observation, Event, CodeInfo
 
 logger = get_logger("MinecraftPrompt")
 
 
-def build_state_analysis(obs: Observation) -> List[str]:
+def build_state_analysis(obs: Observation, events: List[Event], code_infos: List[CodeInfo]) -> List[str]:
     """
     分析游戏状态并生成状态提示
 
@@ -88,13 +88,14 @@ def build_state_analysis(obs: Observation) -> List[str]:
             status_prompts.append("现在是夜晚，小心可能出现的敌对生物。")
 
     # 提取最近的聊天消息或事件
-    if hasattr(obs, "event") and obs.event:
+    if events:
         recent_events = []
-        for event in obs.event[-5:]:  # 仅取最近5条消息
+        for event in events[-5:]:  # 仅取最近5条消息
             if hasattr(event, "type") and hasattr(event, "only_message"):
                 recent_events.append({"type": event.type, "message": event.only_message})
         if recent_events:
-            status_prompts.append(f"最近的事件: {', '.join([f'{e["type"]}: {e["message"]}' for e in recent_events])}")
+            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events]
+            status_prompts.append(f"最近的事件: {', '.join(recent_events_str)}")
 
     return status_prompts
 
@@ -111,11 +112,13 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
     """
     high_level_example = {"actions": "bot.chat('Hello from Minecraft!'); bot.jump();"}
 
+    status_text = "\n".join(status_prompts)
+
     # 提示词
     chat_target_group1 = "你正在直播Minecraft游戏，以下是游戏的当前状态："
     chat_target_group2 = "正在直播Minecraft游戏"
     reasoning_prompt_main = f"""
-    你正在直播Minecraft游戏，以下是游戏的当前状态：{status_prompts.join("\n")}。
+    你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。
     请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
     请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
 
