@@ -28,7 +28,8 @@ class MinecraftPlugin(BasePlugin):
 
         # 智能体配置，默认为1个智能体
         self.agents_count: int = 1  # 目前硬编码为1，将来可以考虑加入配置
-        self.agents_config: List[Dict[str, str]] = [{"name": f"MaiMai{i}"} for i in range(self.agents_count)]
+        # self.agents_config: List[Dict[str, str]] = [{"name": f"MaiMai{i}"} for i in range(self.agents_count)]
+        self.agents_config: List[Dict[str, str]] = [{"name": "MaiMai"}]
 
         self.headless: bool = minecraft_config.get("mineland_headless", True)
 

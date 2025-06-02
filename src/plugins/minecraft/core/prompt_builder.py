@@ -167,8 +167,8 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
 - `killMob(bot, name, timeout)`: 击杀生物
 
 编写代码时的注意事项:
-- 使用`async/await`语法处理异步操作
-- 避免无限循环和递归函数
+- 代码需要符合JavaScript语法
+- 每次只编写一条简单行动语句和一条报告进度的聊天语句
 - 检查机器人库存再使用物品
 - 使用`bot.chat()`显示进度
 - 不要使用`bot.on`或`bot.once`注册事件监听器
