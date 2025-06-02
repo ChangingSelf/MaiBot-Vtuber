@@ -7,11 +7,11 @@ import tomllib
 
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
+from maim_message import MessageBase, TemplateInfo, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
 
 from .core.prompt_builder import build_state_analysis, build_prompt
 from .core.action_handler import parse_mineland_action, execute_mineland_action
-
+from mineland import Observation, CodeInfo, Event
 # logger = get_logger("MinecraftPlugin") # 已由基类初始化
 
 
@@ -40,7 +40,6 @@ class MinecraftPlugin(BasePlugin):
             self.logger.warning(f"配置的 image_size 无效: {image_size_config}，使用默认值 (180, 320)")
             self.image_size: tuple[int, int] = (180, 320)
 
-        self.enable_low_level_action: bool = minecraft_config.get("mineland_enable_low_level_action", False)
         self.ticks_per_step: int = minecraft_config.get("mineland_ticks_per_step", 20)
 
         self.user_id: str = minecraft_config.get("user_id", "minecraft_bot")
@@ -64,9 +63,9 @@ class MinecraftPlugin(BasePlugin):
         # Mineland 实例
         self.mland: Optional[mineland.MineLand] = None
         # Mineland 状态变量
-        self.current_obs: Optional[Any] = None  # 当前观察值
-        self.current_code_info: Optional[List[Any]] = None  # 当前代码信息 (根据mineland_script.py是列表)
-        self.current_event: Optional[List[List[Any]]] = None  # 当前事件 (根据mineland_script.py是列表的列表)
+        self.current_obs: Optional[List[Observation]] = None  # 当前观察值
+        self.current_code_info: Optional[List[CodeInfo]] = None  # 当前代码信息 (根据mineland_script.py是列表)
+        self.current_event: Optional[List[List[Event]]] = None  # 当前事件 (根据mineland_script.py是列表的列表)
         self.current_done: bool = False  # 当前是否完成
         self.current_task_info: Optional[Dict[str, Any]] = None  # 当前任务信息
         self.current_step_num: int = 0  # 当前步数
@@ -78,8 +77,18 @@ class MinecraftPlugin(BasePlugin):
 
         self.logger.info("Minecraft 插件已加载，正在初始化 MineLand 环境...")
         try:
-            self.mland = mineland.make(
-                task_id=self.task_id,
+            # self.mland = mineland.make(
+            #     task_id=self.task_id,
+            #     agents_count=self.agents_count,
+            #     agents_config=self.agents_config,
+            #     headless=self.headless,
+            #     image_size=self.image_size,
+            #     enable_low_level_action=self.enable_low_level_action,
+            #     ticks_per_step=self.ticks_per_step,
+            # )
+            self.mland = mineland.MineLand(
+                server_host="127.0.0.1",
+                server_port=1746,
                 agents_count=self.agents_count,
                 agents_config=self.agents_config,
                 headless=self.headless,
@@ -143,19 +152,11 @@ class MinecraftPlugin(BasePlugin):
 
         # 分析当前游戏状态
         agent_obs = self.current_obs[0]  # 当前仅支持单智能体
-        status_hints, state_summary = build_state_analysis(agent_obs)
-
-        # 构建提示词
-        prompted_message_content = build_prompt(
-            state_summary=state_summary,
-            status_hints=status_hints,
-            step_num=self.current_step_num,
-            enable_low_level_action=self.enable_low_level_action,
-        )
+        status_prompts = build_state_analysis(agent_obs)
 
         # 准备发送消息
         current_time = int(time.time())
-        message_id = f"mc_direct_{current_time}_{hash(prompted_message_content + str(self.user_id)) % 10000}"
+        message_id = int(time.time())
 
         user_info = UserInfo(platform=self.core.platform, user_id=str(self.user_id), user_nickname=self.nickname)
 
@@ -169,12 +170,11 @@ class MinecraftPlugin(BasePlugin):
         format_info = FormatInfo(content_format="text", accept_format="text")  # 保持文本格式，内容是JSON字符串
 
         # --- 构建Template Info ---
-        final_template_info_value = None
         # 创建一个包含提示词的模板项字典
-        template_items = {"heart_flow_prompt": prompted_message_content}
+        template_items = build_prompt(status_prompts)
 
         # 直接构建最终的template_info结构
-        final_template_info_value = {"template_items": template_items}
+        template_info = TemplateInfo(template_items=template_items)
 
         message_info = BaseMessageInfo(
             platform=self.core.platform,
@@ -184,13 +184,13 @@ class MinecraftPlugin(BasePlugin):
             group_info=group_info,
             format_info=format_info,
             additional_config={
-                "source_plugin": "minecraft",
+                "maimcore_reply_probability_gain": 1,  # 确保必然回复
             },
-            template_info=final_template_info_value,  # 使用构建好的template_info
+            template_info=template_info,  # 使用构建好的template_info
         )
 
         # 当使用template_info时，消息内容可以简化
-        message_text = "请分析Minecraft状态并作出决策" if final_template_info_value else prompted_message_content
+        message_text = f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作。"
         message_segment = Seg(type="text", data=message_text)
 
         msg_to_maicore = MessageBase(
@@ -198,12 +198,10 @@ class MinecraftPlugin(BasePlugin):
         )
 
         await self.core.send_to_maicore(msg_to_maicore)
-        action_mode = "低级 (数值数组)" if self.enable_low_level_action else "高级 (JavaScript)"
-        template_mode = "通过template_info" if final_template_info_value else "通过消息内容"
         self.logger.info(
-            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}, 偏好动作模式: {action_mode}, 提示词模式: {template_mode}) 发送给 MaiCore。"
+            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
         )
-        self.logger.debug(f"发送给 MaiCore 的状态详情: {prompted_message_content[:300]}...")
+        self.logger.debug(f"发送给 MaiCore 的状态详情: {template_info[:300]}...")
 
     async def handle_maicore_response(self, message: MessageBase):
         """处理从 MaiCore 返回的动作指令。"""
