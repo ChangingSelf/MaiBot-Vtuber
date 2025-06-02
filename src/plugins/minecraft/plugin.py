@@ -225,7 +225,7 @@ class MinecraftPlugin(BasePlugin):
             return
 
         action_json_str = message.message_segment.data.strip()
-        self.logger.debug(f"从 MaiCore 收到原始动作指令: {action_json_str}...")
+        self.logger.debug(f"从 MaiCore 收到原始动作指令: {action_json_str}")
 
         # 解析动作
         current_actions = parse_mineland_action(
