@@ -186,7 +186,7 @@ class MinecraftPlugin(BasePlugin):
 
         # --- 构建Template Info ---
         # 创建一个包含提示词的模板项字典
-        template_items = build_prompt(status_prompts, self.current_obs)
+        template_items = build_prompt(status_prompts, self.current_obs, self.current_code_info)
 
         # 直接构建最终的template_info结构
         template_info = TemplateInfo(
@@ -271,6 +271,8 @@ class MinecraftPlugin(BasePlugin):
             self.current_done = next_done
             self.current_task_info = next_task_info
             self.current_step_num += 1
+
+            self.logger.info(f"代码信息: {str(self.current_code_info[0])}")
 
             # 对于单Agent，通常直接取done[0]
             # 如果是多Agent，需要决定整体的done状态 (当前仅支持单Agent)

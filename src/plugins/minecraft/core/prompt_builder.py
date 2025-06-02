@@ -148,12 +148,16 @@ def build_state_analysis(obs: Observation, events: List[Event], code_infos: List
     return status_prompts
 
 
-def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
+def build_prompt(
+    status_prompts: List[str], obs: Observation, code_infos: Optional[List[CodeInfo]] = None
+) -> Dict[str, str]:
     """
     构建发送给AI的提示词
 
     Args:
         status_prompts: 状态提示列表
+        obs: Mineland观察对象
+        code_infos: 代码信息列表，用于检测代码执行错误
 
     Returns:
         Dict[str, str]: 包含提示词的模板项字典
@@ -161,11 +165,43 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
 
     status_text = ";".join(status_prompts)
 
+    # 检查代码执行错误
+    error_prompt = ""
+    if code_infos:
+        for code_info in code_infos:
+            if code_info and hasattr(code_info, "code_error") and code_info.code_error:
+                # 从 code_info 中提取错误信息
+                error_type = code_info.code_error.get("error_type", "未知错误")
+                error_message = code_info.code_error.get("error_message", "无详细信息")
+                last_code = getattr(code_info, "last_code", "无代码记录")
+
+                # 对代码中的花括号进行转义，避免在字符串格式化时出现问题
+                escaped_last_code = last_code.replace("{", "\\{").replace("}", "\\}")
+
+                error_prompt = f"""
+重要提醒：上次执行的代码出现了错误，请务必修正！
+- 错误类型：{error_type}
+- 错误信息：{error_message}
+- 出错的代码：{escaped_last_code}
+
+在编写新代码时，请特别注意避免以下问题：
+1. 检查是否有语法错误（括号匹配、分号等）
+2. 确保所有引用的变量和函数都已定义
+3. 验证API调用的参数是否正确
+4. 避免访问可能不存在的属性或方法
+5. 确保代码逻辑的正确性
+
+请根据错误信息修正问题并重新编写正确的代码。
+                """
+                break  # 只处理第一个错误
+
     # 提示词
     chat_target_group1 = "你正在直播Minecraft游戏，以下是游戏的当前状态："
     chat_target_group2 = "正在直播Minecraft游戏"
-    reasoning_prompt_main = f"""
-    你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。
+
+    # 构建主要的推理提示词，如果有错误则包含错误修正提示
+    base_prompt = f"""
+    你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。{error_prompt}
     请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
     请提供一个JSON对象，包含如下字段：
     - `goal` 的字段，该字段是当前的目标，你自己根据上一次的目标和当前状态来生成现在的目标，例如："收集石头"。切换目标视作上一个目标已完成。
@@ -186,6 +222,9 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
 - 不要使用`bot.on`或`bot.once`注册事件监听器
 - 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API
     """
+
+    reasoning_prompt_main = base_prompt.strip()
+
     return {
         "chat_target_group1": chat_target_group1,
         "chat_target_group2": chat_target_group2,
