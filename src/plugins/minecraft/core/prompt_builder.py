@@ -110,9 +110,8 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
     Returns:
         Dict[str, str]: 包含提示词的模板项字典
     """
-    high_level_example = {"actions": "bot.chat('Hello from Minecraft!'); bot.jump();"}
 
-    status_text = "\n".join(status_prompts)
+    status_text = ";".join(status_prompts)
 
     # 提示词
     chat_target_group1 = "你正在直播Minecraft游戏，以下是游戏的当前状态："
@@ -121,8 +120,6 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
     你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。
     请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
     请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
-
-    返回的JSON对象示例:`{json.dumps(high_level_example)}`
 
 以下是一些有用的Mineflayer API和函数:
 - `bot.chat(message)`: 发送聊天消息
@@ -139,31 +136,6 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
 - 使用`bot.chat()`显示进度
 - 不要使用`bot.on`或`bot.once`注册事件监听器
 - 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API
-
-简单示例代码:
-```
-async function findAndCollectWood(bot) {{
-  bot.chat('开始寻找并收集木头');
-  
-  // 尝试寻找橡木
-  const log = bot.findBlock({{
-    matching: block => block.name.includes('log'),
-    maxDistance: 32
-  }});
-  
-  if (!log) {{
-    bot.chat('附近没有找到木头，四处探索');
-    // 向前移动10秒
-    bot.setControlState('forward', true);
-    await new Promise(resolve => setTimeout(resolve, 10000));
-    bot.setControlState('forward', false);
-    return;
-  }}
-  
-  bot.chat('找到木头，准备收集');
-  await mineBlock(bot, 'log', 3);
-  bot.chat('成功收集了木头');
-}}
     """
     return {
         "chat_target_group1": chat_target_group1,

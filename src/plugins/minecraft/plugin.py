@@ -174,7 +174,11 @@ class MinecraftPlugin(BasePlugin):
         template_items = build_prompt(status_prompts, self.current_obs)
 
         # 直接构建最终的template_info结构
-        template_info = TemplateInfo(template_items=template_items)
+        template_info = TemplateInfo(
+            template_items=template_items,
+            template_name="Minecraft",
+            template_default=False,
+        )
 
         message_info = BaseMessageInfo(
             platform=self.core.platform,
