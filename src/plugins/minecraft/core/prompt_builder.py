@@ -167,7 +167,9 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
     reasoning_prompt_main = f"""
     你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。
     请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
-    请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
+    请提供一个JSON对象，包含如下字段：
+    - `goal` 的字段，该字段是当前的目标，你自己根据上一次的目标和当前状态来生成现在的目标，例如："收集石头"。切换目标视作上一个目标已完成。
+    - `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
 
 以下是一些有用的Mineflayer API和函数:
 - `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文

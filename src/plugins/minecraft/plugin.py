@@ -10,7 +10,7 @@ from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, TemplateInfo, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
 
 from .core.prompt_builder import build_state_analysis, build_prompt
-from .core.action_handler import parse_mineland_action, execute_mineland_action
+from .core.action_handler import parse_message_json, execute_mineland_action
 from mineland import Observation, CodeInfo, Event
 # logger = get_logger("MinecraftPlugin") # 已由基类初始化
 
@@ -70,6 +70,10 @@ class MinecraftPlugin(BasePlugin):
         self.current_done: bool = False  # 当前是否完成
         self.current_task_info: Optional[Dict[str, Any]] = None  # 当前任务信息
         self.current_step_num: int = 0  # 当前步数
+        self.goal: str = "收集64个原木（oak_log）"  # 当前目标
+
+        # 目标历史记录
+        self.goal_history: List[Dict[str, Any]] = []  # 存储目标历史，每个元素包含目标、时间戳和步数
 
     async def setup(self):
         await super().setup()
@@ -108,6 +112,16 @@ class MinecraftPlugin(BasePlugin):
             self.current_step_num = 0
 
             self.logger.info(f"MineLand 环境已重置，收到初始观察: {len(self.current_obs)} 个智能体。")
+
+            # 记录初始目标到历史中
+            initial_goal_record = {
+                "goal": "初始化",
+                "timestamp": time.time(),
+                "step_num": 0,
+                "completed_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            }
+            self.goal_history.append(initial_goal_record)
+            self.logger.info(f"已记录初始目标: {self.goal}")
 
             # 等待几秒钟，确保 MaiCore 连接
             await asyncio.sleep(5)
@@ -195,7 +209,15 @@ class MinecraftPlugin(BasePlugin):
         )
 
         # 当使用template_info时，消息内容可以简化
-        message_text = f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作，目标是收集64个原木（oak_log）。"
+        message_text = (
+            f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作，当前目标是{self.goal}"
+        )
+
+        # 添加目标历史信息
+        goal_history_text = self._get_goal_history_text(10)
+        if goal_history_text != "暂无目标历史记录":
+            message_text += f"\n\n目标历史记录（最新10条）：\n{goal_history_text}"
+
         message_segment = Seg(type="text", data=message_text)
 
         msg_to_maicore = MessageBase(
@@ -224,15 +246,17 @@ class MinecraftPlugin(BasePlugin):
             )
             return
 
-        action_json_str = message.message_segment.data.strip()
-        self.logger.debug(f"从 MaiCore 收到原始动作指令: {action_json_str}")
+        message_json_str = message.message_segment.data.strip()
+        self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
 
         # 解析动作
-        current_actions = parse_mineland_action(
-            action_json_str=action_json_str,
+        current_actions, goal = parse_message_json(
+            message_json_str=message_json_str,
             agents_count=self.agents_count,
             current_step_num=self.current_step_num,
         )
+
+        self._update_goal(goal)
 
         # 在 MineLand 环境中执行动作
         try:
@@ -297,6 +321,41 @@ class MinecraftPlugin(BasePlugin):
                 self.logger.exception(f"关闭 MineLand 环境时发生错误: {e}", exc_info=True)
 
         self.logger.info("Minecraft 插件清理完毕。")
+
+    def _update_goal(self, new_goal: str):
+        """更新目标并记录历史"""
+        if new_goal != self.goal:
+            # 记录旧目标到历史中
+            goal_record = {
+                "goal": self.goal,
+                "timestamp": time.time(),
+                "step_num": self.current_step_num,
+                "completed_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            }
+            self.goal_history.append(goal_record)
+
+            # 保持历史记录在合理范围内（最多保留50条）
+            if len(self.goal_history) > 50:
+                self.goal_history.pop(0)
+
+            self.logger.info(f"目标已更新: '{self.goal}' -> '{new_goal}' (步骤 {self.current_step_num})")
+            self.goal = new_goal
+
+    def _get_goal_history_text(self, max_count: int = 10) -> str:
+        """获取目标历史的文本描述"""
+        if not self.goal_history:
+            return "暂无目标历史记录"
+
+        # 获取最新的max_count条记录
+        recent_history = self.goal_history[-max_count:]
+
+        history_lines = []
+        for i, record in enumerate(recent_history, 1):
+            history_lines.append(
+                f"{i}. 目标: {record['goal']} (完成于步骤 {record['step_num']}, 时间: {record['completed_time']})"
+            )
+
+        return "\n".join(history_lines)
 
 
 # --- Plugin Entry Point ---
