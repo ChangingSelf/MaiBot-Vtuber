@@ -5,10 +5,12 @@ from src.utils.logger import get_logger
 from src.plugins.minecraft.core.state_analyzers import analyze_voxels, analyze_equipment
 from mineland import Observation, Event, CodeInfo
 
-logger = get_logger("MinecraftPrompt")
+logger = get_logger("MinecraftPlugin")
 
 
-def build_state_analysis(obs: Observation, events: List[Event], code_infos: List[CodeInfo]) -> List[str]:
+def build_state_analysis(
+    agent_info: Dict[str, str], obs: Observation, events: List[Event], code_infos: List[CodeInfo]
+) -> List[str]:
     """
     分析游戏状态并生成状态提示
 
@@ -19,6 +21,22 @@ def build_state_analysis(obs: Observation, events: List[Event], code_infos: List
         List[str]: 状态提示列表
     """
     status_prompts = []
+
+    # 提取最近的聊天消息或事件
+    logger.info(f"events: {events}")
+    if events:
+        recent_events = []
+        for event in events:
+            # 排除自己的聊天事件
+            if "type" in event and "only_message" in event:
+                # 如果是聊天事件且是自己发送的，则跳过
+                # if event.get("type") == "chat" and event.get("username") == agent_info.get("username", "MaiMai"):
+                #     continue
+                msg = event["message"].replace(agent_info.get("username", "MaiMai"), "你")
+                recent_events.append({"type": event["type"], "message": msg})
+        if recent_events:
+            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events[-10:]]  # 仅取最近10条事件
+            status_prompts.append(f"最近的事件: {', '.join(recent_events_str)}")
 
     # 提取生命统计信息
     if hasattr(obs, "life_stats") and obs.life_stats:
@@ -135,16 +153,6 @@ def build_state_analysis(obs: Observation, events: List[Event], code_infos: List
         voxel_prompts = analyze_voxels(obs.voxels)
         status_prompts.extend(voxel_prompts)
 
-    # 提取最近的聊天消息或事件
-    if events:
-        recent_events = []
-        for event in events[-5:]:  # 仅取最近5条消息
-            if hasattr(event, "type") and hasattr(event, "only_message"):
-                recent_events.append({"type": event.type, "message": event.only_message})
-        if recent_events:
-            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events]
-            status_prompts.append(f"最近的事件: {', '.join(recent_events_str)}")
-
     return status_prompts
 
 
@@ -163,7 +171,7 @@ def build_prompt(
         Dict[str, str]: 包含提示词的模板项字典
     """
 
-    status_text = ";".join(status_prompts)
+    status_text = "\n".join(status_prompts)
 
     # 检查代码执行错误
     error_prompt = ""
@@ -204,20 +212,25 @@ def build_prompt(
     你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。{error_prompt}
     请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
     请提供一个JSON对象，包含如下字段：
-    - `goal` 的字段，该字段是当前的目标，你自己根据上一次的目标和当前状态来生成现在的目标，例如："收集石头"。切换目标视作上一个目标已完成。
+    - `goal` 的字段，该字段是当前的目标，你自己根据上一次的目标和当前状态来生成现在的目标，例如："在四处走走，收集石头"。切换目标视作上一个目标已完成。
     - `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
 
 以下是一些有用的Mineflayer API和函数:
 - `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文
-- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`
+- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`。无法挖掘非方块，例如想要挖掘铁矿石需要`iron_ore`而不是`raw_iron`
 - `craftItem(bot, name, count)`: 合成物品
 - `placeItem(bot, name, position)`: 放置方块
 - `smeltItem(bot, name, count)`: 冶炼物品
 - `killMob(bot, name, timeout)`: 击杀生物
+- `bot.toss(itemType, metadata, count)`: 丢弃物品，丢弃时记得离开原地，否则物品会被吸收回来
 
 编写代码时的注意事项:
-- 代码需要符合JavaScript语法
+- 代码需要符合JavaScript语法，使用bot相关异步函数时记得在async函数内await，但是mineBlock之类的高级函数不需要await
 - 检查机器人库存再使用物品
+- 请保持角色移动，不要一直站在原地
+- 一次不要写太多代码，否则容易出现错误。不要写复杂判断，一次只写几句代码
+- 如果状态一直没有变化，请检查代码是否正确（例如方块或物品名称是否正确）并使用新的代码，而不是重复执行同样的代码
+- 如果目标一直无法完成，请切换目标
 - 使用`bot.chat()`显示进度
 - 不要使用`bot.on`或`bot.once`注册事件监听器
 - 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API

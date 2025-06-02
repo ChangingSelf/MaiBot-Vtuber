@@ -70,7 +70,7 @@ class MinecraftPlugin(BasePlugin):
         self.current_done: bool = False  # 当前是否完成
         self.current_task_info: Optional[Dict[str, Any]] = None  # 当前任务信息
         self.current_step_num: int = 0  # 当前步数
-        self.goal: str = "收集64个原木（oak_log）"  # 当前目标
+        self.goal: str = "在四处走走，击杀僵尸"  # 当前目标
 
         # 目标历史记录
         self.goal_history: List[Dict[str, Any]] = []  # 存储目标历史，每个元素包含目标、时间戳和步数
@@ -167,7 +167,9 @@ class MinecraftPlugin(BasePlugin):
 
         # 分析当前游戏状态
         agent_obs = self.current_obs[0]  # 当前仅支持单智能体
-        status_prompts = build_state_analysis(agent_obs, self.current_event, self.current_code_info)
+        agent_event = self.current_event[0]  # 当前仅支持单智能体
+        agent_info = self.agents_config[0]
+        status_prompts = build_state_analysis(agent_info, agent_obs, agent_event, self.current_code_info)
 
         # 准备发送消息
         current_time = int(time.time())
@@ -273,6 +275,7 @@ class MinecraftPlugin(BasePlugin):
             self.current_step_num += 1
 
             self.logger.info(f"代码信息: {str(self.current_code_info[0])}")
+            self.logger.info(f"事件信息: {str(self.current_event[0])}")
 
             # 对于单Agent，通常直接取done[0]
             # 如果是多Agent，需要决定整体的done状态 (当前仅支持单Agent)
