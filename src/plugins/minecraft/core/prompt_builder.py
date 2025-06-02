@@ -2,133 +2,10 @@ import json
 from typing import List, Dict, Any, Optional
 
 from src.utils.logger import get_logger
+from src.plugins.minecraft.core.state_analyzers import analyze_voxels, analyze_equipment
 from mineland import Observation, Event, CodeInfo
 
 logger = get_logger("MinecraftPrompt")
-
-
-def analyze_voxels(voxels) -> List[str]:
-    """
-    分析周围方块环境
-
-    Args:
-        voxels: 3x3x3的方块数据结构，voxels[i][j][k] = blocksAt(MyPosition.offset(i-1, j-1, k-1))
-
-    Returns:
-        List[str]: 周围环境分析提示列表
-    """
-    voxel_prompts = []
-
-    try:
-        # 检查voxels是否有block_name字段
-        if not hasattr(voxels, "block_name") and not (isinstance(voxels, dict) and "block_name" in voxels):
-            return voxel_prompts
-
-        # 获取方块名称数据 (3x3x3数组)
-        block_names = voxels.block_name if hasattr(voxels, "block_name") else voxels["block_name"]
-        is_collidable = (
-            getattr(voxels, "is_collidable", None)
-            if hasattr(voxels, "is_collidable")
-            else voxels.get("is_collidable", None)
-        )
-        is_liquid = (
-            getattr(voxels, "is_liquid", None) if hasattr(voxels, "is_liquid") else voxels.get("is_liquid", None)
-        )
-        is_solid = getattr(voxels, "is_solid", None) if hasattr(voxels, "is_solid") else voxels.get("is_solid", None)
-
-        # 收集所有方块类型
-        block_counts = {}
-        liquid_blocks = []
-        solid_blocks = []
-        air_blocks = 0
-
-        # 遍历3x3x3数组 (i, j, k对应offset(i-1, j-1, k-1))
-        for x in range(len(block_names)):
-            for y in range(len(block_names[x])):
-                for z in range(len(block_names[x][y])):
-                    block_name = block_names[x][y][z]
-
-                    if block_name == "air":
-                        air_blocks += 1
-                    elif block_name and block_name != "null":
-                        # 统计方块类型
-                        if block_name in block_counts:
-                            block_counts[block_name] += 1
-                        else:
-                            block_counts[block_name] = 1
-
-                        # 检查是否是液体
-                        if is_liquid and x < len(is_liquid) and y < len(is_liquid[x]) and z < len(is_liquid[x][y]):
-                            if is_liquid[x][y][z]:
-                                liquid_blocks.append(block_name)
-
-                        # 检查是否是固体
-                        if is_solid and x < len(is_solid) and y < len(is_solid[x]) and z < len(is_solid[x][y]):
-                            if is_solid[x][y][z]:
-                                solid_blocks.append(block_name)
-
-        # 分析玩家当前位置的方块 (voxels[1][1][1] = offset(0, 0, 0))
-        if len(block_names) > 1 and len(block_names[1]) > 1 and len(block_names[1][1]) > 1:
-            current_block = block_names[1][1][1]
-            if current_block and current_block != "air":
-                voxel_prompts.append(f"你当前位置有{current_block}方块，可能需要移动")
-
-        # 分析脚下的方块 (voxels[1][0][1] = offset(0, -1, 0))
-        if len(block_names) > 1 and len(block_names[1]) > 0 and len(block_names[1][0]) > 1:
-            ground_block = block_names[1][0][1]
-            if ground_block and ground_block != "air":
-                voxel_prompts.append(f"你脚下是{ground_block}方块")
-
-                # 如果脚下是液体，给出警告
-                if is_liquid and len(is_liquid) > 1 and len(is_liquid[1]) > 0 and len(is_liquid[1][0]) > 1:
-                    if is_liquid[1][0][1]:
-                        voxel_prompts.append("警告：你脚下是液体，可能会溺水或受伤！")
-
-        # 分析周围环境的总体情况
-        if block_counts:
-            # 找出最常见的方块类型
-            most_common_block = max(block_counts, key=block_counts.get)
-            most_common_count = block_counts[most_common_block]
-
-            # 构建周围环境描述
-            if most_common_count >= 10:  # 在3x3x3=27个方块中，如果某种方块超过10个就算主要环境
-                voxel_prompts.append(f"你周围主要是{most_common_block}环境")
-
-            # 特殊环境检测
-            if "water" in block_counts or "lava" in block_counts:
-                liquids = [name for name in block_counts.keys() if name in ["water", "lava"]]
-                if liquids:
-                    voxel_prompts.append(f"警告：周围有{', '.join(liquids)}，需要小心移动")
-
-            if "stone" in block_counts and block_counts["stone"] >= 5:
-                voxel_prompts.append("你处于石头区域，可能在洞穴或山区")
-
-            if "grass_block" in block_counts and block_counts["grass_block"] >= 5:
-                voxel_prompts.append("你处于草地环境")
-
-            if "sand" in block_counts and block_counts["sand"] >= 5:
-                voxel_prompts.append("你处于沙漠环境")
-
-            if "oak_log" in block_counts or "birch_log" in block_counts or "spruce_log" in block_counts:
-                voxel_prompts.append("周围有树木，可以收集木材")
-
-        # 分析空气方块比例，判断是否在开阔区域
-        total_blocks = 27  # 3x3x3
-        if air_blocks >= 20:
-            voxel_prompts.append("你处于开阔区域")
-        elif air_blocks <= 5:
-            voxel_prompts.append("你处于封闭或狭窄的空间")
-
-        # 检查头顶是否有遮挡 (voxels[1][2][1] = offset(0, 1, 0))
-        if len(block_names) > 1 and len(block_names[1]) > 2 and len(block_names[1][2]) > 1:
-            overhead_block = block_names[1][2][1]
-            if overhead_block and overhead_block != "air":
-                voxel_prompts.append(f"你头顶有{overhead_block}方块，可能需要挖掘才能向上移动")
-
-    except (IndexError, KeyError, AttributeError) as e:
-        logger.warning(f"分析voxels数据时出错: {e}")
-
-    return voxel_prompts
 
 
 def build_state_analysis(obs: Observation, events: List[Event], code_infos: List[CodeInfo]) -> List[str]:
@@ -163,6 +40,11 @@ def build_state_analysis(obs: Observation, events: List[Event], code_infos: List
         oxygen = getattr(obs.life_stats, "oxygen", 20)
         if oxygen < 20:
             status_prompts.append(f"你的氧气值不足，当前只有{oxygen}/20。")
+
+    # 分析当前装备状态
+    if hasattr(obs, "equip") and obs.equip:
+        equipment_prompts = analyze_equipment(obs.equip)
+        status_prompts.extend(equipment_prompts)
 
     # 分析并提取库存状态
     if hasattr(obs, "inventory_full_slot_count") and hasattr(obs, "inventory_slot_count"):
