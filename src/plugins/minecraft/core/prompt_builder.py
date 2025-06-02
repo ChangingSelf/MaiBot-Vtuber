@@ -47,8 +47,42 @@ def build_state_analysis(obs: Observation, events: List[Event], code_infos: List
         if full_slots >= total_slots - 5:
             status_prompts.append("你的物品栏几乎已满，需要整理或丢弃一些物品。")
 
-        # 提取物品栏内容摘要
-        if hasattr(obs, "inventory") and hasattr(obs.inventory, "name"):
+        # 使用inventory_all字段提取物品栏内容摘要
+        if hasattr(obs, "inventory_all") and obs.inventory_all:
+            inventory_items = {}
+
+            # 遍历inventory_all字典，直接获取物品名称和数量
+            for slot_id, item_info in obs.inventory_all.items():
+                if isinstance(item_info, dict) and "name" in item_info and "count" in item_info:
+                    item_name = item_info["name"]
+                    item_count = item_info["count"]
+
+                    # 过滤空气和空物品
+                    if item_name and item_name != "air" and item_name != "null" and item_count > 0:
+                        if item_name in inventory_items:
+                            inventory_items[item_name] += item_count
+                        else:
+                            inventory_items[item_name] = item_count
+
+            if inventory_items:
+                # 构建详细的物品栏信息
+                items_list = []
+                total_items = 0
+                for item_name, count in inventory_items.items():
+                    items_list.append(f"{count}个{item_name}")
+                    total_items += count
+
+                items_summary = ", ".join(items_list)
+                status_prompts.append(f"你的物品栏包含: {items_summary}（共{total_items}个物品）")
+
+                # 如果物品种类较多，额外提供分类总结
+                if len(inventory_items) > 5:
+                    status_prompts.append(f"你总共有{len(inventory_items)}种不同的物品")
+            else:
+                status_prompts.append("你的物品栏是空的")
+
+        # 如果没有inventory_all字段，回退到原来的inventory字段处理方式
+        elif hasattr(obs, "inventory") and hasattr(obs.inventory, "name"):
             inventory_items = {}
             for idx, item_name in enumerate(obs.inventory.name):
                 if item_name and item_name != "null" and item_name != "air":
@@ -62,7 +96,10 @@ def build_state_analysis(obs: Observation, events: List[Event], code_infos: List
                     else:
                         inventory_items[item_name] = quantity
 
-            status_prompts.append(f"你的物品栏包含: {', '.join([f'{v} {k}' for k, v in inventory_items.items()])}")
+            if inventory_items:
+                status_prompts.append(f"你的物品栏包含: {', '.join([f'{v}个{k}' for k, v in inventory_items.items()])}")
+            else:
+                status_prompts.append("你的物品栏是空的")
 
     # 分析并提取环境状态
     if hasattr(obs, "location_stats"):
@@ -122,7 +159,7 @@ def build_prompt(status_prompts: List[str], obs: Observation) -> Dict[str, str]:
     请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
 
 以下是一些有用的Mineflayer API和函数:
-- `bot.chat(message)`: 发送聊天消息
+- `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文
 - `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`
 - `craftItem(bot, name, count)`: 合成物品
 - `placeItem(bot, name, position)`: 放置方块
