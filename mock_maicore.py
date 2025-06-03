@@ -271,11 +271,7 @@ async def cmd_mc_low_level(args: List[str]) -> Optional[MessageBase]:
 async def cmd_mc_code(args: List[str]) -> Optional[MessageBase]:
     """发送Minecraft高级动作（JavaScript代码）"""
     # 默认代码
-    default_code = """
-def run(api):
-    api.chat("Hello, Minecraft world!")
-    api.step_forward()
-    """
+    default_code = """bot.chat("Hello, Minecraft world!")"""
 
     # 如果提供了自定义代码，使用用户提供的代码
     code = " ".join(args) if args else default_code

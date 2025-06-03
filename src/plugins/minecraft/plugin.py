@@ -7,11 +7,11 @@ import tomllib
 
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
+from maim_message import MessageBase, TemplateInfo, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
 
 from .core.prompt_builder import build_state_analysis, build_prompt
-from .core.action_handler import parse_mineland_action, execute_mineland_action
-
+from .core.action_handler import parse_message_json, execute_mineland_action
+from mineland import Observation, CodeInfo, Event
 # logger = get_logger("MinecraftPlugin") # 已由基类初始化
 
 
@@ -28,7 +28,8 @@ class MinecraftPlugin(BasePlugin):
 
         # 智能体配置，默认为1个智能体
         self.agents_count: int = 1  # 目前硬编码为1，将来可以考虑加入配置
-        self.agents_config: List[Dict[str, str]] = [{"name": f"MaiMai{i}"} for i in range(self.agents_count)]
+        # self.agents_config: List[Dict[str, str]] = [{"name": f"MaiMai{i}"} for i in range(self.agents_count)]
+        self.agents_config: List[Dict[str, str]] = [{"name": "MaiMai"}]
 
         self.headless: bool = minecraft_config.get("mineland_headless", True)
 
@@ -40,24 +41,16 @@ class MinecraftPlugin(BasePlugin):
             self.logger.warning(f"配置的 image_size 无效: {image_size_config}，使用默认值 (180, 320)")
             self.image_size: tuple[int, int] = (180, 320)
 
-        self.enable_low_level_action: bool = minecraft_config.get("mineland_enable_low_level_action", False)
         self.ticks_per_step: int = minecraft_config.get("mineland_ticks_per_step", 20)
 
         self.user_id: str = minecraft_config.get("user_id", "minecraft_bot")
-        self.group_id_str: Optional[str] = minecraft_config.get("group_id")
+        self.group_id: Optional[str] = minecraft_config.get("group_id")
         self.nickname: str = minecraft_config.get("nickname", "Minecraft Observer")
 
         # 添加定期发送状态的配置
         self.auto_send_interval: float = minecraft_config.get("auto_send_interval", 30.0)  # 默认30秒
         self._auto_send_task: Optional[asyncio.Task] = None
         self._last_response_time: float = 0.0
-
-        # --- 加载Template Items配置 ---
-        self.enable_template_info = minecraft_config.get("enable_template_info", True)
-        self.template_items = {}
-        # 如果配置中有template_items，则使用配置中的值
-        if self.enable_template_info and "template_items" in minecraft_config:
-            self.template_items = minecraft_config.get("template_items", {})
 
         # 上下文标签配置
         self.context_tags: Optional[List[str]] = minecraft_config.get("context_tags")
@@ -71,12 +64,16 @@ class MinecraftPlugin(BasePlugin):
         # Mineland 实例
         self.mland: Optional[mineland.MineLand] = None
         # Mineland 状态变量
-        self.current_obs: Optional[Any] = None  # 当前观察值
-        self.current_code_info: Optional[List[Any]] = None  # 当前代码信息 (根据mineland_script.py是列表)
-        self.current_event: Optional[List[List[Any]]] = None  # 当前事件 (根据mineland_script.py是列表的列表)
+        self.current_obs: Optional[List[Observation]] = None  # 当前观察值
+        self.current_code_info: Optional[List[CodeInfo]] = None  # 当前代码信息 (根据mineland_script.py是列表)
+        self.current_event: Optional[List[List[Event]]] = None  # 当前事件 (根据mineland_script.py是列表的列表)
         self.current_done: bool = False  # 当前是否完成
         self.current_task_info: Optional[Dict[str, Any]] = None  # 当前任务信息
         self.current_step_num: int = 0  # 当前步数
+        self.goal: str = "在四处走走，击杀僵尸"  # 当前目标
+
+        # 目标历史记录
+        self.goal_history: List[Dict[str, Any]] = []  # 存储目标历史，每个元素包含目标、时间戳和步数
 
     async def setup(self):
         await super().setup()
@@ -85,13 +82,23 @@ class MinecraftPlugin(BasePlugin):
 
         self.logger.info("Minecraft 插件已加载，正在初始化 MineLand 环境...")
         try:
-            self.mland = mineland.make(
-                task_id=self.task_id,
+            # self.mland = mineland.make(
+            #     task_id=self.task_id,
+            #     agents_count=self.agents_count,
+            #     agents_config=self.agents_config,
+            #     headless=self.headless,
+            #     image_size=self.image_size,
+            #     enable_low_level_action=self.enable_low_level_action,
+            #     ticks_per_step=self.ticks_per_step,
+            # )
+            self.mland = mineland.MineLand(
+                server_host="127.0.0.1",
+                server_port=1746,
                 agents_count=self.agents_count,
                 agents_config=self.agents_config,
                 headless=self.headless,
                 image_size=self.image_size,
-                enable_low_level_action=self.enable_low_level_action,
+                enable_low_level_action=False,  # 全都使用高级动作
                 ticks_per_step=self.ticks_per_step,
             )
             self.logger.info(f"MineLand 环境 (Task ID: {self.task_id}) 初始化成功。")
@@ -105,6 +112,16 @@ class MinecraftPlugin(BasePlugin):
             self.current_step_num = 0
 
             self.logger.info(f"MineLand 环境已重置，收到初始观察: {len(self.current_obs)} 个智能体。")
+
+            # 记录初始目标到历史中
+            initial_goal_record = {
+                "goal": "初始化",
+                "timestamp": time.time(),
+                "step_num": 0,
+                "completed_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            }
+            self.goal_history.append(initial_goal_record)
+            self.logger.info(f"已记录初始目标: {self.goal}")
 
             # 等待几秒钟，确保 MaiCore 连接
             await asyncio.sleep(5)
@@ -150,62 +167,59 @@ class MinecraftPlugin(BasePlugin):
 
         # 分析当前游戏状态
         agent_obs = self.current_obs[0]  # 当前仅支持单智能体
-        status_hints, state_summary = build_state_analysis(agent_obs)
-
-        # 构建提示词
-        prompted_message_content = build_prompt(
-            state_summary=state_summary,
-            status_hints=status_hints,
-            step_num=self.current_step_num,
-            enable_low_level_action=self.enable_low_level_action,
-        )
+        agent_event = self.current_event[0]  # 当前仅支持单智能体
+        agent_info = self.agents_config[0]
+        status_prompts = build_state_analysis(agent_info, agent_obs, agent_event, self.current_code_info)
 
         # 准备发送消息
         current_time = int(time.time())
-        message_id = f"mc_direct_{current_time}_{hash(prompted_message_content + str(self.user_id)) % 10000}"
+        message_id = int(time.time())
 
         user_info = UserInfo(platform=self.core.platform, user_id=str(self.user_id), user_nickname=self.nickname)
 
-        group_info_obj = None
-        if self.group_id_str:
-            try:
-                parsed_group_id = int(self.group_id_str)
-                group_info_obj = GroupInfo(
-                    platform=self.core.platform,
-                    group_id=parsed_group_id,
-                )
-            except ValueError:
-                self.logger.warning(f"配置的 group_id '{self.group_id_str}' 不是有效的整数。将忽略 GroupInfo。")
+        group_info = None
+        if self.group_id:
+            group_info = GroupInfo(
+                platform=self.core.platform,
+                group_id=self.group_id,
+            )
 
         format_info = FormatInfo(content_format="text", accept_format="text")  # 保持文本格式，内容是JSON字符串
 
         # --- 构建Template Info ---
-        final_template_info_value = None
-        if self.enable_template_info:
-            # 创建一个包含提示词的模板项字典
-            template_items = self.template_items.copy() if self.template_items else {}
+        # 创建一个包含提示词的模板项字典
+        template_items = build_prompt(status_prompts, self.current_obs, self.current_code_info)
 
-            # 使用'reasoning_prompt_main'作为主提示词的键
-            template_items["heart_flow_prompt"] = prompted_message_content
-
-            # 直接构建最终的template_info结构
-            final_template_info_value = {"template_items": template_items}
+        # 直接构建最终的template_info结构
+        template_info = TemplateInfo(
+            template_items=template_items,
+            template_name="Minecraft",
+            template_default=False,
+        )
 
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             message_id=message_id,
             time=current_time,
             user_info=user_info,
-            group_info=group_info_obj,
+            group_info=group_info,
             format_info=format_info,
             additional_config={
-                "source_plugin": "minecraft",
+                "maimcore_reply_probability_gain": 1,  # 确保必然回复
             },
-            template_info=final_template_info_value,  # 使用构建好的template_info
+            template_info=template_info,  # 使用构建好的template_info
         )
 
         # 当使用template_info时，消息内容可以简化
-        message_text = "请分析Minecraft状态并作出决策" if final_template_info_value else prompted_message_content
+        message_text = (
+            f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作，当前目标是{self.goal}"
+        )
+
+        # 添加目标历史信息
+        goal_history_text = self._get_goal_history_text(10)
+        if goal_history_text != "暂无目标历史记录":
+            message_text += f"\n\n目标历史记录（最新10条）：\n{goal_history_text}"
+
         message_segment = Seg(type="text", data=message_text)
 
         msg_to_maicore = MessageBase(
@@ -213,12 +227,9 @@ class MinecraftPlugin(BasePlugin):
         )
 
         await self.core.send_to_maicore(msg_to_maicore)
-        action_mode = "低级 (数值数组)" if self.enable_low_level_action else "高级 (JavaScript)"
-        template_mode = "通过template_info" if final_template_info_value else "通过消息内容"
         self.logger.info(
-            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}, 偏好动作模式: {action_mode}, 提示词模式: {template_mode}) 发送给 MaiCore。"
+            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
         )
-        self.logger.debug(f"发送给 MaiCore 的状态详情: {prompted_message_content[:300]}...")
 
     async def handle_maicore_response(self, message: MessageBase):
         """处理从 MaiCore 返回的动作指令。"""
@@ -237,16 +248,17 @@ class MinecraftPlugin(BasePlugin):
             )
             return
 
-        action_json_str = message.message_segment.data.strip()
-        self.logger.debug(f"从 MaiCore 收到原始动作指令: {action_json_str}...")
+        message_json_str = message.message_segment.data.strip()
+        self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
 
         # 解析动作
-        current_actions, parsed_action_for_log = parse_mineland_action(
-            action_json_str=action_json_str,
+        current_actions, goal = parse_message_json(
+            message_json_str=message_json_str,
             agents_count=self.agents_count,
             current_step_num=self.current_step_num,
-            enable_low_level_action=self.enable_low_level_action,
         )
+
+        self._update_goal(goal)
 
         # 在 MineLand 环境中执行动作
         try:
@@ -254,12 +266,16 @@ class MinecraftPlugin(BasePlugin):
                 mland=self.mland, current_actions=current_actions
             )
 
+            # 更新状态
             self.current_obs = next_obs
             self.current_code_info = next_code_info
             self.current_event = next_event
             self.current_done = next_done
             self.current_task_info = next_task_info
             self.current_step_num += 1
+
+            self.logger.info(f"代码信息: {str(self.current_code_info[0])}")
+            self.logger.info(f"事件信息: {str(self.current_event[0])}")
 
             # 对于单Agent，通常直接取done[0]
             # 如果是多Agent，需要决定整体的done状态 (当前仅支持单Agent)
@@ -279,7 +295,7 @@ class MinecraftPlugin(BasePlugin):
                 self.current_done = False  # 重置 done 状态
                 self.current_task_info = {}
                 self.current_step_num = 0  # 为新的回合重置步数
-                self.logger.info(f"环境已重置，收到新的初始观察。")
+                self.logger.info("环境已重置，收到新的初始观察。")
 
             # 发送新的状态给 MaiCore
             await self._send_state_to_maicore()
@@ -310,6 +326,41 @@ class MinecraftPlugin(BasePlugin):
                 self.logger.exception(f"关闭 MineLand 环境时发生错误: {e}", exc_info=True)
 
         self.logger.info("Minecraft 插件清理完毕。")
+
+    def _update_goal(self, new_goal: str):
+        """更新目标并记录历史"""
+        if new_goal != self.goal:
+            # 记录旧目标到历史中
+            goal_record = {
+                "goal": self.goal,
+                "timestamp": time.time(),
+                "step_num": self.current_step_num,
+                "completed_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            }
+            self.goal_history.append(goal_record)
+
+            # 保持历史记录在合理范围内（最多保留50条）
+            if len(self.goal_history) > 50:
+                self.goal_history.pop(0)
+
+            self.logger.info(f"目标已更新: '{self.goal}' -> '{new_goal}' (步骤 {self.current_step_num})")
+            self.goal = new_goal
+
+    def _get_goal_history_text(self, max_count: int = 10) -> str:
+        """获取目标历史的文本描述"""
+        if not self.goal_history:
+            return "暂无目标历史记录"
+
+        # 获取最新的max_count条记录
+        recent_history = self.goal_history[-max_count:]
+
+        history_lines = []
+        for i, record in enumerate(recent_history, 1):
+            history_lines.append(
+                f"{i}. 目标: {record['goal']} (完成于步骤 {record['step_num']}, 时间: {record['completed_time']})"
+            )
+
+        return "\n".join(history_lines)
 
 
 # --- Plugin Entry Point ---

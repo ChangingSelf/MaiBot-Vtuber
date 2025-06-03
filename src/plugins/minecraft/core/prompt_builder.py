@@ -2,67 +2,117 @@ import json
 from typing import List, Dict, Any, Optional
 
 from src.utils.logger import get_logger
+from src.plugins.minecraft.core.state_analyzers import analyze_voxels, analyze_equipment
+from mineland import Observation, Event, CodeInfo
 
-logger = get_logger("MinecraftPrompt")
+logger = get_logger("MinecraftPlugin")
 
 
-def build_state_analysis(agent_obs) -> tuple[List[str], Dict[str, Any]]:
+def build_state_analysis(
+    agent_info: Dict[str, str], obs: Observation, events: List[Event], code_infos: List[CodeInfo]
+) -> List[str]:
     """
-    分析游戏状态并生成状态提示和状态摘要
+    分析游戏状态并生成状态提示
 
     Args:
-        agent_obs: Mineland观察对象
+        obs: Mineland观察对象
 
     Returns:
-        tuple: (状态提示列表, 状态摘要字典)
+        List[str]: 状态提示列表
     """
-    status_hints = []
-    state_summary = {"step": 0, "agent": {}}
+    status_prompts = []
+
+    # 提取最近的聊天消息或事件
+    logger.info(f"events: {events}")
+    if events:
+        recent_events = []
+        for event in events:
+            # 排除自己的聊天事件
+            if "type" in event and "only_message" in event:
+                # 如果是聊天事件且是自己发送的，则跳过
+                # if event.get("type") == "chat" and event.get("username") == agent_info.get("username", "MaiMai"):
+                #     continue
+                msg = event["message"].replace(agent_info.get("username", "MaiMai"), "你")
+                recent_events.append({"type": event["type"], "message": msg})
+        if recent_events:
+            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events[-10:]]  # 仅取最近10条事件
+            status_prompts.append(f"最近的事件: {', '.join(recent_events_str)}")
 
     # 提取生命统计信息
-    if hasattr(agent_obs, "life_stats") and agent_obs.life_stats:
+    if hasattr(obs, "life_stats") and obs.life_stats:
         # 饥饿状态分析
-        food_level = getattr(agent_obs.life_stats, "food", 20)
+        food_level = getattr(obs.life_stats, "food", 20)
         if food_level <= 6:
-            status_hints.append("你现在非常饥饿，需要尽快寻找食物。")
+            status_prompts.append("你现在非常饥饿，需要尽快寻找食物。")
         elif food_level <= 10:
-            status_hints.append("你的饥饿值较低，应该考虑寻找食物。")
+            status_prompts.append("你的饥饿值较低，应该考虑寻找食物。")
 
         # 生命值分析
-        health = getattr(agent_obs.life_stats, "life", 20)
+        health = getattr(obs.life_stats, "life", 20)
         if health <= 5:
-            status_hints.append("警告：你的生命值极低，处于危险状态！")
+            status_prompts.append("警告：你的生命值极低，处于危险状态！")
         elif health <= 10:
-            status_hints.append("你的生命值较低，需要小心行动。")
+            status_prompts.append("你的生命值较低，需要小心行动。")
 
         # 氧气值分析
-        oxygen = getattr(agent_obs.life_stats, "oxygen", 20)
+        oxygen = getattr(obs.life_stats, "oxygen", 20)
         if oxygen < 20:
-            status_hints.append(f"你的氧气值不足，当前只有{oxygen}/20。")
+            status_prompts.append(f"你的氧气值不足，当前只有{oxygen}/20。")
 
-        # 添加到状态摘要
-        state_summary["agent"]["health"] = health
-        state_summary["agent"]["food"] = food_level
-        state_summary["agent"]["oxygen"] = oxygen
+    # 分析当前装备状态
+    if hasattr(obs, "equip") and obs.equip:
+        equipment_prompts = analyze_equipment(obs.equip)
+        status_prompts.extend(equipment_prompts)
 
     # 分析并提取库存状态
-    if hasattr(agent_obs, "inventory_full_slot_count") and hasattr(agent_obs, "inventory_slot_count"):
-        full_slots = getattr(agent_obs, "inventory_full_slot_count", 0)
-        total_slots = getattr(agent_obs, "inventory_slot_count", 36)
+    if hasattr(obs, "inventory_full_slot_count") and hasattr(obs, "inventory_slot_count"):
+        full_slots = getattr(obs, "inventory_full_slot_count", 0)
+        total_slots = getattr(obs, "inventory_slot_count", 36)
         if full_slots >= total_slots - 5:
-            status_hints.append("你的物品栏几乎已满，需要整理或丢弃一些物品。")
+            status_prompts.append("你的物品栏几乎已满，需要整理或丢弃一些物品。")
 
-        # 添加到状态摘要
-        state_summary["agent"]["inventory"] = {"full_slots": full_slots, "total_slots": total_slots}
-
-        # 提取物品栏内容摘要
-        if hasattr(agent_obs, "inventory") and hasattr(agent_obs.inventory, "name"):
+        # 使用inventory_all字段提取物品栏内容摘要
+        if hasattr(obs, "inventory_all") and obs.inventory_all:
             inventory_items = {}
-            for idx, item_name in enumerate(agent_obs.inventory.name):
-                if item_name and item_name != "null":
+
+            # 遍历inventory_all字典，直接获取物品名称和数量
+            for slot_id, item_info in obs.inventory_all.items():
+                if isinstance(item_info, dict) and "name" in item_info and "count" in item_info:
+                    item_name = item_info["name"]
+                    item_count = item_info["count"]
+
+                    # 过滤空气和空物品
+                    if item_name and item_name != "air" and item_name != "null" and item_count > 0:
+                        if item_name in inventory_items:
+                            inventory_items[item_name] += item_count
+                        else:
+                            inventory_items[item_name] = item_count
+
+            if inventory_items:
+                # 构建详细的物品栏信息
+                items_list = []
+                total_items = 0
+                for item_name, count in inventory_items.items():
+                    items_list.append(f"{count}个{item_name}")
+                    total_items += count
+
+                items_summary = ", ".join(items_list)
+                status_prompts.append(f"你的物品栏包含: {items_summary}（共{total_items}个物品）")
+
+                # 如果物品种类较多，额外提供分类总结
+                if len(inventory_items) > 5:
+                    status_prompts.append(f"你总共有{len(inventory_items)}种不同的物品")
+            else:
+                status_prompts.append("你的物品栏是空的")
+
+        # 如果没有inventory_all字段，回退到原来的inventory字段处理方式
+        elif hasattr(obs, "inventory") and hasattr(obs.inventory, "name"):
+            inventory_items = {}
+            for idx, item_name in enumerate(obs.inventory.name):
+                if item_name and item_name != "null" and item_name != "air":
                     quantity = (
-                        agent_obs.inventory.quantity[idx]
-                        if hasattr(agent_obs.inventory, "quantity") and idx < len(agent_obs.inventory.quantity)
+                        obs.inventory.quantity[idx]
+                        if hasattr(obs.inventory, "quantity") and idx < len(obs.inventory.quantity)
                         else 1
                     )
                     if item_name in inventory_items:
@@ -70,159 +120,126 @@ def build_state_analysis(agent_obs) -> tuple[List[str], Dict[str, Any]]:
                     else:
                         inventory_items[item_name] = quantity
 
-            state_summary["agent"]["items"] = inventory_items
+            if inventory_items:
+                status_prompts.append(f"你的物品栏包含: {', '.join([f'{v}个{k}' for k, v in inventory_items.items()])}")
+            else:
+                status_prompts.append("你的物品栏是空的")
 
     # 分析并提取环境状态
-    if hasattr(agent_obs, "location_stats"):
+    if hasattr(obs, "location_stats"):
         location_summary = {}
 
         # 位置坐标
-        if hasattr(agent_obs.location_stats, "pos"):
-            pos = getattr(agent_obs.location_stats, "pos", [0, 0, 0])
+        if hasattr(obs.location_stats, "pos"):
+            pos = getattr(obs.location_stats, "pos", [0, 0, 0])
             location_summary["position"] = pos
             if pos[1] < 30:  # Y坐标较低
-                status_hints.append("你处于较低的高度，可能接近地下洞穴或矿层。")
+                status_prompts.append("你处于较低的高度，可能接近地下洞穴或矿层。")
 
         # 天气状态
-        is_raining = getattr(agent_obs.location_stats, "is_raining", False)
+        is_raining = getattr(obs.location_stats, "is_raining", False)
         location_summary["is_raining"] = is_raining
         if is_raining:
-            status_hints.append("当前正在下雨，可能影响视野和移动。")
-
-        state_summary["agent"]["location"] = location_summary
+            status_prompts.append("当前正在下雨，可能影响视野和移动。")
 
     # 提取时间状态
-    if hasattr(agent_obs, "time"):
-        game_time = getattr(agent_obs, "time", 0)
-        state_summary["time"] = game_time
+    if hasattr(obs, "time"):
+        game_time = getattr(obs, "time", 0)
         if 13000 <= game_time <= 23000:
-            status_hints.append("现在是夜晚，小心可能出现的敌对生物。")
+            status_prompts.append("现在是夜晚，小心可能出现的敌对生物。")
 
-    # 提取最近的聊天消息或事件
-    if hasattr(agent_obs, "event") and agent_obs.event:
-        recent_events = []
-        for event in agent_obs.event[-5:]:  # 仅取最近5条消息
-            if hasattr(event, "type") and hasattr(event, "only_message"):
-                recent_events.append({"type": event.type, "message": event.only_message})
-        if recent_events:
-            state_summary["recent_events"] = recent_events
+    # 分析周围方块环境 (voxels)
+    if hasattr(obs, "voxels") and obs.voxels:
+        voxel_prompts = analyze_voxels(obs.voxels)
+        status_prompts.extend(voxel_prompts)
 
-    return status_hints, state_summary
+    return status_prompts
 
 
 def build_prompt(
-    state_summary: Dict[str, Any], status_hints: List[str], step_num: int, enable_low_level_action: bool
-) -> str:
+    status_prompts: List[str], obs: Observation, code_infos: Optional[List[CodeInfo]] = None
+) -> Dict[str, str]:
     """
     构建发送给AI的提示词
 
     Args:
-        state_summary: 游戏状态摘要
-        status_hints: 状态提示列表
-        step_num: 当前步数
-        enable_low_level_action: 是否启用低级动作
+        status_prompts: 状态提示列表
+        obs: Mineland观察对象
+        code_infos: 代码信息列表，用于检测代码执行错误
 
     Returns:
-        str: 完整的提示词
+        Dict[str, str]: 包含提示词的模板项字典
     """
-    # 基础提示
-    base_prompt = (
-        "你是一个Minecraft智能体助手。请分析游戏状态并提供一个JSON格式的动作指令。\n"
-        "你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), "
-        "也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。"
-    )
 
-    # 添加状态提示
-    if status_hints:
-        status_analysis = "\n\n状态分析：\n" + "\n".join([f"- {hint}" for hint in status_hints])
-        base_prompt += status_analysis
+    status_text = "\n".join(status_prompts)
 
-    # 添加状态摘要
-    if state_summary:
-        try:
-            state_summary["step"] = step_num  # 确保步数是最新的
-            state_summary_json = json.dumps(state_summary, ensure_ascii=False, indent=2)
-            state_summary_section = f"\n\n当前游戏状态摘要：\n{state_summary_json}"
-            base_prompt += state_summary_section
-        except Exception as e:
-            logger.exception(f"序列化状态摘要失败: {e}", exc_info=True)
+    # 检查代码执行错误
+    error_prompt = ""
+    if code_infos:
+        for code_info in code_infos:
+            if code_info and hasattr(code_info, "code_error") and code_info.code_error:
+                # 从 code_info 中提取错误信息
+                error_type = code_info.code_error.get("error_type", "未知错误")
+                error_message = code_info.code_error.get("error_message", "无详细信息")
+                last_code = getattr(code_info, "last_code", "无代码记录")
 
-    # 高级动作提示
-    high_level_example = {"actions": "bot.chat('Hello from Minecraft!'); bot.jump();"}
-    high_level_instructions = f"""请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
+                # 对代码中的花括号进行转义，避免在字符串格式化时出现问题
+                escaped_last_code = last_code.replace("{", "\\{").replace("}", "\\}")
 
-你是一个编写Mineflayer JavaScript代码的助手，帮助机器人完成Minecraft中的任务。
+                error_prompt = f"""
+重要提醒：上次执行的代码出现了错误，请务必修正！
+- 错误类型：{error_type}
+- 错误信息：{error_message}
+- 出错的代码：{escaped_last_code}
+
+在编写新代码时，请特别注意避免以下问题：
+1. 检查是否有语法错误（括号匹配、分号等）
+2. 确保所有引用的变量和函数都已定义
+3. 验证API调用的参数是否正确
+4. 避免访问可能不存在的属性或方法
+5. 确保代码逻辑的正确性
+
+请根据错误信息修正问题并重新编写正确的代码。
+                """
+                break  # 只处理第一个错误
+
+    # 提示词
+    chat_target_group1 = "你正在直播Minecraft游戏，以下是游戏的当前状态："
+    chat_target_group2 = "正在直播Minecraft游戏"
+
+    # 构建主要的推理提示词，如果有错误则包含错误修正提示
+    base_prompt = f"""
+    你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。{error_prompt}
+    请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
+    请提供一个JSON对象，包含如下字段：
+    - `goal` 的字段，该字段是当前的目标，你自己根据上一次的目标和当前状态来生成现在的目标，例如："在四处走走，收集石头"。切换目标视作上一个目标已完成。
+    - `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
+
 以下是一些有用的Mineflayer API和函数:
-- `bot.chat(message)`: 发送聊天消息
-- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`
+- `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文
+- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`。无法挖掘非方块，例如想要挖掘铁矿石需要`iron_ore`而不是`raw_iron`
 - `craftItem(bot, name, count)`: 合成物品
 - `placeItem(bot, name, position)`: 放置方块
 - `smeltItem(bot, name, count)`: 冶炼物品
 - `killMob(bot, name, timeout)`: 击杀生物
+- `bot.toss(itemType, metadata, count)`: 丢弃物品，丢弃时记得离开原地，否则物品会被吸收回来
 
 编写代码时的注意事项:
-- 使用`async/await`语法处理异步操作
-- 避免无限循环和递归函数
+- 代码需要符合JavaScript语法，使用bot相关异步函数时记得在async函数内await，但是mineBlock之类的高级函数不需要await
 - 检查机器人库存再使用物品
+- 请保持角色移动，不要一直站在原地
+- 一次不要写太多代码，否则容易出现错误。不要写复杂判断，一次只写几句代码
+- 如果状态一直没有变化，请检查代码是否正确（例如方块或物品名称是否正确）并使用新的代码，而不是重复执行同样的代码
+- 如果目标一直无法完成，请切换目标
 - 使用`bot.chat()`显示进度
 - 不要使用`bot.on`或`bot.once`注册事件监听器
+- 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API
+    """
 
-简单示例代码:
-```
-async function findAndCollectWood(bot) {{
-  bot.chat('开始寻找并收集木头');
-  
-  // 尝试寻找橡木
-  const log = bot.findBlock({{
-    matching: block => block.name.includes('log'),
-    maxDistance: 32
-  }});
-  
-  if (!log) {{
-    bot.chat('附近没有找到木头，四处探索');
-    // 向前移动10秒
-    bot.setControlState('forward', true);
-    await new Promise(resolve => setTimeout(resolve, 10000));
-    bot.setControlState('forward', false);
-    return;
-  }}
-  
-  bot.chat('找到木头，准备收集');
-  await mineBlock(bot, 'log', 3);
-  bot.chat('成功收集了木头');
-}}
-```
+    reasoning_prompt_main = base_prompt.strip()
 
-`{json.dumps(high_level_example)}`
-
-如果不提供 `actions` 字段或其不是有效的字符串，将不执行任何操作。
-回复必须是纯JSON，不含其他文本或标记。
-"""
-
-    # 低级动作提示
-    low_level_example = {"actions": [0, 1, 0, 0, 12, 0, 0, 0]}
-    low_level_instructions = f"""请提供一个JSON对象，包含一个名为 `actions` 的字段，该字段是包含8个整数的数组。
-
-这8个整数控制智能体的基本动作:
-- 索引 0: 前进/后退 (0=无, 1=前进, 2=后退), 范围: [0, 2]
-- 索引 1: 左移/右移 (0=无, 1=左移, 2=右移), 范围: [0, 2]
-- 索引 2: 跳跃/下蹲 (0=无, 1=跳跃, 2=下蹲, 3=其他), 范围: [0, 3]
-- 索引 3: 摄像头水平旋转 (0-24, 12=无变化), 范围: [0, 24]
-- 索引 4: 摄像头垂直旋转 (0-24, 12=无变化), 范围: [0, 24]
-- 索引 5: 交互类型 (0=无, 1=攻击, 2=使用, 3=放置...), 范围: [0, 9]
-- 索引 6: 方块/物品选择 (0-243), 范围: [0, 243]
-- 索引 7: 库存管理 (0-45), 范围: [0, 45]
-
-例如: `{json.dumps(low_level_example)}`
-
-如果不提供 `actions` 字段或其不是包含8个整数的数组，将不执行任何操作。
-回复必须是纯JSON，不含其他文本或标记。
-"""
-
-    # 根据配置选择提示词
-    detailed_instructions = low_level_instructions if enable_low_level_action else high_level_instructions
-
-    # 最终的提示内容
-    prompted_message_content = f"{base_prompt}\n\n{detailed_instructions}"
-
-    return prompted_message_content
+    return {
+        "chat_target_group1": chat_target_group1,
+        "chat_target_group2": chat_target_group2,
+        "reasoning_prompt_main": reasoning_prompt_main,
+    }
