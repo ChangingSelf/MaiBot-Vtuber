@@ -25,6 +25,8 @@ class MinecraftPlugin(BasePlugin):
 
         # 从配置文件加载所有配置
         self.task_id: str = minecraft_config.get("mineland_task_id", "playground")
+        self.server_host: str = minecraft_config.get("server_host", "127.0.0.1")
+        self.server_port: int = minecraft_config.get("server_port", 1746)
 
         # 智能体配置，默认为1个智能体
         self.agents_count: int = 1  # 目前硬编码为1，将来可以考虑加入配置
@@ -92,8 +94,8 @@ class MinecraftPlugin(BasePlugin):
             #     ticks_per_step=self.ticks_per_step,
             # )
             self.mland = mineland.MineLand(
-                server_host="127.0.0.1",
-                server_port=1746,
+                server_host=self.server_host,
+                server_port=self.server_port,
                 agents_count=self.agents_count,
                 agents_config=self.agents_config,
                 headless=self.headless,
