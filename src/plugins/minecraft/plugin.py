@@ -72,7 +72,7 @@ class MinecraftPlugin(BasePlugin):
         self.current_done: bool = False  # 当前是否完成
         self.current_task_info: Optional[Dict[str, Any]] = None  # 当前任务信息
         self.current_step_num: int = 0  # 当前步数
-        self.goal: str = "在四处走走，击杀僵尸"  # 当前目标
+        self.goal: str = "挖到铁矿"  # 当前目标
 
         # 目标历史记录
         self.goal_history: List[Dict[str, Any]] = []  # 存储目标历史，每个元素包含目标、时间戳和步数
@@ -82,6 +82,10 @@ class MinecraftPlugin(BasePlugin):
         self.current_step: str = "暂无步骤"  # 当前执行步骤
         self.target_value: int = 0  # 目标值
         self.current_value: int = 0  # 当前完成度
+
+        # 添加事件历史记录
+        self.event_history: List[Dict[str, Any]] = []  # 存储去重后的事件历史，最多保留20条
+        self.max_event_history: int = 20  # 最大事件历史记录数量
 
     async def setup(self):
         await super().setup()
@@ -202,6 +206,7 @@ class MinecraftPlugin(BasePlugin):
             obs=self.current_obs,
             events=self.current_event[0],
             code_infos=self.current_code_info,
+            event_history=self.event_history,
         )
 
         # 直接构建最终的template_info结构
@@ -225,14 +230,24 @@ class MinecraftPlugin(BasePlugin):
         )
 
         # 当使用template_info时，消息内容可以简化
-        message_text = (
-            f"请根据当前游戏状态，给出下一步动作，逐步实现目标：\n\n"
-            f"- 目标：{self.goal}\n"
-            f"- 计划：{';'.join(self.current_plan)}\n"
-            f"- 当前步骤：{self.current_step}\n"
-            f"- 目标值：{self.target_value}\n"
-            f"- 当前完成度：{self.current_value}"
-        )
+        if self.target_value >= self.current_value:
+            message_text = (
+                f"请根据上一次游戏目标，制定下一个具体目标：\n\n"
+                f"- 目标：{self.goal}\n"
+                f"- 计划：{';'.join(self.current_plan)}\n"
+                f"- 当前步骤：{self.current_step}\n"
+                f"- 目标值：{self.target_value}\n"
+                f"- 当前完成度：{self.current_value}"
+            )
+        else:
+            message_text = (
+                f"请根据当前游戏状态，给出下一步动作，逐步实现目标：\n\n"
+                f"- 目标：{self.goal}\n"
+                f"- 计划：{';'.join(self.current_plan)}\n"
+                f"- 当前步骤：{self.current_step}\n"
+                f"- 目标值：{self.target_value}\n"
+                f"- 当前完成度：{self.current_value}"
+            )
 
         message_segment = Seg(type="text", data=message_text)
 
@@ -290,6 +305,9 @@ class MinecraftPlugin(BasePlugin):
             self.current_done = next_done
             self.current_task_info = next_task_info
             self.current_step_num += 1
+
+            # 更新事件历史记录
+            self._update_event_history(next_event)
 
             self.logger.info(f"代码信息: {str(self.current_code_info[0])}")
             self.logger.info(f"事件信息: {str(self.current_event[0])}")
@@ -409,6 +427,45 @@ class MinecraftPlugin(BasePlugin):
         self.logger.info(
             f"已更新动作数据 - 计划: {self.current_plan}, 步骤: {self.current_step}, 目标值: {self.target_value}, 当前值: {self.current_value}"
         )
+
+    def _update_event_history(self, new_events: List[List[Event]]):
+        """更新事件历史记录，去重并保留最近的记录"""
+        if not new_events or not isinstance(new_events, list) or len(new_events) == 0:
+            return
+
+        # 处理第一个智能体的事件（当前仅支持单智能体）
+        agent_events = new_events[0] if len(new_events) > 0 else []
+
+        for event in agent_events:
+            if not event:
+                continue
+
+            # 将事件转换为字典格式以便存储和去重
+            event_dict = {
+                "type": getattr(event, "type", "unknown"),
+                "message": getattr(event, "message", ""),
+                "timestamp": time.time(),
+                "step_num": self.current_step_num,
+            }
+
+            # 检查是否已存在相同的事件（基于type和message去重）
+            is_duplicate = False
+            for existing_event in self.event_history:
+                if (
+                    existing_event.get("type") == event_dict["type"]
+                    and existing_event.get("message") == event_dict["message"]
+                ):
+                    is_duplicate = True
+                    break
+
+            if not is_duplicate:
+                self.event_history.append(event_dict)
+                self.logger.debug(f"添加新事件到历史: {event_dict}")
+
+        # 保持历史记录数量在限制范围内
+        if len(self.event_history) > self.max_event_history:
+            self.event_history = self.event_history[-self.max_event_history :]
+            self.logger.debug(f"事件历史已裁剪到 {self.max_event_history} 条")
 
 
 # --- Plugin Entry Point ---

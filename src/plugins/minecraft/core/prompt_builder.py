@@ -151,6 +151,7 @@ def build_prompt(
     obs: Observation,
     events: List[Event],
     code_infos: Optional[List[CodeInfo]] = None,
+    event_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, str]:
     """
     构建发送给AI的提示词
@@ -166,21 +167,72 @@ def build_prompt(
 
     status_text = "\n".join(status_prompts)
 
-    # 提取最近的聊天消息或事件
+    # 构建事件历史提示
     logger.info(f"events: {events}")
+    logger.info(f"event_history: {event_history}")
     event_prompt = ""
-    if events:
+
+    # 优先使用事件历史记录
+    if event_history:
+        recent_events = []
+        other_player_events = []
+
+        # 处理历史事件
+        for event_record in event_history[-20:]:  # 取最近20条
+            event_type = event_record.get("type", "unknown")
+            event_message = event_record.get("message", "")
+
+            if not event_message:
+                continue
+
+            # 替换自己的名字为"你"
+            msg = event_message.replace(agent_info.get("name", "Mai"), "你")
+
+            # 检查是否是其他玩家的发言
+            is_other_player = (
+                event_type == "chat" and agent_info.get("name", "Mai") not in event_message and "你" not in msg
+            )
+
+            if is_other_player:
+                other_player_events.append(f"**{event_type}**: {msg}")
+            else:
+                recent_events.append(f"{event_type}: {msg}")
+
+        # 如果没有历史事件，则使用当前事件
+        if not recent_events and events:
+            for event in events:
+                if hasattr(event, "type") and hasattr(event, "message"):
+                    msg = event.message.replace(agent_info.get("name", "Mai"), "你")
+                    recent_events.append(f"{event.type}: {msg}")
+
+        # 构建事件提示
+        if recent_events or other_player_events:
+            event_sections = []
+
+            if other_player_events:
+                event_sections.append(
+                    "🔥重要：其他玩家的发言（请优先关注并友好回应）:\n- " + "\n- ".join(other_player_events[-5:])
+                )  # 最近5条其他玩家发言
+
+            if recent_events:
+                recent_events_str = recent_events[-15:]  # 最近15条一般事件
+                event_sections.append(
+                    "最近的游戏事件（包含你自己的行为和报错信息，请认真阅读并调整行为）:\n- "
+                    + "\n- ".join(recent_events_str)
+                )
+
+            event_prompt = "\n\n".join(event_sections)
+
+    # 如果没有事件历史，回退到原有逻辑
+    elif events:
         recent_events = []
         for event in events:
-            # 排除自己的聊天事件
-            if "type" in event and "only_message" in event:
-                # 如果是聊天事件且是自己发送的，则跳过
-                # if event.get("type") == "chat" and event.get("username") == agent_info.get("username", "MaiMai"):
-                #     continue
-                msg = event["message"].replace(agent_info.get("name", "Mai"), "你")
-                recent_events.append({"type": event["type"], "message": msg})
+            if hasattr(event, "type") and hasattr(event, "message"):
+                msg = event.message.replace(agent_info.get("name", "Mai"), "你")
+                recent_events.append(f"{event.type}: {msg}")
+
         if recent_events:
-            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events[-10:]]  # 仅取最近10条事件
+            recent_events_str = recent_events[-10:]
             event_prompt = (
                 "最近的事件（包含你自己说的报错信息，请认真阅读报错并调整行为，并留意其他玩家的发言，与他们作出友好互动）:\n- "
                 + "\n- ".join(recent_events_str)
@@ -240,16 +292,16 @@ def build_prompt(
 请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
 
 请提供一个JSON对象，包含如下字段：
-- `goal`: 当前目标，例如："收集64个石头"、"建造一个房子"等。如果上一个目标已完成，请设定新目标
+- `goal`: 当前目标，例如："制作1个铁镐"、"建造1个房子"等。目标必须有可执行的步骤，具体的完成数值，不能模糊。如果上一个目标已完成，请设定新目标
 - `plan`: 实现当前目标的详细计划，分解为多个步骤，使用字符串数组，例如：["1.收集原木","2.合成木板","3.制作工作台","4.制作木镐"]
 - `step`: 当前正在执行的步骤，例如："3.制作工作台"
-- `targetValue`: 当前目标的数值（如果适用），例如目标是收集64个石头，则为64
+- `targetValue`: 当前目标的数值（如果适用），例如目标是收集10个石头，则为10
 - `currentValue`: 当前目标的完成度（如果适用），例如已收集5个石头，则为5
 - `actions`: Mineflayer JavaScript代码字符串，用于执行当前步骤
 
 以下是一些有用的Mineflayer API和函数:
 - `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文
-- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',10)`。无法挖掘非方块，例如想要挖掘铁矿石需要`iron_ore`而不是`raw_iron`
+- `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',5)`。无法挖掘非方块，例如想要挖掘铁矿石需要`iron_ore`而不是`raw_iron`
 - `craftItem(bot, name, count)`: 合成物品
 - `placeItem(bot, name, position)`: 放置方块
 - `smeltItem(bot, name, count)`: 冶炼物品
@@ -259,13 +311,16 @@ def build_prompt(
 编写代码时的注意事项:
 - 代码需要符合JavaScript语法，使用bot相关异步函数时记得在async函数内await，但是mineBlock之类的高级函数不需要await
 - 检查机器人库存再使用物品
+- 每次不要收集太多物品，够用即可
+- 只编写能够在10秒内完成的代码
 - 请保持角色移动，不要一直站在原地
 - 一次不要写太多代码，否则容易出现错误。不要写复杂判断，一次只写几句代码
 - 如果状态一直没有变化，请检查代码是否正确（例如方块或物品名称是否正确）并使用新的代码，而不是重复执行同样的代码
 - 如果目标一直无法完成，请切换目标
-- 使用`bot.chat()`简明扼要，口语化地说明你要做什么，如果前面已经说过，就不必重复说话，或者和前面的话说出差异
+- 在你认为合适时，使用`bot.chat()`简明扼要，口语化地说明你要做什么，如果前面已经说过，就不必重复说话，或者和前面的话说出差异
 - 不要使用`bot.on`或`bot.once`注册事件监听器
 - 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API
+- 如果你看到有玩家和你聊天，请友好回应，不要不理他们
     """
 
     reasoning_prompt_main = base_prompt.strip()

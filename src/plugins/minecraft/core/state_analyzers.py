@@ -73,18 +73,12 @@ def analyze_voxels(voxels) -> List[str]:
             block_list = []
             for block_name, count in sorted_blocks:
                 if count >= 3:  # 数量较多的方块
-                    block_list.append(f"{block_name}（{count}个）")
+                    block_list.append(f"{block_name}({count}个)")
                 else:  # 数量较少的方块
                     block_list.append(block_name)
 
             # 生成方块种类总览
-            if len(block_list) <= 3:
-                voxel_prompts.append(f"附近方块: {', '.join(block_list)}")
-            else:
-                # 如果方块种类太多，只显示主要的几种
-                main_blocks = block_list[:3]
-                other_count = len(block_list) - 3
-                voxel_prompts.append(f"附近方块: {', '.join(main_blocks)}等{other_count + 3}种")
+            voxel_prompts.append(f"附近方块: {', '.join(block_list)}")
 
         # 分析玩家当前位置的方块 (voxels[1][1][1] = offset(0, 0, 0))
         if len(block_names) > 1 and len(block_names[1]) > 1 and len(block_names[1][1]) > 1:
