@@ -4,7 +4,7 @@
 
 
 # --- 插件行为设置 ---
-room_id = 123456 #b站房间号
+room_id = 123456  #b站房间号
 poll_interval = 3 #弹幕更新速度（越低越快）
 
 # --- 消息构造默认值 ---
@@ -20,7 +20,7 @@ group_name = "bili_live"
 
 # 格式信息设置
 content_format = ["text"]
-accept_format = ["text"]
+accept_format = ["text", 'emoji', 'reply', "vtb_text"]
 
 # Prompt Context 相关设置
 context_tags = [] # 指定要从 prompt_context 获取的标签列表，空列表表示获取所有
@@ -71,7 +71,7 @@ template_items = { reasoning_prompt_main = '''
 重要提示：请严格避免在回复中包含任何括号 `()` `（）` `[]` `【】` 及其中的动作描述、表情、场景说明或音效提示。本prompt中特别要求的除外。
 说中文，尽量不要说你说过的话。
 在请你读读之前的记录，{mood_prompt}
-''' }
+''', template_name = 'danmaku', template_default = false }
 
 # 附加配置设置
 additional_config = { source_platform = "bilibili_live", source_plugin = "bili_danmaku" }

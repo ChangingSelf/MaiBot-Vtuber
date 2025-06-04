@@ -19,7 +19,7 @@ except ModuleNotFoundError:
 # --- Amaidesu Core Imports ---
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
 
 # --- Plugin Configuration Loading ---
 # _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -226,7 +226,11 @@ class ConsoleInputPlugin(BasePlugin):
                 self.logger.debug(f"已将聚合上下文追加到 '{main_prompt_key}'。")
 
             # 4. 使用修改后的模板项构建最终结构
-            final_template_info_value = {"template_items": modified_template_items}
+            final_template_info_value = TemplateInfo(
+                template_name=cfg.get("template_name", "default"),
+                template_items=modified_template_items,
+                template_default=cfg.get("template_default", True),
+            )
         # else: # 不需要模板或模板项为空时，final_template_info_value 保持 None
 
         # --- Additional Config ---

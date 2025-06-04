@@ -76,6 +76,8 @@ reasoning_prompt_main = '''
     注意：admin为系统管理员，一般为你的dev组成员
     在请你读读之前的记录，{mood_prompt}
     '''
+
+
 # other_template_item = "..." # 如果有其他模板项
 
 # --- 附加配置 ---
