@@ -64,6 +64,28 @@ def analyze_voxels(voxels) -> List[str]:
                             if is_solid[x][y][z]:
                                 solid_blocks.append(block_name)
 
+        # === 新增：直白简明的方块种类描述 ===
+        if block_counts:
+            # 按数量排序方块类型
+            sorted_blocks = sorted(block_counts.items(), key=lambda x: x[1], reverse=True)
+
+            # 构建简洁的方块列表描述
+            block_list = []
+            for block_name, count in sorted_blocks:
+                if count >= 3:  # 数量较多的方块
+                    block_list.append(f"{block_name}（{count}个）")
+                else:  # 数量较少的方块
+                    block_list.append(block_name)
+
+            # 生成方块种类总览
+            if len(block_list) <= 3:
+                voxel_prompts.append(f"附近方块: {', '.join(block_list)}")
+            else:
+                # 如果方块种类太多，只显示主要的几种
+                main_blocks = block_list[:3]
+                other_count = len(block_list) - 3
+                voxel_prompts.append(f"附近方块: {', '.join(main_blocks)}等{other_count + 3}种")
+
         # 分析玩家当前位置的方块 (voxels[1][1][1] = offset(0, 0, 0))
         if len(block_names) > 1 and len(block_names[1]) > 1 and len(block_names[1][1]) > 1:
             current_block = block_names[1][1][1]
@@ -89,7 +111,7 @@ def analyze_voxels(voxels) -> List[str]:
 
             # 构建周围环境描述
             if most_common_count >= 10:  # 在3x3x3=27个方块中，如果某种方块超过10个就算主要环境
-                voxel_prompts.append(f"你周围主要是{most_common_block}环境")
+                voxel_prompts.append(f"你周围的方块主要是：{most_common_block}")
 
             # 特殊环境检测
             if "water" in block_counts or "lava" in block_counts:
@@ -98,16 +120,16 @@ def analyze_voxels(voxels) -> List[str]:
                     voxel_prompts.append(f"警告：周围有{', '.join(liquids)}，需要小心移动")
 
             if "stone" in block_counts and block_counts["stone"] >= 5:
-                voxel_prompts.append("你处于石头区域，可能在洞穴或山区")
+                voxel_prompts.append("你附近都是石头，可能在洞穴或山区")
 
             if "grass_block" in block_counts and block_counts["grass_block"] >= 5:
-                voxel_prompts.append("你处于草地环境")
+                voxel_prompts.append("你附近是草地")
 
             if "sand" in block_counts and block_counts["sand"] >= 5:
-                voxel_prompts.append("你处于沙漠环境")
+                voxel_prompts.append("你附近是沙漠")
 
             if "oak_log" in block_counts or "birch_log" in block_counts or "spruce_log" in block_counts:
-                voxel_prompts.append("周围有树木，可以收集木材")
+                voxel_prompts.append("你附近有树木，可以收集木材")
 
         # 分析空气方块比例，判断是否在开阔区域
         total_blocks = 27  # 3x3x3

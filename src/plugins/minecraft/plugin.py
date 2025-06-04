@@ -31,7 +31,7 @@ class MinecraftPlugin(BasePlugin):
         # 智能体配置，默认为1个智能体
         self.agents_count: int = 1  # 目前硬编码为1，将来可以考虑加入配置
         # self.agents_config: List[Dict[str, str]] = [{"name": f"MaiMai{i}"} for i in range(self.agents_count)]
-        self.agents_config: List[Dict[str, str]] = [{"name": "MaiMai"}]
+        self.agents_config: List[Dict[str, str]] = [{"name": "Mai"}]
 
         self.headless: bool = minecraft_config.get("mineland_headless", True)
 
@@ -76,6 +76,12 @@ class MinecraftPlugin(BasePlugin):
 
         # 目标历史记录
         self.goal_history: List[Dict[str, Any]] = []  # 存储目标历史，每个元素包含目标、时间戳和步数
+
+        # 添加计划和进度相关字段
+        self.current_plan: List[str] = []  # 当前计划
+        self.current_step: str = "暂无步骤"  # 当前执行步骤
+        self.target_value: int = 0  # 目标值
+        self.current_value: int = 0  # 当前完成度
 
     async def setup(self):
         await super().setup()
@@ -190,7 +196,13 @@ class MinecraftPlugin(BasePlugin):
 
         # --- 构建Template Info ---
         # 创建一个包含提示词的模板项字典
-        template_items = build_prompt(status_prompts, self.current_obs, self.current_code_info)
+        template_items = build_prompt(
+            agent_info=self.agents_config[0],
+            status_prompts=status_prompts,
+            obs=self.current_obs,
+            events=self.current_event[0],
+            code_infos=self.current_code_info,
+        )
 
         # 直接构建最终的template_info结构
         template_info = TemplateInfo(
@@ -214,13 +226,13 @@ class MinecraftPlugin(BasePlugin):
 
         # 当使用template_info时，消息内容可以简化
         message_text = (
-            f"你已完成了第{self.current_step_num}步动作，请根据当前游戏状态，给出下一步动作，当前目标是{self.goal}"
+            f"请根据当前游戏状态，给出下一步动作，逐步实现目标：\n\n"
+            f"- 目标：{self.goal}\n"
+            f"- 计划：{';'.join(self.current_plan)}\n"
+            f"- 当前步骤：{self.current_step}\n"
+            f"- 目标值：{self.target_value}\n"
+            f"- 当前完成度：{self.current_value}"
         )
-
-        # 添加目标历史信息
-        goal_history_text = self._get_goal_history_text(10)
-        if goal_history_text != "暂无目标历史记录":
-            message_text += f"\n\n目标历史记录（最新10条）：\n{goal_history_text}"
 
         message_segment = Seg(type="text", data=message_text)
 
@@ -254,13 +266,16 @@ class MinecraftPlugin(BasePlugin):
         self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
 
         # 解析动作
-        current_actions, goal = parse_message_json(
+        current_actions, action_data = parse_message_json(
             message_json_str=message_json_str,
             agents_count=self.agents_count,
             current_step_num=self.current_step_num,
         )
 
-        self._update_goal(goal)
+        # 更新所有相关字段
+        self._update_action_data(action_data)
+
+        self._update_goal(action_data.get("goal", self.goal))
 
         # 在 MineLand 环境中执行动作
         try:
@@ -363,6 +378,37 @@ class MinecraftPlugin(BasePlugin):
             )
 
         return "\n".join(history_lines)
+
+    def _update_action_data(self, action_data: Dict[str, Any]):
+        """更新从AI响应中解析出的动作数据"""
+        if not action_data:
+            return
+
+        # 更新计划
+        if "plan" in action_data:
+            self.current_plan = action_data["plan"]
+
+        # 更新当前步骤
+        if "step" in action_data:
+            self.current_step = action_data["step"]
+
+        # 更新目标值
+        if "targetValue" in action_data:
+            try:
+                self.target_value = int(action_data["targetValue"])
+            except (ValueError, TypeError):
+                self.logger.warning(f"无法解析目标值: {action_data['targetValue']}")
+
+        # 更新当前完成度
+        if "currentValue" in action_data:
+            try:
+                self.current_value = int(action_data["currentValue"])
+            except (ValueError, TypeError):
+                self.logger.warning(f"无法解析当前完成度: {action_data['currentValue']}")
+
+        self.logger.info(
+            f"已更新动作数据 - 计划: {self.current_plan}, 步骤: {self.current_step}, 目标值: {self.target_value}, 当前值: {self.current_value}"
+        )
 
 
 # --- Plugin Entry Point ---

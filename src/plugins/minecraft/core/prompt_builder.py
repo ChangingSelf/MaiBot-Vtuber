@@ -22,21 +22,10 @@ def build_state_analysis(
     """
     status_prompts = []
 
-    # 提取最近的聊天消息或事件
-    logger.info(f"events: {events}")
-    if events:
-        recent_events = []
-        for event in events:
-            # 排除自己的聊天事件
-            if "type" in event and "only_message" in event:
-                # 如果是聊天事件且是自己发送的，则跳过
-                # if event.get("type") == "chat" and event.get("username") == agent_info.get("username", "MaiMai"):
-                #     continue
-                msg = event["message"].replace(agent_info.get("username", "MaiMai"), "你")
-                recent_events.append({"type": event["type"], "message": msg})
-        if recent_events:
-            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events[-10:]]  # 仅取最近10条事件
-            status_prompts.append(f"最近的事件: {', '.join(recent_events_str)}")
+    # 提取坐标信息
+    if hasattr(obs, "location_stats") and obs.location_stats:
+        if pos := getattr(obs.location_stats, "pos", None):
+            status_prompts.append(f"你的当前坐标是{pos}")
 
     # 提取生命统计信息
     if hasattr(obs, "life_stats") and obs.life_stats:
@@ -157,7 +146,11 @@ def build_state_analysis(
 
 
 def build_prompt(
-    status_prompts: List[str], obs: Observation, code_infos: Optional[List[CodeInfo]] = None
+    agent_info: Dict[str, str],
+    status_prompts: List[str],
+    obs: Observation,
+    events: List[Event],
+    code_infos: Optional[List[CodeInfo]] = None,
 ) -> Dict[str, str]:
     """
     构建发送给AI的提示词
@@ -172,6 +165,26 @@ def build_prompt(
     """
 
     status_text = "\n".join(status_prompts)
+
+    # 提取最近的聊天消息或事件
+    logger.info(f"events: {events}")
+    event_prompt = ""
+    if events:
+        recent_events = []
+        for event in events:
+            # 排除自己的聊天事件
+            if "type" in event and "only_message" in event:
+                # 如果是聊天事件且是自己发送的，则跳过
+                # if event.get("type") == "chat" and event.get("username") == agent_info.get("username", "MaiMai"):
+                #     continue
+                msg = event["message"].replace(agent_info.get("name", "Mai"), "你")
+                recent_events.append({"type": event["type"], "message": msg})
+        if recent_events:
+            recent_events_str = [f"{e['type']}: {e['message']}" for e in recent_events[-10:]]  # 仅取最近10条事件
+            event_prompt = (
+                "最近的事件（包含你自己说的报错信息，请认真阅读报错并调整行为，并留意其他玩家的发言，与他们作出友好互动）:\n- "
+                + "\n- ".join(recent_events_str)
+            )
 
     # 检查代码执行错误
     error_prompt = ""
@@ -208,12 +221,31 @@ def build_prompt(
     chat_target_group2 = "正在直播Minecraft游戏"
 
     # 构建主要的推理提示词，如果有错误则包含错误修正提示
-    base_prompt = f"""
-    你正在直播Minecraft游戏，以下是游戏的当前状态：{status_text}。{error_prompt}
-    请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
-    请提供一个JSON对象，包含如下字段：
-    - `goal` 的字段，该字段是当前的目标，你自己根据上一次的目标和当前状态来生成现在的目标，例如："在四处走走，收集石头"。切换目标视作上一个目标已完成。
-    - `actions` 的字段，该字段是Mineflayer JavaScript代码字符串。
+    personality = "你的网名叫\{bot_name\}，有人也叫你\{bot_other_names\}，\{prompt_personality\}"
+    base_prompt = f"""{personality}
+你正在直播Minecraft游戏，实现游戏目标的同时不要忘记和观众或其他玩家互动。
+
+## 游戏状态
+{status_text}
+
+## 游戏目标
+请根据当前游戏状态和你之前制定的目标计划，继续执行下一步动作。
+- 如果当前目标已完成或无法继续，请制定新的目标
+- 如果当前步骤已完成，请继续执行计划中的下一个步骤
+- 请保持目标和计划的连贯性，不要频繁更改
+
+{error_prompt}
+{event_prompt}
+
+请分析游戏状态并提供一个JSON格式的动作指令。你的回复必须严格遵循JSON格式。不要包含任何markdown标记 (如 ```json ... ```), 也不要包含任何解释性文字、注释或除了纯JSON对象之外的任何内容。
+
+请提供一个JSON对象，包含如下字段：
+- `goal`: 当前目标，例如："收集64个石头"、"建造一个房子"等。如果上一个目标已完成，请设定新目标
+- `plan`: 实现当前目标的详细计划，分解为多个步骤，使用字符串数组，例如：["1.收集原木","2.合成木板","3.制作工作台","4.制作木镐"]
+- `step`: 当前正在执行的步骤，例如："3.制作工作台"
+- `targetValue`: 当前目标的数值（如果适用），例如目标是收集64个石头，则为64
+- `currentValue`: 当前目标的完成度（如果适用），例如已收集5个石头，则为5
+- `actions`: Mineflayer JavaScript代码字符串，用于执行当前步骤
 
 以下是一些有用的Mineflayer API和函数:
 - `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文
@@ -231,7 +263,7 @@ def build_prompt(
 - 一次不要写太多代码，否则容易出现错误。不要写复杂判断，一次只写几句代码
 - 如果状态一直没有变化，请检查代码是否正确（例如方块或物品名称是否正确）并使用新的代码，而不是重复执行同样的代码
 - 如果目标一直无法完成，请切换目标
-- 使用`bot.chat()`显示进度
+- 使用`bot.chat()`简明扼要，口语化地说明你要做什么，如果前面已经说过，就不必重复说话，或者和前面的话说出差异
 - 不要使用`bot.on`或`bot.once`注册事件监听器
 - 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API
     """
