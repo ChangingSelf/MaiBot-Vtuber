@@ -6,12 +6,48 @@
 import asyncio
 import sys
 import os
+import threading
+import time
 
 # 添加项目根目录到路径
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from src.plugins.bili_danmaku_selenium.plugin import BiliDanmakuSeleniumPlugin
 from src.core.amaidesu_core import AmaidesuCore
+
+# 全局停止标志
+stop_flag = threading.Event()
+
+
+def keyboard_listener():
+    """键盘监听器，等待用户按键"""
+    try:
+        if sys.platform == "win32":
+            # Windows 系统
+            import msvcrt
+
+            print("💡 按任意键停止监控...")
+            while not stop_flag.is_set():
+                if msvcrt.kbhit():
+                    msvcrt.getch()  # 读取按键
+                    stop_flag.set()
+                    break
+                time.sleep(0.1)
+        else:
+            # Unix/Linux 系统
+            print("💡 按 Enter 键停止监控...")
+            input()
+            stop_flag.set()
+    except Exception as e:
+        print(f"⚠️  键盘监听出错: {e}")
+        stop_flag.set()
+
+
+async def wait_for_stop():
+    """异步等待停止信号"""
+    while not stop_flag.is_set():
+        await asyncio.sleep(0.1)
+    return True
 
 
 class MockCore(AmaidesuCore):
@@ -37,7 +73,7 @@ async def test_plugin():
     # 创建模拟的配置
     test_config = {
         "enabled": True,
-        "room_id": 22603245,
+        "room_id": 8432038,
         "poll_interval": 3.0,
         "max_messages_per_check": 5,
         "headless": True,
@@ -45,17 +81,15 @@ async def test_plugin():
         "page_load_timeout": 30,
         "implicit_wait": 5,
         "danmaku_container_selector": "#chat-items",
-        "danmaku_item_selector": ".chat-item",
-        "danmaku_text_selector": ".danmaku-item-right",
-        "username_selector": ".danmaku-item-left .username",
+        "danmaku_item_selector": ".chat-item.danmaku-item",
         "gift_selector": ".gift-item",
         "gift_text_selector": ".gift-item-text",
         "default_user_id": "bili_user",
         "default_user_nickname": "B站观众",
         "user_cardname": "",
         "enable_group_info": True,
-        "group_id": 22603245,
-        "group_name": "bili_live_22603245",
+        "group_id": 8432038,
+        "group_name": "bili_live_8432038",
         "content_format": ["text"],
         "accept_format": ["text", "emoji", "reply", "vtb_text"],
         "context_tags": [],
@@ -75,23 +109,24 @@ async def test_plugin():
 
         if not plugin.enabled:
             print("❌ 插件被禁用，请检查依赖安装")
-            return False
-
-        # 测试插件设置
+            return False  # 测试插件设置
         print("\n🔄 初始化插件...")
         await plugin.setup()
 
         print("✅ 插件初始化成功")
         print(f"🌐 WebDriver 状态: {'已创建' if plugin.driver else '未创建'}")
 
-        # 运行一小段时间来捕获弹幕
-        print(f"\n📡 开始监控弹幕 (20秒)...")
+        # 启动键盘监听线程
+        keyboard_thread = threading.Thread(target=keyboard_listener, daemon=True)
+        keyboard_thread.start()  # 运行监控，等待用户按键停止
+        print("\n📡 开始监控弹幕...")
         print("=" * 50)
 
-        await asyncio.sleep(180)
+        # 等待停止信号
+        await wait_for_stop()
 
         print("=" * 50)
-        print("⏹️  停止监控")
+        print("⏹️  收到停止信号，停止监控")
 
         # 清理
         await plugin.cleanup()
@@ -116,7 +151,7 @@ if __name__ == "__main__":
 
     try:
         # 检查selenium是否可用
-        from selenium import webdriver
+        import selenium
 
         print("✅ Selenium 已安装")
     except ImportError:

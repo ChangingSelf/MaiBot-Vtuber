@@ -38,16 +38,15 @@ def test_selectors_auto(room_id=22603245):
 
         # 等待页面加载
         print("等待页面加载...")
-        time.sleep(8)
-
-        # 测试关键选择器
+        time.sleep(8)  # 测试关键选择器
         selectors_to_test = {
             "弹幕容器": "#chat-items",
-            "弹幕列表": ".chat-items",
             "聊天项目": ".chat-item",
-            "弹幕项目": ".danmaku-item",
-            "用户名": ".username",
+            "弹幕项目": ".chat-item.danmaku-item",
+            "用户名": ".user-name",
             "弹幕内容": ".danmaku-item-right",
+            "弹幕左侧": ".danmaku-item-left",
+            "昵称包装器": ".common-nickname-wrapper",
         }
 
         print("\n=== 选择器测试结果 ===")

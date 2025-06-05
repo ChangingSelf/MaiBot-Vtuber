@@ -39,6 +39,7 @@ class DanmakuMessage:
     username: str
     text: str
     timestamp: float
+    user_id: str = ""  # 添加用户ID字段
     element_id: str = ""
     message_type: str = "danmaku"  # danmaku, gift, etc.
     gift_name: str = ""
@@ -79,13 +80,11 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         self.headless = self.config.get("headless", True)
         self.webdriver_timeout = self.config.get("webdriver_timeout", 30)
         self.page_load_timeout = self.config.get("page_load_timeout", 30)
-        self.implicit_wait = self.config.get("implicit_wait", 10)
-
-        # --- 选择器配置 ---
+        self.implicit_wait = self.config.get("implicit_wait", 10)  # --- 选择器配置 ---
         self.danmaku_container_selector = self.config.get("danmaku_container_selector", "#chat-items")
-        self.danmaku_item_selector = self.config.get("danmaku_item_selector", ".chat-item")
+        self.danmaku_item_selector = self.config.get("danmaku_item_selector", ".chat-item.danmaku-item")
         self.danmaku_text_selector = self.config.get("danmaku_text_selector", ".danmaku-item-right")
-        self.username_selector = self.config.get("username_selector", ".danmaku-item-left .username")
+        self.username_selector = self.config.get("username_selector", ".user-name")
         self.gift_selector = self.config.get("gift_selector", ".gift-item")
         self.gift_text_selector = self.config.get("gift_text_selector", ".gift-item-text")
 
@@ -298,14 +297,10 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                     if len(danmaku_elements) > self.max_messages_per_check
                     else len(danmaku_elements)
                 )
-                self.logger.info(f"[计时] 准备处理最新的 {pre_max} 条弹幕")
-
-                # 计时：处理弹幕元素
+                self.logger.info(f"[计时] 准备处理最新的 {pre_max} 条弹幕")  # 计时：处理弹幕元素
                 process_danmaku_start = time.time()
                 processed_count = 0
                 for element in danmaku_elements[-pre_max:]:  # 只处理最新的几条
-                    element_process_start = time.time()
-
                     try:
                         # 生成元素ID
                         element_id = self._generate_element_id(element)
@@ -313,39 +308,47 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                             self.logger.info(f"[计时] 跳过已处理的元素: {element_id}")
                             continue
 
-                        # 提取用户名
+                        # 提取弹幕数据（从 data 属性获取）
                         username_search_start = time.time()
-                        username_elem = element.find_element(By.CSS_SELECTOR, self.username_selector)
-                        username = username_elem.text.strip() if username_elem else "未知用户"
+                        try:
+                            # 从 data-* 属性中提取信息
+                            text = element.get_attribute("data-danmaku") or ""
+                            username = element.get_attribute("data-uname") or "未知用户"
+                            user_id = element.get_attribute("data-uid") or ""
+
+                            self.logger.info(f"提取到弹幕信息: 用户={username}, ID={user_id}, 内容={text}")
+                            if not text:
+                                self.logger.warning(f"弹幕内容为空，跳过处理: {element_id}")
+                                continue
+                            elif not username:
+                                self.logger.warning(f"用户名为空，使用默认值: {element_id}")
+                                continue
+                            elif not user_id:
+                                self.logger.warning(f"用户ID为空，使用默认值: {element_id}")
+                                continue
+                        except Exception as e:
+                            self.logger.warning(f"提取弹幕属性失败: {e}")
+                            continue
+
                         username_search_end = time.time()
-
-                        # 提取弹幕文本
-                        text_search_start = time.time()
-                        text_elem = element.find_element(By.CSS_SELECTOR, self.danmaku_text_selector)
-                        text = text_elem.text.strip() if text_elem else ""
-                        text_search_end = time.time()
-
-                        element_process_end = time.time()
                         self.logger.info(
-                            f"[计时] 处理单个弹幕元素耗时: {(element_process_end - element_process_start) * 1000:.1f}ms "
-                            f"(用户名: {(username_search_end - username_search_start) * 1000:.1f}ms, "
-                            f"文本: {(text_search_end - text_search_start) * 1000:.1f}ms) - {username}: {text[:30]}"
+                            f"[计时] 提取用户信息耗时: {(username_search_end - username_search_start) * 1000:.1f}ms"
                         )
 
-                        if text:  # 只处理有文本的弹幕
-                            message = DanmakuMessage(
-                                username=username,
-                                text=text,
-                                timestamp=time.time(),
-                                element_id=element_id,
-                                message_type="danmaku",
-                            )
-                            messages.append(message)
-                            self._processed_messages.add(element_id)
-                            processed_count += 1
+                        message = DanmakuMessage(
+                            username=username,
+                            text=text,
+                            timestamp=time.time(),
+                            user_id=user_id,
+                            element_id=element_id,
+                            message_type="danmaku",
+                        )
+                        messages.append(message)
+                        self._processed_messages.add(element_id)
+                        processed_count += 1
 
                     except NoSuchElementException:
-                        self.logger.info(f"[计时] 弹幕元素结构变化，跳过")
+                        self.logger.info("[计时] 弹幕元素结构变化，跳过")
                         continue  # 元素结构可能变化，跳过
                     except Exception as e:
                         self.logger.info(f"[计时] 处理单个弹幕元素时出错: {e}")
@@ -363,8 +366,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                 self.logger.info(
                     f"[计时] 查找礼物元素耗时: {(gift_search_end - gift_search_start) * 1000:.1f}ms, 找到 {len(gift_elements)} 个元素"
                 )
-
-                gift_processed_count = 0
+                # 注释：礼物处理暂时禁用
                 # print(f"gift {gift_elements}")
                 # for element in gift_elements[-self.max_messages_per_check :]:
                 #     gift_element_start = time.time()
@@ -433,9 +435,9 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                         self.logger.info(
                             f"[计时] 创建 MessageBase 耗时: {(msg_create_end - msg_create_start) * 1000:.1f}ms"
                         )
-
-                        # if message_base:
-                        #     await self.core.send_to_maicore(message_base)
+                        if message_base:
+                            self.logger.debug(f"成功创建消息: {message.username}: {message.text}")
+                            # await self.core.send_to_maicore(message_base)  # 取消注释以启用消息发送
                     except Exception as e:
                         self.logger.error(f"处理消息时出错: {message} - {e}", exc_info=True)
 
