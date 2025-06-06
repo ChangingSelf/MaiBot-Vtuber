@@ -185,6 +185,9 @@ class MinecraftPlugin(BasePlugin):
                             self.current_step_num += 1
 
                             # 更新事件历史记录
+                            self.logger.debug(
+                                f"准备更新事件历史，next_event类型: {type(next_event)}, 内容: {next_event}"
+                            )
                             self._update_event_history(next_event)
 
                             self.logger.debug(f"自动发送循环中执行no_op完毕，当前步骤: {self.current_step_num}")
@@ -229,7 +232,7 @@ class MinecraftPlugin(BasePlugin):
         format_info = FormatInfo(content_format="text", accept_format="text")  # 保持文本格式，内容是JSON字符串
 
         # --- 构建Template Info ---
-        # 创建一个包含提示词的模板项字典
+        # 创建一个包含提示词的模板项字典，现在包含目标信息
         template_items = build_prompt(
             agent_info=self.agents_config[0],
             status_prompts=status_prompts,
@@ -237,6 +240,11 @@ class MinecraftPlugin(BasePlugin):
             events=self.current_event[0],
             code_infos=self.current_code_info,
             event_history=self.event_history,
+            goal=self.goal,  # 传递目标信息到提示词中
+            current_plan=self.current_plan,  # 传递计划信息
+            current_step=self.current_step,  # 传递当前步骤信息
+            target_value=self.target_value,  # 传递目标值
+            current_value=self.current_value,  # 传递当前完成度
         )
 
         # 直接构建最终的template_info结构
@@ -259,25 +267,32 @@ class MinecraftPlugin(BasePlugin):
             template_info=template_info,  # 使用构建好的template_info
         )
 
-        # 当使用template_info时，消息内容可以简化
-        if self.target_value >= self.current_value:
-            message_text = (
-                f"请根据上一次游戏目标，制定下一个具体目标：\n\n"
-                f"- 目标：{self.goal}\n"
-                f"- 计划：{';'.join(self.current_plan)}\n"
-                f"- 当前步骤：{self.current_step}\n"
-                f"- 目标值：{self.target_value}\n"
-                f"- 当前完成度：{self.current_value}"
-            )
+        # 构建当前事件信息作为消息体
+        event_messages = []
+        if agent_event:
+            for event in agent_event:
+                if hasattr(event, "type") and hasattr(event, "message"):
+                    # 清理事件消息，去除机器人名称
+                    clean_message = event.message.replace(agent_info.get("name", "Mai"), "你")
+                    event_messages.append(f"[{event.type}] {clean_message}")
+
+        # 如果没有当前事件，使用事件历史的最新几条
+        if not event_messages and self.event_history:
+            recent_events = self.event_history[-10:]  # 最近5条事件
+            for event_record in recent_events:
+                event_type = event_record.get("type", "unknown")
+                event_message = event_record.get("message", "")
+                if event_message:
+                    clean_message = event_message.replace(agent_info.get("name", "Mai"), "你")
+                    event_messages.append(f"[{event_type}] {clean_message}")
+
+        self.logger.info(f"事件: {event_messages}")
+
+        # 构建消息文本
+        if event_messages:
+            message_text = "最新游戏事件：\n" + "\n".join(event_messages)
         else:
-            message_text = (
-                f"请根据当前游戏状态，给出下一步动作，逐步实现目标：\n\n"
-                f"- 目标：{self.goal}\n"
-                f"- 计划：{';'.join(self.current_plan)}\n"
-                f"- 当前步骤：{self.current_step}\n"
-                f"- 目标值：{self.target_value}\n"
-                f"- 当前完成度：{self.current_value}"
-            )
+            message_text = "当前没有新的游戏事件"
 
         message_segment = Seg(type="text", data=message_text)
 
@@ -287,7 +302,7 @@ class MinecraftPlugin(BasePlugin):
 
         await self.core.send_to_maicore(msg_to_maicore)
         self.logger.info(
-            f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
+            f"已将 Mineland 事件状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
         )
 
     def _is_ready_for_next_action(self) -> bool:
@@ -345,6 +360,7 @@ class MinecraftPlugin(BasePlugin):
                 self.current_step_num += 1
 
                 # 更新事件历史记录
+                self.logger.debug(f"准备更新事件历史，next_event类型: {type(next_event)}, 内容: {next_event}")
                 self._update_event_history(next_event)
 
                 self.logger.debug(f"No-op执行完毕，当前步骤: {self.current_step_num}")
@@ -416,6 +432,7 @@ class MinecraftPlugin(BasePlugin):
             self.current_step_num += 1
 
             # 更新事件历史记录
+            self.logger.debug(f"准备更新事件历史，next_event类型: {type(next_event)}, 内容: {next_event}")
             self._update_event_history(next_event)
 
             self.logger.info(f"代码信息: {str(self.current_code_info[0])}")
@@ -540,41 +557,144 @@ class MinecraftPlugin(BasePlugin):
     def _update_event_history(self, new_events: List[List[Event]]):
         """更新事件历史记录，去重并保留最近的记录"""
         if not new_events or not isinstance(new_events, list) or len(new_events) == 0:
+            self.logger.debug("new_events为空或格式不正确")
             return
 
         # 处理第一个智能体的事件（当前仅支持单智能体）
         agent_events = new_events[0] if len(new_events) > 0 else []
+        self.logger.debug(f"处理智能体事件，数量: {len(agent_events)}")
+
+        current_timestamp = time.time()
 
         for event in agent_events:
             if not event:
                 continue
 
-            # 将事件转换为字典格式以便存储和去重
-            event_dict = {
-                "type": getattr(event, "type", "unknown"),
-                "message": getattr(event, "message", ""),
-                "timestamp": time.time(),
-                "step_num": self.current_step_num,
-            }
+            # 根据事件的实际类型进行处理
+            if isinstance(event, dict):
+                # 如果事件是字典格式
+                event_dict = {
+                    "type": event.get("type", "unknown"),
+                    "message": event.get("message", ""),
+                    "timestamp": current_timestamp,
+                    "step_num": self.current_step_num,
+                    "tick": event.get("tick", 0),
+                }
+            else:
+                # 如果事件是对象格式
+                event_dict = {
+                    "type": getattr(event, "type", "unknown"),
+                    "message": getattr(event, "message", ""),
+                    "timestamp": current_timestamp,
+                    "step_num": self.current_step_num,
+                    "tick": getattr(event, "tick", 0),
+                }
 
-            # 检查是否已存在相同的事件（基于type和message去重）
+            # 如果消息为空，跳过
+            if not event_dict["message"]:
+                self.logger.debug(f"跳过空消息事件: {event_dict}")
+                continue
+
+            # 去重逻辑：只对完全相同的连续重复事件进行去重
             is_duplicate = False
-            for existing_event in self.event_history:
-                if (
-                    existing_event.get("type") == event_dict["type"]
-                    and existing_event.get("message") == event_dict["message"]
-                ):
-                    is_duplicate = True
-                    break
+
+            # 检查最近几条事件是否有完全相同的内容
+            if self.event_history:
+                # 只检查最近5条事件，避免过度去重
+                recent_events = self.event_history[-5:]
+                for recent_event in recent_events:
+                    # 只有在短时间内（2秒）且内容完全相同时才认为是重复
+                    time_diff = current_timestamp - recent_event.get("timestamp", 0)
+                    if (
+                        time_diff <= 2.0
+                        and recent_event.get("type") == event_dict["type"]
+                        and recent_event.get("message") == event_dict["message"]
+                    ):
+                        is_duplicate = True
+                        self.logger.debug(f"跳过重复事件: {event_dict['message'][:30]}...")
+                        break
+
+                    # 对于聊天消息，进行相似度检测
+                    if (
+                        event_dict["type"] == "chat" and recent_event.get("type") == "chat" and time_diff <= 10.0
+                    ):  # 10秒内的聊天消息
+                        # 提取消息内容（去掉用户名部分）
+                        current_msg = event_dict["message"]
+                        recent_msg = recent_event.get("message", "")
+
+                        # 简单的相似度检测：如果消息长度相近且有大量重叠内容
+                        if len(current_msg) > 10 and len(recent_msg) > 10:
+                            # 去掉用户名前缀，提取实际聊天内容
+                            if ">" in current_msg:
+                                current_content = current_msg.split(">", 1)[-1].strip()
+                            else:
+                                current_content = current_msg
+
+                            if ">" in recent_msg:
+                                recent_content = recent_msg.split(">", 1)[-1].strip()
+                            else:
+                                recent_content = recent_msg
+
+                            # 检查内容相似性
+                            if (
+                                len(current_content) > 15
+                                and len(recent_content) > 15
+                                and (
+                                    current_content in recent_content
+                                    or recent_content in current_content
+                                    or self._calculate_similarity(current_content, recent_content) > 0.7
+                                )
+                            ):
+                                is_duplicate = True
+                                self.logger.debug(f"跳过相似聊天事件: {event_dict['message'][:30]}...")
+                                break
 
             if not is_duplicate:
                 self.event_history.append(event_dict)
                 self.logger.debug(f"添加新事件到历史: {event_dict}")
+            else:
+                self.logger.debug(f"跳过重复事件: {event_dict}")
+
+        self.logger.debug(f"事件历史更新完成，当前历史数量: {len(self.event_history)}")
 
         # 保持历史记录数量在限制范围内
         if len(self.event_history) > self.max_event_history:
+            # 简单删除最旧的事件
             self.event_history = self.event_history[-self.max_event_history :]
             self.logger.debug(f"事件历史已裁剪到 {self.max_event_history} 条")
+
+    def _clean_old_events(self, target_size: int):
+        """智能清理旧事件，保持事件类型的多样性"""
+
+        if len(self.event_history) > target_size:
+            self.event_history = self.event_history[-target_size:]
+            self.logger.debug(f"事件历史已清理，当前保留 {len(self.event_history)} 条记录")
+
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        """计算两个文本的相似度（简单的字符级别相似度）"""
+        if not text1 or not text2:
+            return 0.0
+
+        # 转换为小写并去除空格
+        text1 = text1.lower().replace(" ", "")
+        text2 = text2.lower().replace(" ", "")
+
+        if text1 == text2:
+            return 1.0
+
+        # 计算最长公共子序列的长度比例
+        min_len = min(len(text1), len(text2))
+        max_len = max(len(text1), len(text2))
+
+        if max_len == 0:
+            return 0.0
+
+        # 简单的包含检测
+        common_chars = 0
+        for char in set(text1):
+            common_chars += min(text1.count(char), text2.count(char))
+
+        return common_chars / max_len
 
 
 # --- Plugin Entry Point ---

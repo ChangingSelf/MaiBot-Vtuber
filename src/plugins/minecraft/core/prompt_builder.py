@@ -152,14 +152,27 @@ def build_prompt(
     events: List[Event],
     code_infos: Optional[List[CodeInfo]] = None,
     event_history: Optional[List[Dict[str, Any]]] = None,
+    goal: str = "",
+    current_plan: List[str] = None,
+    current_step: str = "",
+    target_value: int = 0,
+    current_value: int = 0,
 ) -> Dict[str, str]:
     """
     构建发送给AI的提示词
 
     Args:
+        agent_info: 智能体信息
         status_prompts: 状态提示列表
         obs: Mineland观察对象
+        events: 当前事件列表
         code_infos: 代码信息列表，用于检测代码执行错误
+        event_history: 事件历史记录
+        goal: 当前目标
+        current_plan: 当前计划列表
+        current_step: 当前执行步骤
+        target_value: 目标值
+        current_value: 当前完成度
 
     Returns:
         Dict[str, str]: 包含提示词的模板项字典
@@ -176,6 +189,7 @@ def build_prompt(
     if event_history:
         recent_events = []
         other_player_events = []
+        repetition_warning = ""
 
         # 处理历史事件
         for event_record in event_history[-20:]:  # 取最近20条
@@ -197,6 +211,38 @@ def build_prompt(
                 other_player_events.append(f"**{event_type}**: {msg}")
             else:
                 recent_events.append(f"{event_type}: {msg}")
+
+        # 检测重复行为模式
+        if recent_events:
+            # 检查最近的聊天消息是否有重复
+            chat_messages = [event for event in recent_events if event.startswith("chat:")]
+            if len(chat_messages) >= 3:
+                # 检查最近3条聊天消息
+                recent_chat = chat_messages[-3:]
+                # 简单的重复检测：检查是否有相似的内容
+                similar_count = 0
+                last_msg = recent_chat[-1] if recent_chat else ""
+
+                for msg in recent_chat:
+                    # 提取实际的聊天内容（去掉"chat: <你>"前缀）
+                    if "<你>" in msg:
+                        content = msg.split("<你>")[-1].strip()
+                        last_content = last_msg.split("<你>")[-1].strip() if "<你>" in last_msg else ""
+
+                        # 检查内容相似性（简单的包含检查）
+                        if content and last_content and len(content) > 10:
+                            if content in last_content or last_content in content:
+                                similar_count += 1
+
+                if similar_count >= 2:
+                    repetition_warning = """
+🚨 **重要提醒**：你最近在重复说相似的话！请避免重复，尝试：
+1. 换一个话题或活动
+2. 问问其他玩家的想法
+3. 尝试新的游戏策略
+4. 保持沉默一会儿，专注于游戏行动
+请不要再重复刚才说过的话！
+"""
 
         # 如果没有历史事件，则使用当前事件
         if not recent_events and events:
@@ -220,6 +266,10 @@ def build_prompt(
                     "最近的游戏事件（包含你自己的行为和报错信息，请认真阅读并调整行为）:\n- "
                     + "\n- ".join(recent_events_str)
                 )
+
+            # 添加重复警告
+            if repetition_warning:
+                event_sections.insert(0, repetition_warning)
 
             event_prompt = "\n\n".join(event_sections)
 
@@ -268,11 +318,37 @@ def build_prompt(
                 """
                 break  # 只处理第一个错误
 
+    # 构建目标和计划信息
+    goal_prompt = ""
+    if goal or current_plan or current_step:
+        goal_lines = []
+
+        if goal:
+            goal_lines.append(f"当前目标：{goal}")
+
+        if current_plan:
+            plan_str = "; ".join(current_plan) if isinstance(current_plan, list) else str(current_plan)
+            goal_lines.append(f"执行计划：{plan_str}")
+
+        if current_step:
+            goal_lines.append(f"当前步骤：{current_step}")
+
+        if target_value > 0 or current_value > 0:
+            goal_lines.append(f"进度：{current_value}/{target_value}")
+
+        # 根据完成进度添加相应的指导提示
+        if target_value > 0 and current_value >= target_value:
+            goal_lines.append("✅ 目标已完成！请制定下一个目标并开始新的计划。")
+        elif goal and current_plan:
+            goal_lines.append("继续按照计划执行当前目标，如遇到问题请调整策略。")
+
+        goal_prompt = "\n".join(goal_lines)
+
     # 提示词
     chat_target_group1 = "你正在直播Minecraft游戏，以下是游戏的当前状态："
     chat_target_group2 = "正在直播Minecraft游戏"
 
-    # 构建主要的推理提示词，如果有错误则包含错误修正提示
+    # 构建主要的推理提示词，包含目标信息
     personality = "你的网名叫\\{bot_name\\}，有人也叫你\\{bot_other_names\\}，\\{prompt_personality\\}"
     base_prompt = f"""{personality}
 你正在直播Minecraft游戏，实现游戏目标的同时不要忘记和观众或其他玩家互动。
@@ -280,11 +356,8 @@ def build_prompt(
 ## 游戏状态
 {status_text}
 
-## 游戏目标
-请根据当前游戏状态和你之前制定的目标计划，继续执行下一步动作。
-- 如果当前目标已完成或无法继续，请制定新的目标
-- 如果当前步骤已完成，请继续执行计划中的下一个步骤
-- 请保持目标和计划的连贯性，不要频繁更改
+## 当前目标和计划
+{goal_prompt}
 
 {error_prompt}
 {event_prompt}
@@ -302,7 +375,7 @@ def build_prompt(
 以下是一些有用的Mineflayer API和函数:
 - `bot.chat(message)`: 发送聊天消息，聊天消息请使用中文
 - `mineBlock(bot, name, count)`: 收集指定方块，例如`mineBlock(bot,'oak_log',5)`。无法挖掘非方块，例如想要挖掘铁矿石需要`iron_ore`而不是`raw_iron`
-- `craftItem(bot, name, count)`: 合成物品
+- `craftItem(bot, name, count)`: 合成物品，合成之前请先制作并放置工作台，否则无法合成
 - `placeItem(bot, name, position)`: 放置方块
 - `smeltItem(bot, name, count)`: 冶炼物品
 - `killMob(bot, name, timeout)`: 击杀生物
@@ -317,10 +390,11 @@ def build_prompt(
 - 一次不要写太多代码，否则容易出现错误。不要写复杂判断，一次只写几句代码
 - 如果状态一直没有变化，请检查代码是否正确（例如方块或物品名称是否正确）并使用新的代码，而不是重复执行同样的代码
 - 如果目标一直无法完成，请切换目标
-- 在你认为合适时，使用`bot.chat()`简明扼要，口语化地说明你要做什么，如果前面已经说过，就不必重复说话，或者和前面的话说出差异
+- **重要：避免重复说话！** 在使用`bot.chat()`时，请检查你最近是否说过类似的话。如果已经说过，就不要再重复了，或者换一个完全不同的表达方式
+- 如果你发现自己在重复相同的行为或话语，立即改变策略：尝试新的活动、换个话题、或者保持沉默专注于游戏
 - 不要使用`bot.on`或`bot.once`注册事件监听器
 - 尽可能使用mineBlock、craftItem、placeItem、smeltItem、killMob等高级函数，如果没有，才使用Mineflayer API
-- 如果你看到有玩家和你聊天，请友好回应，不要不理他们
+- 如果你看到有玩家和你聊天，请友好回应，不要不理他们，但也不要反复说同样的话
     """
 
     reasoning_prompt_main = base_prompt.strip()
