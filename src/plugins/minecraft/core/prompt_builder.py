@@ -273,7 +273,7 @@ def build_prompt(
     chat_target_group2 = "正在直播Minecraft游戏"
 
     # 构建主要的推理提示词，如果有错误则包含错误修正提示
-    personality = "你的网名叫\{bot_name\}，有人也叫你\{bot_other_names\}，\{prompt_personality\}"
+    personality = "你的网名叫\\{bot_name\\}，有人也叫你\\{bot_other_names\\}，\\{prompt_personality\\}"
     base_prompt = f"""{personality}
 你正在直播Minecraft游戏，实现游戏目标的同时不要忘记和观众或其他玩家互动。
 

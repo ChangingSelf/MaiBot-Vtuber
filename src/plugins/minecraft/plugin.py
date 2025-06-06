@@ -54,6 +54,10 @@ class MinecraftPlugin(BasePlugin):
         self._auto_send_task: Optional[asyncio.Task] = None
         self._last_response_time: float = 0.0
 
+        # 添加动作完成等待配置
+        self.max_wait_cycles: int = minecraft_config.get("max_wait_cycles", 100)  # 最大等待周期数
+        self.wait_cycle_interval: float = minecraft_config.get("wait_cycle_interval", 0.1)  # 等待周期间隔(秒)
+
         # 上下文标签配置
         self.context_tags: Optional[List[str]] = minecraft_config.get("context_tags")
         if not isinstance(self.context_tags, list):
@@ -135,11 +139,11 @@ class MinecraftPlugin(BasePlugin):
             self.goal_history.append(initial_goal_record)
             self.logger.info(f"已记录初始目标: {self.goal}")
 
-            # 等待几秒钟，确保 MaiCore 连接
-            await asyncio.sleep(5)
-
-            # 发送初始状态给 MaiCore
-            await self._send_state_to_maicore()
+            # 发送初始状态给 MaiCore (只有在准备好时才发送)
+            if self._is_ready_for_next_action():
+                await self._send_state_to_maicore()
+            else:
+                self.logger.info("初始化时智能体未准备好，将在自动发送循环中处理")
 
             # 启动自动发送任务
             self._auto_send_task = asyncio.create_task(self._auto_send_loop(), name="MinecraftAutoSend")
@@ -159,8 +163,34 @@ class MinecraftPlugin(BasePlugin):
                 # 检查是否收到过响应
                 current_time = time.time()
                 if current_time - self._last_response_time > self.auto_send_interval:
-                    self.logger.info("未收到响应，重新发送状态...")
-                    await self._send_state_to_maicore()
+                    # 检查是否准备好发送新状态
+                    if self._is_ready_for_next_action():
+                        self.logger.info("未收到响应且已准备好，重新发送状态...")
+                        await self._send_state_to_maicore()
+                    else:
+                        # 如果未准备好，执行no_op等待，但不发送状态给MaiCore
+                        self.logger.info("未收到响应但智能体未准备好，执行no_op等待...")
+                        try:
+                            no_op_actions = mineland.Action.no_op(self.agents_count)
+                            next_obs, next_code_info, next_event, next_done, next_task_info = execute_mineland_action(
+                                mland=self.mland, current_actions=no_op_actions
+                            )
+
+                            # 更新状态
+                            self.current_obs = next_obs
+                            self.current_code_info = next_code_info
+                            self.current_event = next_event
+                            self.current_done = next_done
+                            self.current_task_info = next_task_info
+                            self.current_step_num += 1
+
+                            # 更新事件历史记录
+                            self._update_event_history(next_event)
+
+                            self.logger.debug(f"自动发送循环中执行no_op完毕，当前步骤: {self.current_step_num}")
+
+                        except Exception as e:
+                            self.logger.error(f"自动发送循环中执行no_op时出错: {e}")
 
             except asyncio.CancelledError:
                 self.logger.info("自动发送状态任务被取消")
@@ -260,6 +290,79 @@ class MinecraftPlugin(BasePlugin):
             f"已将 Mineland 状态 (step {self.current_step_num}, done: {self.current_done}) 发送给 MaiCore。"
         )
 
+    def _is_ready_for_next_action(self) -> bool:
+        """
+        检查所有智能体是否准备好执行下一个动作
+        要么正在执行代码（is_running=true, is_ready=false），要么准备好接受新代码（is_running=false, is_ready=true），两种状态是互斥的。
+
+        Returns:
+            bool: 如果所有智能体都准备好执行下一个动作则返回True，否则返回False
+        """
+        if not self.current_code_info:
+            # 如果没有代码信息，认为是准备好的状态
+            self.logger.debug("没有代码信息，认为准备好执行下一个动作")
+            return True
+
+        for i, code_info in enumerate(self.current_code_info):
+            if code_info is None:
+                # 如果代码信息为空，认为是准备好的状态
+                self.logger.debug(f"智能体 {i} 代码信息为空，认为准备好")
+                continue
+
+            # 检查是否正在运行代码或未准备好
+            is_ready = code_info.is_ready
+
+            self.logger.debug(f"智能体 {i} 状态检查: is_ready={is_ready}")
+            if not is_ready:
+                self.logger.info(f"智能体 {i} 未准备好执行下一个动作 (is_ready: {is_ready})")
+                return False
+
+        self.logger.debug("所有智能体都准备好执行下一个动作")
+        return True
+
+    async def _wait_for_action_completion(self):
+        """
+        等待当前动作完成，在动作未完成时执行no_op操作
+        """
+        wait_cycles = 0
+
+        while not self._is_ready_for_next_action() and wait_cycles < self.max_wait_cycles:
+            self.logger.info(f"等待动作完成中... (周期 {wait_cycles + 1}/{self.max_wait_cycles})")
+
+            try:
+                # 执行no_op动作获取下一个状态
+                no_op_actions = mineland.Action.no_op(self.agents_count)
+                next_obs, next_code_info, next_event, next_done, next_task_info = execute_mineland_action(
+                    mland=self.mland, current_actions=no_op_actions
+                )
+
+                # 更新状态
+                self.current_obs = next_obs
+                self.current_code_info = next_code_info
+                self.current_event = next_event
+                self.current_done = next_done
+                self.current_task_info = next_task_info
+                self.current_step_num += 1
+
+                # 更新事件历史记录
+                self._update_event_history(next_event)
+
+                self.logger.debug(f"No-op执行完毕，当前步骤: {self.current_step_num}")
+
+            except Exception as e:
+                self.logger.error(f"执行no_op等待时出错: {e}")
+                break
+
+            wait_cycles += 1
+
+            # 短暂等待避免过于频繁的检查
+            await asyncio.sleep(self.wait_cycle_interval)
+
+        if wait_cycles >= self.max_wait_cycles:
+            self.logger.warning(f"等待动作完成超时，已达到最大等待周期数 {self.max_wait_cycles}")
+        else:
+            self.logger.info(f"动作已完成，等待了 {wait_cycles} 个周期")
+
     async def handle_maicore_response(self, message: MessageBase):
         """处理从 MaiCore 返回的动作指令。"""
         self.logger.info(f"收到来自 MaiCore 的响应: {message.message_segment.data}")
@@ -276,6 +379,12 @@ class MinecraftPlugin(BasePlugin):
                 f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text' (包含JSON格式的动作指令)。丢弃消息。"
             )
             return
+
+        # 首先检查是否准备好执行新动作
+        # 如果上一个动作还在执行中，等待其完成
+        if not self._is_ready_for_next_action():
+            self.logger.info("上一个动作尚未完成，等待动作完成...")
+            await self._wait_for_action_completion()
 
         message_json_str = message.message_segment.data.strip()
         self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
