@@ -2,14 +2,15 @@ import json
 from typing import List, Dict, Any, Optional
 
 from src.utils.logger import get_logger
-from src.plugins.minecraft.core.state_analyzers import analyze_voxels, analyze_equipment
+from ..state.state_analyzers import analyze_voxels, analyze_equipment
 from mineland import Observation, Event, CodeInfo
+from ..events.event import MinecraftEvent
 
 logger = get_logger("MinecraftPlugin")
 
 
 def build_state_analysis(
-    agent_info: Dict[str, str], obs: Observation, events: List[Event], code_infos: List[CodeInfo]
+    agent_info: Dict[str, str], obs: Observation, events: List[MinecraftEvent], code_infos: List[CodeInfo]
 ) -> List[str]:
     """
     分析游戏状态并生成状态提示
@@ -149,9 +150,9 @@ def build_prompt(
     agent_info: Dict[str, str],
     status_prompts: List[str],
     obs: Observation,
-    events: List[Event],
+    events: List[MinecraftEvent],
     code_infos: Optional[List[CodeInfo]] = None,
-    event_history: Optional[List[Dict[str, Any]]] = None,
+    event_history: Optional[List[MinecraftEvent]] = None,
     goal: str = "",
     current_plan: List[str] = None,
     current_step: str = "",
@@ -193,8 +194,8 @@ def build_prompt(
 
         # 处理历史事件
         for event_record in event_history[-20:]:  # 取最近20条
-            event_type = event_record.get("type", "unknown")
-            event_message = event_record.get("message", "")
+            event_type = event_record.type
+            event_message = event_record.message
 
             if not event_message:
                 continue
