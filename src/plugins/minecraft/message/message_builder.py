@@ -2,7 +2,7 @@ import time
 from typing import Dict, List
 
 from maim_message import MessageBase, TemplateInfo, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
-from .prompt_builder import build_prompt
+from .prompt_manager import MinecraftPromptManager
 from ..state.game_state import MinecraftGameState
 from ..events.event_manager import MinecraftEventManager
 
@@ -10,11 +10,13 @@ from ..events.event_manager import MinecraftEventManager
 class MinecraftMessageBuilder:
     """Minecraft消息构建器"""
 
-    def __init__(self, platform: str, user_id: str, nickname: str, group_id: str = None):
+    def __init__(self, platform: str, user_id: str, nickname: str, group_id: str = None, config: dict = None):
         self.platform = platform
         self.user_id = user_id
         self.nickname = nickname
         self.group_id = group_id
+        # 传递提示词相关配置给prompt_manager
+        self.prompt_manager = MinecraftPromptManager(config)
 
     def build_state_message(
         self, game_state: MinecraftGameState, event_manager: MinecraftEventManager, agents_config: List[Dict[str, str]]
@@ -61,7 +63,7 @@ class MinecraftMessageBuilder:
         format_info = FormatInfo(content_format="text", accept_format="text")
 
         # 构建模板信息
-        template_items = build_prompt(
+        template_items = self.prompt_manager.build_prompt(
             agent_info=agent_info,
             status_prompts=status_prompts,
             obs=game_state.current_obs,

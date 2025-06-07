@@ -37,3 +37,28 @@ mineland_server_host = "127.0.0.1"
 
 # MineLand 服务器端口
 mineland_server_port = 1746
+
+# 提示词管理配置
+[minecraft.prompt]
+# 是否启用重复检测
+repetition_detection_enabled = true
+# 重复检测阈值
+repetition_threshold = 2
+# 聊天消息历史限制
+chat_message_history_limit = 3
+# 事件历史限制
+event_history_limit = 20
+# 最近事件限制
+recent_events_limit = 15
+# 其他玩家事件限制
+other_player_events_limit = 5
+# 备用事件限制
+fallback_events_limit = 10
+# 是否显示API函数说明
+api_functions_enabled = true
+# 是否显示编码指南
+coding_guidelines_enabled = true
+# 是否启用错误提示
+error_prompt_enabled = true
+# 是否启用目标提示
+goal_prompt_enabled = true

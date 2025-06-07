@@ -60,6 +60,7 @@ class MinecraftPlugin(BasePlugin):
             user_id=config.get("user_id", "minecraft_bot"),
             nickname=config.get("nickname", "Minecraft Observer"),
             group_id=config.get("group_id"),
+            config=config.get("prompt", {}),
         )
 
     async def setup(self):
