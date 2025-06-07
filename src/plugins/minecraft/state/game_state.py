@@ -1,15 +1,21 @@
 import contextlib
+import json
 from typing import Any, Dict, Optional, List
 import time
 from mineland import Observation, CodeInfo, Event
 from ..events.event import MinecraftEvent
 from .state_analyzers import StateAnalyzer
 
+from src.utils.logger import get_logger
+
+logger = get_logger("MinecraftPlugin")
+
 
 class MinecraftGameState:
     """Minecraft游戏状态管理器"""
 
     def __init__(self, config: Dict[str, Any] = None):
+        self.logger = logger
         # 配置参数
         self.config = config or {}
 
@@ -40,7 +46,7 @@ class MinecraftGameState:
 
     def reset_state(self, initial_obs: List[Observation]):
         """重置游戏状态"""
-        self.current_obs = initial_obs[0] if initial_obs and initial_obs else None
+        self.current_obs: Optional[Observation] = initial_obs[0] if initial_obs and initial_obs else None
 
         self.current_code_info = None
         self.current_event = []
@@ -64,6 +70,8 @@ class MinecraftGameState:
         """更新游戏状态"""
         self.current_obs = obs[0] if obs else None
         self.current_code_info = code_info[0] if code_info else None
+
+        self.logger.info(f"观察信息: {json.dumps(str(self.current_obs.target_entities), indent=4)}")
 
         self.current_event = []
         # 处理事件数据：将mineland.Event转换为MinecraftEvent

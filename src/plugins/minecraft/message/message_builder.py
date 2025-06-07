@@ -5,6 +5,7 @@ from maim_message import MessageBase, TemplateInfo, UserInfo, GroupInfo, FormatI
 from .prompt_manager import MinecraftPromptManager
 from ..state.game_state import MinecraftGameState
 from ..events.event_manager import MinecraftEventManager
+from src.utils.logger import get_logger
 
 
 class MinecraftMessageBuilder:
@@ -17,6 +18,7 @@ class MinecraftMessageBuilder:
         self.group_id = group_id
         # 传递提示词相关配置给prompt_manager
         self.prompt_manager = MinecraftPromptManager(config)
+        self.logger = get_logger("MinecraftPlugin")
 
     def build_state_message(
         self, game_state: MinecraftGameState, event_manager: MinecraftEventManager, agents_config: List[Dict[str, str]]
@@ -36,7 +38,13 @@ class MinecraftMessageBuilder:
         # 构建消息文本
         message_text = self._build_message_text(event_manager, game_state.current_event, agent_info["name"])
 
-        message_segment = Seg(type="text", data=message_text)
+        message_segment = Seg(
+            type="seglist",
+            data=[
+                Seg(type="text", data=message_text),
+                Seg(type="image", data=game_state.current_obs.rgb_base64),
+            ],
+        )
 
         return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=message_text)
 
@@ -60,7 +68,7 @@ class MinecraftMessageBuilder:
                 group_id=self.group_id,
             )
 
-        format_info = FormatInfo(content_format="text", accept_format="text")
+        format_info = FormatInfo(content_format=["text", "image"], accept_format=["text"])
 
         # 构建模板信息
         template_items = self.prompt_manager.build_prompt(
