@@ -121,7 +121,7 @@ class MinecraftPlugin(BasePlugin):
                     else:
                         self.logger.info("未收到响应但智能体未准备好，执行no_op等待...")
                         try:
-                            await self.action_executor.execute_no_op(self.logger)
+                            await self.action_executor.execute_no_op()
                             self.logger.debug(
                                 f"自动发送循环中执行no_op完毕，当前步骤: {self.game_state.current_step_num}"
                             )
@@ -172,7 +172,7 @@ class MinecraftPlugin(BasePlugin):
 
         try:
             # 执行动作（包括等待完成、状态更新等）
-            await self.action_executor.execute_maicore_action(message_json_str, self.logger)
+            await self.action_executor.execute_maicore_action(message_json_str)
 
             # 发送新的状态给 MaiCore
             await self._send_state_to_maicore()

@@ -5,6 +5,9 @@ import mineland
 from .action_handler import parse_message_json, execute_mineland_action
 from ..state.game_state import MinecraftGameState
 from ..events.event_manager import MinecraftEventManager
+from src.utils.logger import get_logger
+
+logger = get_logger("MinecraftPlugin")
 
 
 class MinecraftActionExecutor:
@@ -28,7 +31,7 @@ class MinecraftActionExecutor:
         """设置 MineLand 实例"""
         self.mland = mland
 
-    async def execute_maicore_action(self, message_json_str: str, logger) -> Tuple[bool, Dict[str, Any]]:
+    async def execute_maicore_action(self, message_json_str: str) -> Tuple[bool, Dict[str, Any]]:
         """执行来自MaiCore的动作指令
 
         Returns:
@@ -40,7 +43,7 @@ class MinecraftActionExecutor:
         # 首先检查是否准备好执行新动作
         if not self.game_state.is_ready_for_next_action():
             logger.info("上一个动作尚未完成，等待动作完成...")
-            await self._wait_for_action_completion(logger)
+            await self._wait_for_action_completion()
 
         # 解析动作
         current_actions, action_data = parse_message_json(
@@ -70,7 +73,7 @@ class MinecraftActionExecutor:
 
             if self.game_state.get_effective_done():
                 logger.info(f"任务在步骤 {self.game_state.current_step_num - 1} 完成。将重置环境。")
-                self._reset_environment(logger)
+                self._reset_environment()
                 return True, action_data  # 返回True表示环境已重置
 
             return False, action_data  # 返回False表示正常执行
@@ -79,7 +82,7 @@ class MinecraftActionExecutor:
             logger.exception(f"执行 Mineland step 时出错: {e}")
             raise
 
-    async def execute_no_op(self, logger):
+    async def execute_no_op(self):
         """执行no_op操作并更新状态"""
         if not self.mland:
             raise RuntimeError("MineLand 实例未设置，无法执行 no_op")
@@ -101,14 +104,14 @@ class MinecraftActionExecutor:
         except Exception as e:
             logger.error(f"执行no_op时出错: {e}")
 
-    async def _wait_for_action_completion(self, logger):
+    async def _wait_for_action_completion(self):
         """等待当前动作完成，在动作未完成时执行no_op操作"""
         wait_cycles = 0
 
         while not self.game_state.is_ready_for_next_action() and wait_cycles < self.max_wait_cycles:
             logger.info(f"等待动作完成中... (周期 {wait_cycles + 1}/{self.max_wait_cycles})")
 
-            await self.execute_no_op(logger)
+            await self.execute_no_op()
             wait_cycles += 1
             await asyncio.sleep(self.wait_cycle_interval)
 
@@ -117,7 +120,7 @@ class MinecraftActionExecutor:
         else:
             logger.info(f"动作已完成，等待了 {wait_cycles} 个周期")
 
-    def _reset_environment(self, logger):
+    def _reset_environment(self):
         """重置环境"""
         if not self.mland:
             raise RuntimeError("MineLand 实例未设置，无法重置环境")
