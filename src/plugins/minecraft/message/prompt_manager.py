@@ -59,8 +59,7 @@ class MinecraftPromptManager:
         Returns:
             Dict[str, str]: 包含提示词的模板项字典
         """
-        logger.info(f"events: {events}")
-        logger.info(f"event_history: {event_history}")
+        logger.info(f"事件历史: {event_history}")
 
         # 构建各个部分的提示词
         status_text = self._build_status_text(status_prompts, obs)
