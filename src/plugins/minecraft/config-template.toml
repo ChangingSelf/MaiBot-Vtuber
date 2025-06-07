@@ -1,12 +1,9 @@
 [minecraft]
 enable = true
-# Minecraft WebSocket server host
-# 服务监听的主机地址
-server_host = "0.0.0.0"
-
-# Minecraft WebSocket server port
-# 服务监听的端口
-server_port = 8766
+# 要连接到的 MineLand 服务器的主机地址
+server_host = "127.0.0.1"
+# 要连接到的 MineLand 服务器的端口
+server_port = 11298
 
 # 用于从 Minecraft 发送消息的用户 ID (发送给 MaiCore 时使用)
 user_id = "minecraft_bot"
@@ -29,11 +26,14 @@ mineland_headless = true
 # 期望的RGB观察图像尺寸 (高, 宽)
 mineland_image_size = [180, 320]
 
-# 是否启用低级动作
-mineland_enable_low_level_action = false
-
 # 每步对应的游戏 tick 数
 mineland_ticks_per_step = 20
 
 # 自动发送状态的间隔时间（秒）
 auto_send_interval = 30.0
+
+# MineLand 服务器主机
+mineland_server_host = "127.0.0.1"
+
+# MineLand 服务器端口
+mineland_server_port = 1746

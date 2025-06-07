@@ -34,7 +34,9 @@ def _strip_markdown_codeblock(text: str) -> str:
     return text
 
 
-def parse_message_json(message_json_str: str, agents_count: int, current_step_num: int) -> Tuple[List[Action], str]:
+def parse_message_json(
+    message_json_str: str, agents_count: int, current_step_num: int
+) -> Tuple[List[Action], Dict[str, Any]]:
     """
     解析从MaiCore收到的动作JSON字符串，并返回MineLand格式的动作
 
@@ -44,7 +46,7 @@ def parse_message_json(message_json_str: str, agents_count: int, current_step_nu
         current_step_num: 当前步数
 
     Returns:
-        Tuple[List[Action], str]: MineLand格式的动作列表和目标
+        Tuple[List[Action], Dict[str, Any]]: MineLand格式的动作列表和解析出的信息字典
     """
     # 预处理：去除可能的markdown代码块包装
     cleaned_json_str = _strip_markdown_codeblock(message_json_str)
@@ -53,7 +55,7 @@ def parse_message_json(message_json_str: str, agents_count: int, current_step_nu
         action_data = json.loads(cleaned_json_str)
     except json.JSONDecodeError as e:
         logger.exception(f"解析来自 MaiCore 的动作 JSON 失败: {e}. 原始数据: {message_json_str}")
-        return mineland.Action.no_op(agents_count)
+        return mineland.Action.no_op(agents_count), {}
 
     # --- 解析动作并准备 current_actions ---
     # 目前仅支持单智能体 (agents_count=1)
@@ -92,7 +94,7 @@ def parse_message_json(message_json_str: str, agents_count: int, current_step_nu
         logger.warning(f"步骤 {current_step_num}: 多智能体 (AGENTS_COUNT > 1) 暂不支持，将执行无操作。")
         current_actions = mineland.Action.no_op(agents_count)
 
-    return current_actions, action_data.get("goal", "")
+    return current_actions, action_data
 
 
 def execute_mineland_action(
