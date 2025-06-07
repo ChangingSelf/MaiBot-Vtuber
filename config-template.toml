@@ -70,3 +70,4 @@ enable_funasr_stt = false
 enable_gptsovits_tts = false
 enable_mock_danmaku = false
 enable_minecraft = true
+enable_bili_danmaku_selenium = false
