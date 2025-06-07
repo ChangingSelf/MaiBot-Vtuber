@@ -29,7 +29,7 @@ except ImportError:
 # --- Amaidesu Core Imports ---
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg
+from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
 
 
 @dataclass
@@ -360,12 +360,12 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                 )
 
                 # 计时：获取礼物消息
-                gift_search_start = time.time()
-                gift_elements = self.driver.find_elements(By.CSS_SELECTOR, self.gift_selector)
-                gift_search_end = time.time()
-                self.logger.info(
-                    f"[计时] 查找礼物元素耗时: {(gift_search_end - gift_search_start) * 1000:.1f}ms, 找到 {len(gift_elements)} 个元素"
-                )
+                # gift_search_start = time.time()
+                # gift_elements = self.driver.find_elements(By.CSS_SELECTOR, self.gift_selector)
+                # gift_search_end = time.time()
+                # self.logger.info(
+                #     f"[计时] 查找礼物元素耗时: {(gift_search_end - gift_search_start) * 1000:.1f}ms, 找到 {len(gift_elements)} 个元素"
+                # )
                 # 注释：礼物处理暂时禁用
                 # print(f"gift {gift_elements}")
                 # for element in gift_elements[-self.max_messages_per_check :]:
@@ -567,7 +567,11 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                 self.logger.info(f"已将聚合上下文追加到 '{main_prompt_key}'。")
 
             # 使用修改后的模板项构建最终结构
-            final_template_info_value = {"template_items": modified_template_items}
+            final_template_info_value = TemplateInfo(
+                template_items=modified_template_items,
+                template_name=self.config.get("template_name", f"bili_{self.room_id}"),
+                template_default=False,
+            )
 
         # --- Base Message Info ---
         message_info = BaseMessageInfo(

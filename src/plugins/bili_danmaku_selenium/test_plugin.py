@@ -73,7 +73,7 @@ async def test_plugin():
     # 创建模拟的配置
     test_config = {
         "enabled": True,
-        "room_id": 8432038,
+        "room_id": 25252667,
         "poll_interval": 3.0,
         "max_messages_per_check": 5,
         "headless": True,
@@ -88,8 +88,8 @@ async def test_plugin():
         "default_user_nickname": "B站观众",
         "user_cardname": "",
         "enable_group_info": True,
-        "group_id": 8432038,
-        "group_name": "bili_live_8432038",
+        "group_id": 25252667,
+        "group_name": "bili_live_25252667",
         "content_format": ["text"],
         "accept_format": ["text", "emoji", "reply", "vtb_text"],
         "context_tags": [],
