@@ -655,7 +655,7 @@ class TTSPlugin(BasePlugin):
                     pcm_data = wav_data
             else:
                 # 后续块或非WAV格式，直接当作PCM数据处理
-                self.logger.debug(f"处理非WAV头部数据块，大小: {len(wav_data)} 字节，当作PCM数据处理")
+                # self.logger.debug(f"处理非WAV头部数据块，大小: {len(wav_data)} 字节，当作PCM数据处理")
                 pcm_data = wav_data
 
         except Exception as e:

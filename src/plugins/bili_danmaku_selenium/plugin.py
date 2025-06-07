@@ -3,6 +3,8 @@
 import asyncio
 import time
 import hashlib
+import signal
+import threading
 from typing import Dict, Any, Optional, List, Set
 from dataclasses import dataclass
 
@@ -115,12 +117,14 @@ class MessageCacheService:
 class BiliDanmakuSeleniumPlugin(BasePlugin):
     """Bilibili 直播弹幕插件（Selenium版），使用浏览器直接获取弹幕和礼物。"""
 
-    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
-        super().__init__(core, plugin_config)
-
+    def __init__(self, core: AmaidesuCore, config: Dict[str, Any]):
+        super().__init__(core, config)
+        
         # --- 显式加载自己目录下的 config.toml ---
         self.config = self.plugin_config
-        self.enabled = self.config.get("enabled", True)  # --- 依赖检查 ---
+        self.enabled = self.config.get("enabled", True)
+        
+        # --- 依赖检查 ---
         if webdriver is None:
             self.logger.error(
                 "selenium library not found. Please install it (`pip install selenium`). BiliDanmakuSeleniumPlugin disabled."
@@ -138,7 +142,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             self.logger.error(f"Invalid or missing 'room_id' in config: {self.room_id}. Plugin disabled.")
             self.enabled = False
             return
-
+            
         self.poll_interval = max(0.5, self.config.get("poll_interval", 1.0))
         self.max_messages_per_check = max(1, self.config.get("max_messages_per_check", 10))
 
@@ -146,7 +150,9 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         self.headless = self.config.get("headless", True)
         self.webdriver_timeout = self.config.get("webdriver_timeout", 30)
         self.page_load_timeout = self.config.get("page_load_timeout", 30)
-        self.implicit_wait = self.config.get("implicit_wait", 10)  # --- 选择器配置 ---
+        self.implicit_wait = self.config.get("implicit_wait", 10)
+        
+        # --- 选择器配置 ---
         self.danmaku_container_selector = self.config.get("danmaku_container_selector", "#chat-items")
         self.danmaku_item_selector = self.config.get("danmaku_item_selector", ".chat-item.danmaku-item")
         self.danmaku_text_selector = self.config.get("danmaku_text_selector", ".danmaku-item-right")
@@ -166,12 +172,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             self.logger.info("'context_tags' is empty, will fetch all context.")
             self.context_tags = None
         else:
-            self.logger.info(f"Will fetch context with tags: {self.context_tags}")  # --- 状态变量 ---
-        self.driver = None  # 类型：Optional[webdriver.Chrome]
-        self._stop_event = asyncio.Event()
-        self._task: Optional[asyncio.Task] = None
-        self._processed_messages: Set[str] = set()  # 已处理的消息ID，防止重复
-        self._last_cleanup_time = time.time()
+            self.logger.info(f"Will fetch context with tags: {self.context_tags}")
 
         # --- Load Template Items ---
         self.template_items = None
@@ -185,9 +186,73 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         # --- 直播间URL ---
         self.live_url = f"https://live.bilibili.com/{self.room_id}"
         
+        # --- 状态变量 ---
+        self.driver = None
+        self.monitoring_task = None
+        self.stop_event = asyncio.Event()
+        self.processed_messages: Set[str] = set()
+        self.last_cleanup_time = time.time()
+        
         # --- 初始化消息缓存服务 ---
         cache_size = self.config.get("message_cache_size", 1000)
         self.message_cache_service = MessageCacheService(max_cache_size=cache_size)
+        
+        # --- 添加退出机制相关属性 ---
+        self.shutdown_timeout = self.config.get('shutdown_timeout', 30)  # 30秒超时
+        self.cleanup_lock = threading.Lock()
+        self.is_shutting_down = False
+        
+        # --- 注册信号处理器 ---
+        self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self):
+        """设置信号处理器以实现优雅退出"""
+        def signal_handler(signum, frame):
+            self.logger.info(f"接收到信号 {signum}，开始优雅关闭...")
+            asyncio.create_task(self._graceful_shutdown())
+        
+        # 注册常见的退出信号
+        try:
+            signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+            signal.signal(signal.SIGTERM, signal_handler)  # 终止信号
+            if hasattr(signal, 'SIGBREAK'):  # Windows
+                signal.signal(signal.SIGBREAK, signal_handler)
+        except Exception as e:
+            self.logger.warning(f"设置信号处理器失败: {e}")
+
+    async def _graceful_shutdown(self):
+        """优雅关闭流程"""
+        if self.is_shutting_down:
+            return
+            
+        self.is_shutting_down = True
+        self.logger.info("开始优雅关闭流程...")
+        
+        try:
+            # 设置停止事件
+            self.stop_event.set()
+            
+            # 等待监控任务完成
+            if self.monitoring_task and not self.monitoring_task.done():
+                self.logger.info("等待监控任务完成...")
+                try:
+                    await asyncio.wait_for(self.monitoring_task, timeout=self.shutdown_timeout)
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"监控任务在 {self.shutdown_timeout} 秒内未完成，强制取消")
+                    self.monitoring_task.cancel()
+                    try:
+                        await self.monitoring_task
+                    except asyncio.CancelledError:
+                        pass
+            
+            # 执行清理
+            await self.cleanup()
+            self.logger.info("优雅关闭完成")
+            
+        except Exception as e:
+            self.logger.error(f"优雅关闭过程中发生错误: {e}")
+        finally:
+            self.is_shutting_down = False
 
     async def setup(self):
         await super().setup()
@@ -203,7 +268,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             await self._create_webdriver()
 
             # 启动后台监控任务
-            self._task = asyncio.create_task(self._run_monitoring_loop(), name=f"BiliDanmakuSelenium_{self.room_id}")
+            self.monitoring_task = asyncio.create_task(self._run_monitoring_loop(), name=f"BiliDanmakuSelenium_{self.room_id}")
             self.logger.info(f"启动 Bilibili Selenium 弹幕监控任务 (房间: {self.room_id})...")
 
         except Exception as e:
@@ -211,26 +276,69 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             self.enabled = False
 
     async def cleanup(self):
-        self.logger.info(f"开始清理 BiliDanmakuSeleniumPlugin (房间: {self.room_id})...")
-        self._stop_event.set()
-
-        if self._task and not self._task.done():
-            self.logger.info("正在取消弹幕监控任务...")
-            self._task.cancel()
+        """清理资源"""
+        with self.cleanup_lock:
+            if self.is_shutting_down and hasattr(self, '_cleanup_done'):
+                return  # 避免重复清理
+                
+            self.logger.info("开始清理 BiliDanmakuSelenium 插件资源...")
+            
             try:
-                await asyncio.wait_for(self._task, timeout=self.poll_interval + 2)
-            except asyncio.TimeoutError:
-                self.logger.warning("弹幕监控任务在超时后未结束。")
-            except asyncio.CancelledError:
-                self.logger.info("弹幕监控任务已被取消。")  # 关闭 WebDriver
-        if self.driver:
-            try:
-                await asyncio.get_event_loop().run_in_executor(None, self.driver.quit)
-                self.logger.info("关闭了 WebDriver。")
+                # 设置停止事件
+                self.stop_event.set()
+                
+                # 取消监控任务
+                if self.monitoring_task and not self.monitoring_task.done():
+                    self.logger.info("取消监控任务...")
+                    self.monitoring_task.cancel()
+                    try:
+                        await asyncio.wait_for(self.monitoring_task, timeout=10)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        self.logger.info("监控任务已取消或超时")
+                
+                # 清理 WebDriver
+                if self.driver:
+                    self.logger.info("关闭 WebDriver...")
+                    try:
+                        # 设置较短的超时时间
+                        def quit_driver():
+                            try:
+                                self.driver.quit()
+                            except Exception as e:
+                                self.logger.warning(f"关闭 WebDriver 时出错: {e}")
+                        
+                        # 在单独线程中执行 WebDriver 关闭，避免阻塞
+                        quit_thread = threading.Thread(target=quit_driver)
+                        quit_thread.daemon = True
+                        quit_thread.start()
+                        quit_thread.join(timeout=5)  # 5秒超时
+                        
+                        if quit_thread.is_alive():
+                            self.logger.warning("WebDriver 关闭超时，可能存在僵尸进程")
+                        else:
+                            self.logger.info("WebDriver 已成功关闭")
+                            
+                    except Exception as e:
+                        self.logger.error(f"关闭 WebDriver 时发生异常: {e}")
+                    finally:
+                        self.driver = None
+                
+                # 清理缓存服务
+                if self.message_cache_service:
+                    try:
+                        self.message_cache_service.clear_cache()
+                        self.logger.info("消息缓存已清理")
+                    except Exception as e:
+                        self.logger.warning(f"清理消息缓存时出错: {e}")
+                
+                # 清理处理过的消息集合
+                self.processed_messages.clear()
+                
+                self.logger.info("BiliDanmakuSelenium 插件资源清理完成")
+                self._cleanup_done = True
+                
             except Exception as e:
-                self.logger.warning(f"关闭 WebDriver 时出错: {e}")
-                await super().cleanup()
-        self.logger.info(f"BiliDanmakuSeleniumPlugin 清理完成 (房间: {self.room_id})。")
+                self.logger.error(f"清理过程中发生错误: {e}")
 
     async def _create_webdriver(self):
         """创建 WebDriver"""
@@ -326,47 +434,59 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             raise
 
     async def _run_monitoring_loop(self):
-        """后台监控循环"""
-        self.logger.info("弹幕监控循环已启动")
-
+        """运行监控循环"""
+        self.logger.info(f"开始监控 Bilibili 直播间 {self.room_id} 的弹幕...")
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
         try:
-            while not self._stop_event.is_set():
+            while not self.stop_event.is_set():
                 try:
+                    # 检查是否正在关闭
+                    if self.is_shutting_down:
+                        self.logger.info("检测到关闭信号，退出监控循环")
+                        break
+                        
                     await self._fetch_and_process_messages()
+                    consecutive_errors = 0  # 重置错误计数
 
                     # 定期清理已处理消息记录
                     current_time = time.time()
-                    if current_time - self._last_cleanup_time > 300:  # 5分钟清理一次
+                    if current_time - self.last_cleanup_time > 300:  # 5分钟清理一次
                         self._cleanup_processed_messages()
-                        self._last_cleanup_time = current_time
+                        self.last_cleanup_time = current_time
 
                 except Exception as e:
-                    self.logger.error(f"监控弹幕时发生错误: {e}", exc_info=True)
-                    # 检查WebDriver是否还可用
-                    if self.driver:
+                    consecutive_errors += 1
+                    self.logger.error(f"监控循环中发生错误 ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                    
+                    # 如果连续错误过多，尝试重新创建 WebDriver
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.logger.warning("连续错误过多，尝试重新创建 WebDriver...")
                         try:
-                            # 尝试执行简单的操作来测试连接
-                            await asyncio.get_event_loop().run_in_executor(None, lambda: self.driver.current_url)
-                        except Exception as driver_error:
-                            self.logger.error(f"WebDriver 连接失败，尝试重新创建: {driver_error}")
                             await self._recreate_webdriver()
-
-                    await asyncio.sleep(self.poll_interval * 2)  # 出错时延长等待
+                            consecutive_errors = 0
+                        except Exception as recreate_error:
+                            self.logger.error(f"重新创建 WebDriver 失败: {recreate_error}")
+                            # 等待更长时间后再试
+                            await asyncio.sleep(30)
 
                 # 使用可中断的等待
                 try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_interval)
                     break  # 收到停止信号
                 except asyncio.TimeoutError:
-                    continue  # 正常超时，继续循环
+                    continue  # 超时，继续循环
+                except asyncio.CancelledError:
+                    self.logger.info("监控任务被取消")
+                    break
 
         except asyncio.CancelledError:
-            self.logger.info("弹幕监控循环被取消")
-            raise
+            self.logger.info("监控循环被取消")
         except Exception as e:
-            self.logger.error(f"监控循环发生未预期错误: {e}", exc_info=True)
+            self.logger.error(f"监控循环发生未预期的错误: {e}", exc_info=True)
         finally:
-            self.logger.info("弹幕监控循环已结束")
+            self.logger.info("监控循环已结束")
 
     async def _recreate_webdriver(self):
         """重新创建WebDriver"""
@@ -426,7 +546,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                     try:
                         # 生成元素ID
                         element_id = self._generate_element_id(element)
-                        if element_id in self._processed_messages:
+                        if element_id in self.processed_messages:
                             # self.logger.debug(f"[计时] 跳过已处理的元素: {element_id}")
                             continue
 
@@ -466,7 +586,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                             message_type="danmaku",
                         )
                         messages.append(message)
-                        self._processed_messages.add(element_id)
+                        self.processed_messages.add(element_id)
                         processed_count += 1
 
                     except NoSuchElementException:
@@ -547,11 +667,11 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
     def _cleanup_processed_messages(self):
         """清理过期的已处理消息记录"""
         # 保留最近的1000条记录，防止内存占用过多
-        if len(self._processed_messages) > 1000:
+        if len(self.processed_messages) > 1000:
             # 转换为列表，保留后500条
-            messages_list = list(self._processed_messages)
-            self._processed_messages = set(messages_list[-500:])
-            self.logger.info(f"清理已处理消息记录，保留 {len(self._processed_messages)} 条")
+            messages_list = list(self.processed_messages)
+            self.processed_messages = set(messages_list[-500:])
+            self.logger.info(f"清理已处理消息记录，保留 {len(self.processed_messages)} 条")
 
     async def _create_message_base(self, message: DanmakuMessage) -> Optional[MessageBase]:
         """根据弹幕数据创建 MessageBase 对象"""

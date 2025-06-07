@@ -1,29 +1,59 @@
 # src/plugins/bili_danmaku_selenium/config-template.toml
 
-[bili_danmaku_selenium]
+# Bilibili 直播弹幕插件配置文件（Selenium版）
 
-# --- 插件行为设置 ---
-room_id = 123456
+# 是否启用插件
+enabled = true
+
+# 直播间ID（必填）
+room_id = 12345
+
+# 轮询间隔（秒）
 poll_interval = 1.0
+
+# 每次检查的最大消息数
 max_messages_per_check = 10
 
-# --- 消息缓存设置 ---
-# 消息缓存大小，用于支持回复消息的内容解析
+# 消息缓存大小（用于处理回复消息）
 message_cache_size = 1000
 
-# --- Selenium 设置 ---
+# 退出机制配置
+# 优雅关闭超时时间（秒）
+shutdown_timeout = 30
+
+# Selenium WebDriver 配置
+# 是否使用无头模式
 headless = true
+
+# WebDriver 超时时间（秒）
 webdriver_timeout = 30
+
+# 页面加载超时时间（秒）
 page_load_timeout = 30
+
+# 隐式等待时间（秒）
 implicit_wait = 10
 
-# --- 弹幕选择器设置 (已验证可用) ---
+# CSS 选择器配置（高级用户可修改）
 danmaku_container_selector = "#chat-items"
-danmaku_item_selector = ".chat-item"
+danmaku_item_selector = ".chat-item.danmaku-item"
 danmaku_text_selector = ".danmaku-item-right"
-username_selector = ".username"
+username_selector = ".user-name"
 gift_selector = ".gift-item"
 gift_text_selector = ".gift-item-text"
+
+# 上下文标签过滤（可选）
+# 如果设置，只有包含这些标签的上下文会被获取
+# context_tags = ["弹幕", "礼物"]
+
+# 模板信息配置
+enable_template_info = false
+
+# 模板项目配置（当 enable_template_info = true 时使用）
+[template_items]
+# 示例模板项目
+# greeting = "欢迎 {username} 来到直播间！"
+# gift_thanks = "感谢 {username} 送出的 {gift_name}！"
 
 # --- 消息构造默认值 ---
 default_user_id = "bili_user"
@@ -41,9 +71,6 @@ accept_format = ["text", "emoji", "reply", "vtb_text"]
 
 # Prompt Context 相关设置
 context_tags = []
-
-# Template Info 设置 
-enable_template_info = false
 
 [bili_danmaku_selenium.template_items]
 reasoning_prompt_main = '''
