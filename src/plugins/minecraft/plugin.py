@@ -26,7 +26,6 @@ class MinecraftPlugin(BasePlugin):
         self.task_id: str = config.get("mineland_task_id", "playground")
         self.server_host: str = config.get("server_host", "127.0.0.1")
         self.server_port: int = config.get("server_port", 1746)
-        self.agents_count: int = 1  # 固定为单智能体
         self.agents_config: List[Dict[str, str]] = [{"name": "Mai"}]
         self.headless: bool = config.get("mineland_headless", True)
         self.ticks_per_step: int = config.get("mineland_ticks_per_step", 20)
@@ -74,7 +73,7 @@ class MinecraftPlugin(BasePlugin):
             self.mland = mineland.MineLand(
                 server_host=self.server_host,
                 server_port=self.server_port,
-                agents_count=self.agents_count,
+                agents_count=1,
                 agents_config=self.agents_config,
                 headless=self.headless,
                 image_size=self.image_size,
@@ -82,6 +81,9 @@ class MinecraftPlugin(BasePlugin):
                 ticks_per_step=self.ticks_per_step,
             )
             self.logger.info(f"MineLand 环境 (Task ID: {self.task_id}) 初始化成功。")
+
+            # 将 mland 实例注入到 action_executor 中
+            self.action_executor.set_mland(self.mland)
 
             # 重置环境并初始化状态
             initial_obs = self.mland.reset()
@@ -119,7 +121,7 @@ class MinecraftPlugin(BasePlugin):
                     else:
                         self.logger.info("未收到响应但智能体未准备好，执行no_op等待...")
                         try:
-                            await self.action_executor.execute_no_op(self.mland, self.logger)
+                            await self.action_executor.execute_no_op(self.logger)
                             self.logger.debug(
                                 f"自动发送循环中执行no_op完毕，当前步骤: {self.game_state.current_step_num}"
                             )
@@ -170,7 +172,7 @@ class MinecraftPlugin(BasePlugin):
 
         try:
             # 执行动作（包括等待完成、状态更新等）
-            await self.action_executor.execute_maicore_action(self.mland, message_json_str, self.logger)
+            await self.action_executor.execute_maicore_action(message_json_str, self.logger)
 
             # 发送新的状态给 MaiCore
             await self._send_state_to_maicore()
