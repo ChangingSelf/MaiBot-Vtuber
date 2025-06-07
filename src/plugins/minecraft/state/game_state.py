@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, List
 import time
 from mineland import Observation, CodeInfo, Event
 from ..events.event import MinecraftEvent
-from .state_analyzers import StateAnalyzer
+from .analyzers import StateAnalyzer
 
 from src.utils.logger import get_logger
 
@@ -141,12 +141,17 @@ class MinecraftGameState:
             self._state_analyzer = StateAnalyzer(self.current_obs, self.config)
 
         return {
-            "life_stats": self._state_analyzer.analyze_life_stats(),
-            "position": self._state_analyzer.analyze_position(),
-            "equipment": self._state_analyzer.analyze_equipment(),
-            "inventory": self._state_analyzer.analyze_inventory(),
+            "life_stats": self._state_analyzer.life_stats_analyzer.analyze(),
+            "position": self._state_analyzer.motion_analyzer.analyze_position(),
+            "direction": self._state_analyzer.motion_analyzer.analyze_direction(),
+            "velocity": self._state_analyzer.motion_analyzer.analyze_velocity(),
+            "equipment": self._state_analyzer.equipment_analyzer.analyze(),
+            "inventory": self._state_analyzer.inventory_analyzer.analyze(),
             "environment": self._state_analyzer.analyze_environment(),
-            "time": self._state_analyzer.analyze_time(),
+            "collision": self._state_analyzer.collision_analyzer.analyze(),
+            "time": self._state_analyzer.environment_analyzer.analyze_time(),
+            "weather": self._state_analyzer.environment_analyzer.analyze_weather(),
+            "game_info": self._state_analyzer.environment_analyzer.analyze_game_info(),
         }
 
     def is_ready_for_next_action(self) -> bool:
