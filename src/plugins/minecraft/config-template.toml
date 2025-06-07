@@ -21,7 +21,7 @@ json_prompt_prefix = "Minecraft环境状态如下，请提供JSON格式的动作
 mineland_task_id = "playground"
 
 # 是否以无头模式运行 MineLand
-mineland_headless = true
+mineland_headless = true # 设置为false才能够让麦麦能够看到画面
 
 # 期望的RGB观察图像尺寸 (高, 宽)
 mineland_image_size = [180, 320]
