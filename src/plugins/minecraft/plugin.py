@@ -26,7 +26,11 @@ class MinecraftPlugin(BasePlugin):
         self.task_id: str = config.get("mineland_task_id", "playground")
         self.server_host: str = config.get("server_host", "127.0.0.1")
         self.server_port: int = config.get("server_port", 1746)
-        self.agents_config: List[Dict[str, str]] = [{"name": "Mai"}]
+
+        # 智能体配置（从配置文件读取）
+        self.agents_count: int = config.get("agents_count", 1)
+        self.agents_config: List[Dict[str, str]] = config.get("agents_config", [{"name": "Mai"}])
+
         self.headless: bool = config.get("mineland_headless", True)
         self.ticks_per_step: int = config.get("mineland_ticks_per_step", 20)
 
@@ -46,14 +50,22 @@ class MinecraftPlugin(BasePlugin):
         # MineLand实例
         self.mland: Optional[mineland.MineLand] = None
 
-        # 核心组件
-        self.game_state = MinecraftGameState()
-        self.event_manager = MinecraftEventManager(config.get("max_event_history", 20))
+        # 核心组件 - 使用配置文件中的参数
+        action_executor_config = config.get("action_executor", {})
+        event_manager_config = config.get("event_manager", {})
+        game_state_config = config.get("game_state", {})
+
+        self.game_state = MinecraftGameState(game_state_config)
+        self.event_manager = MinecraftEventManager(
+            event_manager_config.get("max_event_history", 20),
+            config,  # 传递完整配置
+        )
         self.action_executor = MinecraftActionExecutor(
             self.game_state,
             self.event_manager,
-            config.get("max_wait_cycles", 100),
-            config.get("wait_cycle_interval", 0.1),
+            max_wait_cycles=action_executor_config.get("max_wait_cycles", 100),
+            wait_cycle_interval=action_executor_config.get("wait_cycle_interval", 0.1),
+            config=config,  # 传递完整配置
         )
         self.message_builder = MinecraftMessageBuilder(
             platform=self.core.platform,
@@ -74,7 +86,7 @@ class MinecraftPlugin(BasePlugin):
             self.mland = mineland.MineLand(
                 server_host=self.server_host,
                 server_port=self.server_port,
-                agents_count=1,
+                agents_count=self.agents_count,
                 agents_config=self.agents_config,
                 headless=self.headless,
                 image_size=self.image_size,

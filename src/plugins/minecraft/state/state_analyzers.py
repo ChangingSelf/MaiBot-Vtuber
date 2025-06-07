@@ -9,14 +9,56 @@ class StateAnalyzer:
     游戏状态分析器，提供统一的状态分析接口
     """
 
-    def __init__(self, obs):
+    def __init__(self, obs, config: Dict[str, Any] = None):
         """
         初始化状态分析器
 
         Args:
             obs: Mineland观察对象
+            config: 配置字典
         """
         self.obs = obs
+        self.config = config or {}
+
+        # 从配置中获取分析器相关的配置
+        analyzer_config = self.config.get("state_analyzer", {})
+
+        # 位置分析配置
+        position_config = analyzer_config.get("position", {})
+        self.low_height_threshold = position_config.get("low_height_threshold", 30)
+
+        # 生命统计分析配置
+        life_stats_config = analyzer_config.get("life_stats", {})
+        self.food_very_low_threshold = life_stats_config.get("food_very_low_threshold", 6)
+        self.food_low_threshold = life_stats_config.get("food_low_threshold", 10)
+        self.food_max_value = life_stats_config.get("food_max_value", 20)
+        self.health_critical_threshold = life_stats_config.get("health_critical_threshold", 5)
+        self.health_low_threshold = life_stats_config.get("health_low_threshold", 10)
+        self.health_max_value = life_stats_config.get("health_max_value", 20)
+        self.oxygen_max_value = life_stats_config.get("oxygen_max_value", 20)
+
+        # 装备分析配置
+        equipment_config = analyzer_config.get("equipment", {})
+        self.durability_critical_threshold = equipment_config.get("durability_critical_threshold", 10)
+        self.durability_low_threshold = equipment_config.get("durability_low_threshold", 25)
+        self.armor_good_protection_threshold = equipment_config.get("armor_good_protection_threshold", 3)
+        self.armor_partial_threshold = equipment_config.get("armor_partial_threshold", 1)
+        self.armor_total_slots = equipment_config.get("armor_total_slots", 4)
+
+        # 库存分析配置
+        inventory_config = analyzer_config.get("inventory", {})
+        self.inventory_full_warning_threshold = inventory_config.get("inventory_full_warning_threshold", 5)
+        self.default_inventory_slots = inventory_config.get("default_inventory_slots", 36)
+
+        # 时间分析配置
+        time_config = analyzer_config.get("time", {})
+        self.night_time_start = time_config.get("night_time_start", 13000)
+        self.night_time_end = time_config.get("night_time_end", 23000)
+
+        # 体素分析配置
+        voxels_config = analyzer_config.get("voxels", {})
+        self.significant_block_count_threshold = voxels_config.get("significant_block_count_threshold", 3)
+        self.voxel_analysis_size = voxels_config.get("voxel_analysis_size", 3)
 
     def analyze_all(self) -> List[str]:
         """
@@ -53,7 +95,7 @@ class StateAnalyzer:
                     position_prompts.append(f"你的当前坐标是{pos}")
 
                     # 高度分析
-                    if pos[1] < 30:  # Y坐标较低
+                    if pos[1] < self.low_height_threshold:  # Y坐标较低
                         position_prompts.append("你处于较低的高度，可能接近地下洞穴或矿层。")
 
                 # 天气状态
@@ -78,23 +120,23 @@ class StateAnalyzer:
         try:
             if hasattr(self.obs, "life_stats") and self.obs.life_stats:
                 # 饥饿状态分析
-                food_level = getattr(self.obs.life_stats, "food", 20)
-                if food_level <= 6:
+                food_level = getattr(self.obs.life_stats, "food", self.food_max_value)
+                if food_level <= self.food_very_low_threshold:
                     life_prompts.append("你现在非常饥饿，需要尽快寻找食物。")
-                elif food_level <= 10:
+                elif food_level <= self.food_low_threshold:
                     life_prompts.append("你的饥饿值较低，应该考虑寻找食物。")
 
                 # 生命值分析
-                health = getattr(self.obs.life_stats, "life", 20)
-                if health <= 5:
+                health = getattr(self.obs.life_stats, "life", self.health_max_value)
+                if health <= self.health_critical_threshold:
                     life_prompts.append("警告：你的生命值极低，处于危险状态！")
-                elif health <= 10:
+                elif health <= self.health_low_threshold:
                     life_prompts.append("你的生命值较低，需要小心行动。")
 
                 # 氧气值分析
-                oxygen = getattr(self.obs.life_stats, "oxygen", 20)
-                if oxygen < 20:
-                    life_prompts.append(f"你的氧气值不足，当前只有{oxygen}/20。")
+                oxygen = getattr(self.obs.life_stats, "oxygen", self.oxygen_max_value)
+                if oxygen < self.oxygen_max_value:
+                    life_prompts.append(f"你的氧气值不足，当前只有{oxygen}/{self.oxygen_max_value}。")
 
         except (AttributeError, KeyError) as e:
             logger.warning(f"分析生命统计数据时出错: {e}")
@@ -179,11 +221,11 @@ class StateAnalyzer:
                                 item_info += f" (耐久度: {durability_percent}%)"
 
                                 # 耐久度警告
-                                if durability_percent <= 10:
+                                if durability_percent <= self.durability_critical_threshold:
                                     equipment_prompts.append(
                                         f"警告：{slot_name}的{item_name}耐久度极低({durability_percent}%)，即将损坏！"
                                     )
-                                elif durability_percent <= 25:
+                                elif durability_percent <= self.durability_low_threshold:
                                     equipment_prompts.append(
                                         f"注意：{slot_name}的{item_name}耐久度较低({durability_percent}%)，建议修理或更换"
                                     )
@@ -219,10 +261,12 @@ class StateAnalyzer:
                 # 检测护甲完整性
                 armor_slots = ["头部", "胸部", "腿部", "脚部"]
                 equipped_armor = [slot for slot in armor_slots if slot in equipped_items]
-                if len(equipped_armor) >= 3:
-                    equipment_prompts.append(f"你穿戴了较完整的护甲({len(equipped_armor)}/4件)，有良好的防护")
-                elif len(equipped_armor) >= 1:
-                    equipment_prompts.append(f"你穿戴了部分护甲({len(equipped_armor)}/4件)")
+                if len(equipped_armor) >= self.armor_good_protection_threshold:
+                    equipment_prompts.append(
+                        f"你穿戴了较完整的护甲({len(equipped_armor)}/{self.armor_total_slots}件)，有良好的防护"
+                    )
+                elif len(equipped_armor) >= self.armor_partial_threshold:
+                    equipment_prompts.append(f"你穿戴了部分护甲({len(equipped_armor)}/{self.armor_total_slots}件)")
             else:
                 equipment_prompts.append("你目前没有装备任何物品")
 
@@ -249,8 +293,8 @@ class StateAnalyzer:
             # 库存容量分析
             if hasattr(self.obs, "inventory_full_slot_count") and hasattr(self.obs, "inventory_slot_count"):
                 full_slots = getattr(self.obs, "inventory_full_slot_count", 0)
-                total_slots = getattr(self.obs, "inventory_slot_count", 36)
-                if full_slots >= total_slots - 5:
+                total_slots = getattr(self.obs, "inventory_slot_count", self.default_inventory_slots)
+                if full_slots >= total_slots - self.inventory_full_warning_threshold:
                     inventory_prompts.append("你的物品栏几乎已满，需要整理或丢弃一些物品。")
 
             # 库存内容分析
@@ -289,7 +333,7 @@ class StateAnalyzer:
             # 提取时间状态
             if hasattr(self.obs, "time"):
                 game_time = getattr(self.obs, "time", 0)
-                if 13000 <= game_time <= 23000:
+                if self.night_time_start <= game_time <= self.night_time_end:
                     time_prompts.append("现在是夜晚，小心可能出现的敌对生物。")
 
         except (AttributeError, KeyError) as e:
@@ -375,7 +419,7 @@ class StateAnalyzer:
                 # 构建简洁的方块列表描述
                 block_list = []
                 for block_name, count in sorted_blocks:
-                    if count >= 3:  # 数量较多的方块
+                    if count >= self.significant_block_count_threshold:  # 数量较多的方块
                         block_list.append(f"{block_name}({count}个)")
                     else:  # 数量较少的方块
                         block_list.append(block_name)
@@ -506,7 +550,9 @@ class StateAnalyzer:
         most_common_count = block_counts[most_common_block]
 
         # 构建周围环境描述
-        if most_common_count >= 10:  # 在3x3x3=27个方块中，如果某种方块超过10个就算主要环境
+        if (
+            most_common_count >= self.significant_block_count_threshold
+        ):  # 在3x3x3=27个方块中，如果某种方块超过10个就算主要环境
             voxel_prompts.append(f"你周围的方块主要是：{most_common_block}")
 
         # 特殊环境检测

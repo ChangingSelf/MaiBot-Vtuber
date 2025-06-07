@@ -9,7 +9,10 @@ from .state_analyzers import StateAnalyzer
 class MinecraftGameState:
     """Minecraft游戏状态管理器"""
 
-    def __init__(self):
+    def __init__(self, config: Dict[str, Any] = None):
+        # 配置参数
+        self.config = config or {}
+
         # MineLand 状态变量（单智能体）
         self.current_obs: Optional[Observation] = None
         self.current_code_info: Optional[CodeInfo] = None
@@ -18,9 +21,10 @@ class MinecraftGameState:
         self.current_task_info: Optional[Dict[str, Any]] = None
         self.current_step_num: int = 0
 
-        # 目标相关
-        self.goal: str = "挖到铁矿"
+        # 目标相关 - 使用配置中的默认目标
+        self.goal: str = self.config.get("default_initial_goal", "挖到铁矿")
         self.goal_history: List[Dict[str, Any]] = []
+        self.goal_history_max_count: int = self.config.get("goal_history_max_count", 50)
 
         # 计划和进度相关
         self.current_plan: List[str] = []
@@ -32,6 +36,7 @@ class MinecraftGameState:
         self._state_analyzer: Optional[StateAnalyzer] = None
         self._last_analyzed_obs_id: Optional[int] = None  # 用于缓存判断
         self._cached_status_prompts: List[str] = []
+        self._cache_enabled: bool = self.config.get("state_analysis_cache_enabled", True)
 
     def reset_state(self, initial_obs: List[Observation]):
         """重置游戏状态"""
@@ -99,17 +104,18 @@ class MinecraftGameState:
         # 使用观察对象的id作为缓存键
         current_obs_id = id(self.current_obs)
 
-        # 如果是相同的观察数据且已有缓存，直接返回缓存结果
-        if self._last_analyzed_obs_id == current_obs_id and self._cached_status_prompts:
+        # 如果启用缓存且是相同的观察数据且已有缓存，直接返回缓存结果
+        if self._cache_enabled and self._last_analyzed_obs_id == current_obs_id and self._cached_status_prompts:
             return self._cached_status_prompts.copy()
 
         # 创建或更新状态分析器
         if not self._state_analyzer or self._state_analyzer.obs != self.current_obs:
-            self._state_analyzer = StateAnalyzer(self.current_obs)
+            self._state_analyzer = StateAnalyzer(self.current_obs, self.config)
 
         # 执行状态分析
         self._cached_status_prompts = self._state_analyzer.analyze_all()
-        self._last_analyzed_obs_id = current_obs_id
+        if self._cache_enabled:
+            self._last_analyzed_obs_id = current_obs_id
 
         return self._cached_status_prompts.copy()
 
@@ -124,7 +130,7 @@ class MinecraftGameState:
             return {"error": ["当前没有可用的游戏状态数据"]}
 
         if not self._state_analyzer or self._state_analyzer.obs != self.current_obs:
-            self._state_analyzer = StateAnalyzer(self.current_obs)
+            self._state_analyzer = StateAnalyzer(self.current_obs, self.config)
 
         return {
             "life_stats": self._state_analyzer.analyze_life_stats(),
@@ -151,7 +157,7 @@ class MinecraftGameState:
             self.goal_history.append(goal_record)
 
             # 保持历史记录在合理范围内
-            if len(self.goal_history) > 50:
+            if len(self.goal_history) > self.goal_history_max_count:
                 self.goal_history.pop(0)
 
             self.goal = new_goal

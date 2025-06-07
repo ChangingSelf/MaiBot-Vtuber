@@ -101,7 +101,7 @@ class MinecraftMessageBuilder:
         # 获取当前事件信息，如果当前事件为空，则使用事件历史的最新几条
         event_messages = event_manager.get_current_events_text(
             current_events, agent_name
-        ) or event_manager.get_recent_events_text(agent_name, max_count=10)
+        ) or event_manager.get_recent_events_text(agent_name)
 
         # 构建消息文本
         if event_messages:

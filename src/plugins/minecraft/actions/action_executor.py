@@ -21,12 +21,21 @@ class MinecraftActionExecutor:
         mland: Optional[mineland.MineLand] = None,
         max_wait_cycles: int = 100,
         wait_cycle_interval: float = 0.1,
+        config: Dict[str, Any] = None,
     ):
         self.game_state = game_state
         self.event_manager = event_manager
         self.mland = mland
         self.max_wait_cycles = max_wait_cycles
         self.wait_cycle_interval = wait_cycle_interval
+
+        # 从配置中读取参数
+        self.config = config or {}
+        action_executor_config = self.config.get("action_executor", {})
+
+        # 配置化的参数
+        self.agents_count = self.config.get("agents_count", 1)
+        self.low_level_action_length = action_executor_config.get("low_level_action_length", 8)
 
     def set_mland(self, mland: mineland.MineLand):
         """设置 MineLand 实例"""
@@ -49,7 +58,7 @@ class MinecraftActionExecutor:
         # 解析动作
         current_actions, action_data = self.parse_message_json(
             message_json_str=message_json_str,
-            agents_count=1,  # 固定为单智能体
+            agents_count=self.agents_count,
             current_step_num=self.game_state.current_step_num,
         )
 
@@ -87,7 +96,7 @@ class MinecraftActionExecutor:
             raise RuntimeError("MineLand 实例未设置，无法执行 no_op")
 
         try:
-            no_op_actions = mineland.Action.no_op(1)  # 固定为单智能体
+            no_op_actions = mineland.Action.no_op(self.agents_count)
             next_obs, next_code_info, next_event, next_done, next_task_info = self.mland.step(action=no_op_actions)
 
             # 更新状态
@@ -184,7 +193,7 @@ class MinecraftActionExecutor:
                 # actions 是字符串，执行高级动作
                 parsed_agent_action_obj = mineland.Action(type=mineland.Action.NEW, code=actions)
                 current_actions = [parsed_agent_action_obj]
-            elif isinstance(actions, list) and len(actions) == 8:
+            elif isinstance(actions, list) and len(actions) == self.low_level_action_length:
                 # actions 是数组，执行低级动作
                 lla = mineland.LowLevelAction()
                 for i in range(len(actions)):
@@ -200,7 +209,7 @@ class MinecraftActionExecutor:
             else:
                 # actions 格式不正确，执行无操作
                 logger.warning(
-                    f"步骤 {current_step_num}: actions 字段格式不正确 (应为字符串或8元素数组)，将执行无操作。"
+                    f"步骤 {current_step_num}: actions 字段格式不正确 (应为字符串或{self.low_level_action_length}元素数组)，将执行无操作。"
                 )
                 current_actions = mineland.Action.no_op(agents_count)
         else:  # 多智能体 (agents_count > 1)
