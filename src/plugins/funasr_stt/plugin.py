@@ -34,7 +34,7 @@ except ModuleNotFoundError:
 
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
 
 
 class FunASRPlugin(BasePlugin):
@@ -252,7 +252,11 @@ class FunASRPlugin(BasePlugin):
                 modified_template_items[main_prompt_key] = original_prompt + "\n" + additional_context
                 self.logger.debug(f"已将聚合上下文追加到 '{main_prompt_key}'。")
 
-            final_template_info_value = {"template_items": modified_template_items}
+            final_template_info_value = TemplateInfo(
+                template_name=cfg.get("template_name", "default"),
+                template_items=modified_template_items,
+                template_default=cfg.get("template_default", True),
+            )
 
         # --- Additional Config ---
         additional_config = cfg.get("additional_config", {}).copy()
