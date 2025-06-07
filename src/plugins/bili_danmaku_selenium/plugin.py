@@ -46,6 +46,72 @@ class DanmakuMessage:
     gift_count: int = 0
 
 
+class MessageCacheService:
+    """消息缓存服务，用于存储和检索消息"""
+    
+    def __init__(self, max_cache_size: int = 1000):
+        """
+        初始化消息缓存服务
+        
+        Args:
+            max_cache_size: 最大缓存消息数量
+        """
+        self.cache: Dict[str, MessageBase] = {}
+        self.max_cache_size = max_cache_size
+        self.access_order: List[str] = []  # 用于LRU淘汰
+        
+    def cache_message(self, message: MessageBase):
+        """
+        缓存消息
+        
+        Args:
+            message: 要缓存的消息
+        """
+        message_id = message.message_info.message_id
+        
+        # 如果消息已存在，更新访问顺序
+        if message_id in self.cache:
+            self.access_order.remove(message_id)
+            self.access_order.append(message_id)
+            # 更新消息内容
+            self.cache[message_id] = message
+        else:
+            # 如果缓存已满，删除最旧的消息
+            if len(self.cache) >= self.max_cache_size:
+                oldest_id = self.access_order.pop(0)
+                del self.cache[oldest_id]
+            
+            # 添加新消息
+            self.cache[message_id] = message
+            self.access_order.append(message_id)
+        
+    def get_message(self, message_id: str) -> Optional[MessageBase]:
+        """
+        根据消息ID获取缓存的消息
+        
+        Args:
+            message_id: 消息ID
+            
+        Returns:
+            缓存的消息，如果不存在则返回None
+        """
+        if message_id in self.cache:
+            # 更新访问顺序（LRU）
+            self.access_order.remove(message_id)
+            self.access_order.append(message_id)
+            return self.cache[message_id]
+        return None
+        
+    def clear_cache(self):
+        """清空缓存"""
+        self.cache.clear()
+        self.access_order.clear()
+        
+    def get_cache_size(self) -> int:
+        """获取当前缓存大小"""
+        return len(self.cache)
+
+
 class BiliDanmakuSeleniumPlugin(BasePlugin):
     """Bilibili 直播弹幕插件（Selenium版），使用浏览器直接获取弹幕和礼物。"""
 
@@ -118,6 +184,10 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         # --- 直播间URL ---
         self.live_url = f"https://live.bilibili.com/{self.room_id}"
+        
+        # --- 初始化消息缓存服务 ---
+        cache_size = self.config.get("message_cache_size", 1000)
+        self.message_cache_service = MessageCacheService(max_cache_size=cache_size)
 
     async def setup(self):
         await super().setup()
@@ -125,6 +195,10 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             return
 
         try:
+            # 注册消息缓存服务到 core
+            self.core.register_service("message_cache", self.message_cache_service)
+            self.logger.info("消息缓存服务已注册到 AmaidesuCore")
+
             # 创建 WebDriver
             await self._create_webdriver()
 
@@ -240,39 +314,85 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         except Exception as e:
             self.logger.error(f"创建 WebDriver 失败: {e}", exc_info=True)
+            # 确保在失败时清理已创建的driver
+            if self.driver:
+                try:
+                    await asyncio.get_event_loop().run_in_executor(None, self.driver.quit)
+                    self.logger.info("已清理失败的 WebDriver")
+                except Exception as cleanup_error:
+                    self.logger.warning(f"清理失败的 WebDriver 时出错: {cleanup_error}")
+                finally:
+                    self.driver = None
             raise
 
     async def _run_monitoring_loop(self):
         """后台监控循环"""
-        while not self._stop_event.is_set():
-            try:
-                await self._fetch_and_process_messages()
+        self.logger.info("弹幕监控循环已启动")
 
-                # 定期清理已处理消息记录
-                current_time = time.time()
-                if current_time - self._last_cleanup_time > 300:  # 5分钟清理一次
-                    self._cleanup_processed_messages()
-                    self._last_cleanup_time = current_time
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await self._fetch_and_process_messages()
 
-            except Exception as e:
-                self.logger.error(f"监控弹幕时发生错误: {e}", exc_info=True)
-                await asyncio.sleep(self.poll_interval * 2)  # 出错时延长等待
+                    # 定期清理已处理消息记录
+                    current_time = time.time()
+                    if current_time - self._last_cleanup_time > 300:  # 5分钟清理一次
+                        self._cleanup_processed_messages()
+                        self._last_cleanup_time = current_time
 
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
-                break
-            except asyncio.TimeoutError:
-                pass  # 正常超时，继续循环
-            except asyncio.CancelledError:
-                self.logger.info("弹幕监控循环被取消。")
-                break
+                except Exception as e:
+                    self.logger.error(f"监控弹幕时发生错误: {e}", exc_info=True)
+                    # 检查WebDriver是否还可用
+                    if self.driver:
+                        try:
+                            # 尝试执行简单的操作来测试连接
+                            await asyncio.get_event_loop().run_in_executor(None, lambda: self.driver.current_url)
+                        except Exception as driver_error:
+                            self.logger.error(f"WebDriver 连接失败，尝试重新创建: {driver_error}")
+                            await self._recreate_webdriver()
 
-        self.logger.info("弹幕监控循环已结束。")
+                    await asyncio.sleep(self.poll_interval * 2)  # 出错时延长等待
+
+                # 使用可中断的等待
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval)
+                    break  # 收到停止信号
+                except asyncio.TimeoutError:
+                    continue  # 正常超时，继续循环
+
+        except asyncio.CancelledError:
+            self.logger.info("弹幕监控循环被取消")
+            raise
+        except Exception as e:
+            self.logger.error(f"监控循环发生未预期错误: {e}", exc_info=True)
+        finally:
+            self.logger.info("弹幕监控循环已结束")
+
+    async def _recreate_webdriver(self):
+        """重新创建WebDriver"""
+        try:
+            # 先清理现有的driver
+            if self.driver:
+                try:
+                    await asyncio.get_event_loop().run_in_executor(None, self.driver.quit)
+                except Exception:
+                    pass  # 忽略清理时的错误
+                finally:
+                    self.driver = None
+
+            # 重新创建
+            await self._create_webdriver()
+            self.logger.info("WebDriver 重新创建成功")
+
+        except Exception as e:
+            self.logger.error(f"重新创建 WebDriver 失败: {e}", exc_info=True)
+            # 标记为禁用，避免继续尝试
+            self.enabled = False
 
     async def _fetch_and_process_messages(self):
         """获取并处理弹幕消息"""
         fetch_start_time = time.time()
-        self.logger.info(f"[计时] 开始获取弹幕消息 - {fetch_start_time:.3f}")
+        self.logger.debug(f"[计时] 开始获取弹幕消息 - {fetch_start_time:.3f}")
 
         if not self.driver:
             self.logger.warning("WebDriver 未初始化，跳过本次检查。")
@@ -280,7 +400,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         def _get_messages():
             get_msg_start_time = time.time()
-            self.logger.info(f"[计时] 开始执行 _get_messages - {get_msg_start_time:.3f}")
+            self.logger.debug(f"[计时] 开始执行 _get_messages - {get_msg_start_time:.3f}")
 
             messages = []
             try:
@@ -288,7 +408,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                 danmaku_search_start = time.time()
                 danmaku_elements = self.driver.find_elements(By.CSS_SELECTOR, self.danmaku_item_selector)
                 danmaku_search_end = time.time()
-                self.logger.info(
+                self.logger.debug(
                     f"[计时] 查找弹幕元素耗时: {(danmaku_search_end - danmaku_search_start) * 1000:.1f}ms, 找到 {len(danmaku_elements)} 个元素"
                 )
 
@@ -297,7 +417,9 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                     if len(danmaku_elements) > self.max_messages_per_check
                     else len(danmaku_elements)
                 )
-                self.logger.info(f"[计时] 准备处理最新的 {pre_max} 条弹幕")  # 计时：处理弹幕元素
+                self.logger.debug(f"[计时] 准备处理最新的 {pre_max} 条弹幕")
+
+                # 计时：处理弹幕元素
                 process_danmaku_start = time.time()
                 processed_count = 0
                 for element in danmaku_elements[-pre_max:]:  # 只处理最新的几条
@@ -305,7 +427,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                         # 生成元素ID
                         element_id = self._generate_element_id(element)
                         if element_id in self._processed_messages:
-                            self.logger.info(f"[计时] 跳过已处理的元素: {element_id}")
+                            # self.logger.debug(f"[计时] 跳过已处理的元素: {element_id}")
                             continue
 
                         # 提取弹幕数据（从 data 属性获取）
@@ -316,7 +438,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                             username = element.get_attribute("data-uname") or "未知用户"
                             user_id = element.get_attribute("data-uid") or ""
 
-                            self.logger.info(f"提取到弹幕信息: 用户={username}, ID={user_id}, 内容={text}")
+                            self.logger.debug(f"提取到弹幕信息: 用户={username}, ID={user_id}, 内容={text}")
                             if not text:
                                 self.logger.warning(f"弹幕内容为空，跳过处理: {element_id}")
                                 continue
@@ -331,7 +453,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                             continue
 
                         username_search_end = time.time()
-                        self.logger.info(
+                        self.logger.debug(
                             f"[计时] 提取用户信息耗时: {(username_search_end - username_search_start) * 1000:.1f}ms"
                         )
 
@@ -348,70 +470,22 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                         processed_count += 1
 
                     except NoSuchElementException:
-                        self.logger.info("[计时] 弹幕元素结构变化，跳过")
+                        self.logger.debug("[计时] 弹幕元素结构变化，跳过")
                         continue  # 元素结构可能变化，跳过
                     except Exception as e:
-                        self.logger.info(f"[计时] 处理单个弹幕元素时出错: {e}")
+                        self.logger.warning(f"[计时] 处理单个弹幕元素时出错: {e}")
                         continue
 
                 process_danmaku_end = time.time()
-                self.logger.info(
+                self.logger.debug(
                     f"[计时] 处理 {processed_count} 条弹幕耗时: {(process_danmaku_end - process_danmaku_start) * 1000:.1f}ms"
                 )
-
-                # 计时：获取礼物消息
-                # gift_search_start = time.time()
-                # gift_elements = self.driver.find_elements(By.CSS_SELECTOR, self.gift_selector)
-                # gift_search_end = time.time()
-                # self.logger.info(
-                #     f"[计时] 查找礼物元素耗时: {(gift_search_end - gift_search_start) * 1000:.1f}ms, 找到 {len(gift_elements)} 个元素"
-                # )
-                # 注释：礼物处理暂时禁用
-                # print(f"gift {gift_elements}")
-                # for element in gift_elements[-self.max_messages_per_check :]:
-                #     gift_element_start = time.time()
-                #     try:
-                #         element_id = self._generate_element_id(element)
-                #         if element_id in self._processed_messages:
-                #             continue
-
-                #         gift_text_elem = element.find_element(By.CSS_SELECTOR, self.gift_text_selector)
-                #         gift_text = gift_text_elem.text.strip() if gift_text_elem else ""
-                #         print(gift_text)
-                #         if gift_text:
-                #             # 解析礼物信息
-
-                #             username, gift_name, gift_count = self._parse_gift_text(gift_text)
-
-                #             message = DanmakuMessage(
-                #                 username=username,
-                #                 text=gift_text,
-                #                 timestamp=time.time(),
-                #                 element_id=element_id,
-                #                 message_type="gift",
-                #                 gift_name=gift_name,
-                #                 gift_count=gift_count,
-                #             )
-                #             messages.append(message)
-                #             self._processed_messages.add(element_id)
-                #             gift_processed_count += 1
-
-                #             gift_element_end = time.time()
-                #             self.logger.info(
-                #                 f"[计时] 处理礼物元素耗时: {(gift_element_end - gift_element_start) * 1000:.1f}ms - {username}: {gift_name}x{gift_count}"
-                #             )
-
-                #     except NoSuchElementException:
-                #         continue
-                #     except Exception as e:
-                #         self.logger.info(f"[计时] 处理单个礼物元素时出错: {e}")
-                #         continue
 
             except Exception as e:
                 self.logger.warning(f"[计时] 获取页面元素时出错: {e}")
 
             get_msg_end_time = time.time()
-            self.logger.info(
+            self.logger.debug(
                 f"[计时] _get_messages 总耗时: {(get_msg_end_time - get_msg_start_time) * 1000:.1f}ms, 获得 {len(messages)} 条消息"
             )
             return messages
@@ -421,7 +495,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             executor_start_time = time.time()
             messages = await asyncio.get_event_loop().run_in_executor(None, _get_messages)
             executor_end_time = time.time()
-            self.logger.info(f"[计时] 线程池执行耗时: {(executor_end_time - executor_start_time) * 1000:.1f}ms")
+            self.logger.debug(f"[计时] 线程池执行耗时: {(executor_end_time - executor_start_time) * 1000:.1f}ms")
 
             if messages:
                 # 计时：消息处理
@@ -432,27 +506,32 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                         msg_create_start = time.time()
                         message_base = await self._create_message_base(message)
                         msg_create_end = time.time()
-                        self.logger.info(
+                        self.logger.debug(
                             f"[计时] 创建 MessageBase 耗时: {(msg_create_end - msg_create_start) * 1000:.1f}ms"
                         )
                         if message_base:
                             self.logger.debug(f"成功创建消息: {message.username}: {message.text}")
-                            # await self.core.send_to_maicore(message_base)  # 取消注释以启用消息发送
+                            
+                            # 将消息缓存到消息缓存服务中
+                            self.message_cache_service.cache_message(message_base)
+                            self.logger.debug(f"消息已缓存: {message_base.message_info.message_id}")
+                            
+                            await self.core.send_to_maicore(message_base)
                     except Exception as e:
                         self.logger.error(f"处理消息时出错: {message} - {e}", exc_info=True)
 
                 msg_process_end = time.time()
-                self.logger.info(
+                self.logger.debug(
                     f"[计时] 处理 {len(messages)} 条消息耗时: {(msg_process_end - msg_process_start) * 1000:.1f}ms"
                 )
             else:
-                self.logger.info("[计时] 没有新的消息")
+                self.logger.debug("[计时] 没有新的消息")
 
         except Exception as e:
             self.logger.warning(f"获取弹幕时发生错误: {e}")
 
         fetch_end_time = time.time()
-        self.logger.info(f"[计时] 整个获取弹幕流程耗时: {(fetch_end_time - fetch_start_time) * 1000:.1f}ms")
+        self.logger.debug(f"[计时] 整个获取弹幕流程耗时: {(fetch_end_time - fetch_start_time) * 1000:.1f}ms")
 
     def _generate_element_id(self, element) -> str:
         """为元素生成唯一ID"""
@@ -464,29 +543,6 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             return hashlib.md5(content.encode()).hexdigest()[:12]
         except Exception:
             return f"elem_{int(time.time() * 1000) % 100000}"
-
-    def _parse_gift_text(self, gift_text: str) -> tuple[str, str, int]:
-        """解析礼物文本，提取用户名、礼物名称和数量"""
-        try:
-            # 简单的礼物文本解析逻辑，可根据实际页面结构调整
-            # 示例: "用户名 投喂了 1个 辣条"
-            parts = gift_text.split()
-            username = parts[0] if parts else "未知用户"
-            gift_name = "礼物"
-            gift_count = 1  # 尝试提取礼物名称和数量
-            for i, part in enumerate(parts):
-                if "个" in part and i > 0:
-                    try:
-                        gift_count = int(part.replace("个", ""))
-                        if i + 1 < len(parts):
-                            gift_name = parts[i + 1]
-                    except ValueError:
-                        pass
-                    break
-
-            return username, gift_name, gift_count
-        except Exception:
-            return "未知用户", "礼物", 1
 
     def _cleanup_processed_messages(self):
         """清理过期的已处理消息记录"""

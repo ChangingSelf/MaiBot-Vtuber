@@ -7,6 +7,10 @@ room_id = 123456
 poll_interval = 1.0
 max_messages_per_check = 10
 
+# --- 消息缓存设置 ---
+# 消息缓存大小，用于支持回复消息的内容解析
+message_cache_size = 1000
+
 # --- Selenium 设置 ---
 headless = true
 webdriver_timeout = 30

@@ -41,7 +41,7 @@ except ModuleNotFoundError:
 # --- Amaidesu Core Imports ---
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase  # Import MessageBase for type hint
+from maim_message import MessageBase, Seg  # Import MessageBase for type hint
 
 logger = logging.getLogger(__name__)
 
@@ -743,9 +743,39 @@ class TTSPlugin(BasePlugin):
 
     async def handle_maicore_message(self, message: MessageBase):
         """处理从 MaiCore 收到的消息，如果是文本类型，则进行 TTS 处理。"""
+
         # 检查消息段是否存在且类型为 'text'
-        if message.message_segment and message.message_segment.type == "text":
-            original_text = message.message_segment.data
+        def process_seg(seg: Seg) -> str:
+            text = ""
+            if seg.type == "seglist":
+                for s in seg.data:
+                    text += process_seg(s)
+            elif seg.type == "text":
+                text = seg.data
+            elif seg.type == "reply":
+                # 处理回复类型的seg，通过消息缓存服务获取原始消息内容
+                message_cache_service = self.core.get_service("message_cache")
+                if message_cache_service:
+                    try:
+                        original_message = message_cache_service.get_message(seg.data)
+                        if original_message:
+                            # 递归处理原始消息的内容
+                            if original_message.message_segment:
+                                reply_text = process_seg(original_message.message_segment)
+                                text = f"回复{reply_text},"
+                            else:
+                                text = ""
+                        else:
+                            text = ""
+                    except Exception as e:
+                        self.logger.error(f"获取回复消息内容失败: {e}")
+                        text = ""
+                else:
+                    text = ""
+            return text
+
+        if message.message_segment:
+            original_text = process_seg(message.message_segment)
             if not isinstance(original_text, str) or not original_text.strip():
                 self.logger.debug("收到非字符串或空文本消息段，跳过 TTS。")
                 return
@@ -788,6 +818,37 @@ class TTSPlugin(BasePlugin):
                 return
             # 3. 执行 TTS
             await self._speak(final_text)
+        elif message.message_segment:
+            # 处理其他类型的消息段，包括 reply 类型
+            processed_text = process_seg(message.message_segment)
+            if processed_text and processed_text.strip():
+                self.logger.info(f"收到非文本类型消息，处理后准备 TTS: '{processed_text[:50]}...'")
+                final_text = processed_text.strip()
+
+                # 执行相同的清理和TTS流程
+                cleanup_service = self.core.get_service("text_cleanup")
+                if cleanup_service:
+                    self.logger.debug("找到 text_cleanup 服务，尝试清理文本...")
+                    try:
+                        cleaned = await cleanup_service.clean_text(final_text)
+                        if cleaned:
+                            self.logger.info(
+                                f"文本经 Cleanup 服务清理: '{cleaned[:50]}...' (原: '{final_text[:50]}...')"
+                            )
+                            final_text = cleaned
+                        else:
+                            self.logger.warning("Cleanup 服务调用失败或返回空，使用原始文本。")
+                    except AttributeError:
+                        self.logger.error("获取到的 'text_cleanup' 服务没有 'clean_text' 方法。")
+                    except Exception as e:
+                        self.logger.error(f"调用 text_cleanup 服务时出错: {e}", exc_info=True)
+
+                if final_text:
+                    await self._speak(final_text)
+                else:
+                    self.logger.warning("处理后文本为空，跳过 TTS。")
+            else:
+                self.logger.debug("处理后文本为空，跳过 TTS。")
         else:
             # 可以选择性地记录收到的非文本消息
             # msg_type = message.message_segment.type if message.message_segment else "No Segment"
