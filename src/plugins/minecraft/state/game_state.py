@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, List
 import time
 from mineland import Observation, CodeInfo, Event
 from ..events.event import MinecraftEvent
+from .state_analyzers import StateAnalyzer
 
 
 class MinecraftGameState:
@@ -27,15 +28,25 @@ class MinecraftGameState:
         self.target_value: int = 0
         self.current_value: int = 0
 
+        # 状态分析器
+        self._state_analyzer: Optional[StateAnalyzer] = None
+        self._last_analyzed_obs_id: Optional[int] = None  # 用于缓存判断
+        self._cached_status_prompts: List[str] = []
+
     def reset_state(self, initial_obs: List[Observation]):
         """重置游戏状态"""
-        self.current_obs = initial_obs[0] if initial_obs and len(initial_obs) > 0 else None
+        self.current_obs = initial_obs[0] if initial_obs and initial_obs else None
 
         self.current_code_info = None
         self.current_event = []
         self.current_done = False
         self.current_task_info = {}
         self.current_step_num = 0
+
+        # 重置状态分析器和缓存
+        self._state_analyzer = None
+        self._last_analyzed_obs_id = None
+        self._cached_status_prompts = []
 
     def update_state(
         self,
@@ -49,10 +60,10 @@ class MinecraftGameState:
         self.current_obs = obs[0] if obs else None
         self.current_code_info = code_info[0] if code_info else None
 
+        self.current_event = []
         # 处理事件数据：将mineland.Event转换为MinecraftEvent
-        if event and len(event) > 0:
+        if event:
             raw_events = event[0]
-            self.current_event = []
             for raw_event in raw_events:
                 if isinstance(raw_event, Event):
                     # 将mineland.Event转换为MinecraftEvent（保持兼容性）
@@ -65,19 +76,68 @@ class MinecraftGameState:
                 else:
                     # 如果已经是MinecraftEvent，直接添加
                     self.current_event.append(raw_event)
-        else:
-            self.current_event = []
-
         self.current_done = done
         self.current_task_info = task_info
         self.current_step_num += 1
 
+        # 清除缓存，因为状态已更新
+        self._last_analyzed_obs_id = None
+        self._cached_status_prompts = []
+
+    def get_status_analysis(self) -> List[str]:
+        """
+        获取当前游戏状态分析
+
+        实现缓存机制，避免重复分析相同的状态
+
+        Returns:
+            List[str]: 状态分析提示列表
+        """
+        if not self.current_obs:
+            return ["当前没有可用的游戏状态数据"]
+
+        # 使用观察对象的id作为缓存键
+        current_obs_id = id(self.current_obs)
+
+        # 如果是相同的观察数据且已有缓存，直接返回缓存结果
+        if self._last_analyzed_obs_id == current_obs_id and self._cached_status_prompts:
+            return self._cached_status_prompts.copy()
+
+        # 创建或更新状态分析器
+        if not self._state_analyzer or self._state_analyzer.obs != self.current_obs:
+            self._state_analyzer = StateAnalyzer(self.current_obs)
+
+        # 执行状态分析
+        self._cached_status_prompts = self._state_analyzer.analyze_all()
+        self._last_analyzed_obs_id = current_obs_id
+
+        return self._cached_status_prompts.copy()
+
+    def get_detailed_status_analysis(self) -> Dict[str, List[str]]:
+        """
+        获取详细的分类状态分析
+
+        Returns:
+            Dict[str, List[str]]: 按类别分组的状态分析
+        """
+        if not self.current_obs:
+            return {"error": ["当前没有可用的游戏状态数据"]}
+
+        if not self._state_analyzer or self._state_analyzer.obs != self.current_obs:
+            self._state_analyzer = StateAnalyzer(self.current_obs)
+
+        return {
+            "life_stats": self._state_analyzer.analyze_life_stats(),
+            "position": self._state_analyzer.analyze_position(),
+            "equipment": self._state_analyzer.analyze_equipment(),
+            "inventory": self._state_analyzer.analyze_inventory(),
+            "environment": self._state_analyzer.analyze_environment(),
+            "time": self._state_analyzer.analyze_time(),
+        }
+
     def is_ready_for_next_action(self) -> bool:
         """检查是否准备好执行下一个动作"""
-        if not self.current_code_info:
-            return True
-
-        return self.current_code_info.is_ready
+        return self.current_code_info.is_ready if self.current_code_info else True
 
     def update_goal(self, new_goal: str):
         """更新目标并记录历史"""
@@ -103,11 +163,10 @@ class MinecraftGameState:
 
         recent_history = self.goal_history[-max_count:]
         history_lines = []
-        for i, record in enumerate(recent_history, 1):
-            history_lines.append(
-                f"{i}. 目标: {record['goal']} (完成于步骤 {record['step_num']}, 时间: {record['completed_time']})"
-            )
-
+        history_lines.extend(
+            f"{i}. 目标: {record['goal']} (完成于步骤 {record['step_num']}, 时间: {record['completed_time']})"
+            for i, record in enumerate(recent_history, 1)
+        )
         return "\n".join(history_lines)
 
     def update_action_data(self, action_data: Dict[str, Any]):

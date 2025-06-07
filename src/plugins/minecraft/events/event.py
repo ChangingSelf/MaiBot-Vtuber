@@ -24,9 +24,6 @@ class MinecraftEvent(Event):
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MinecraftEvent":
         """从字典创建事件对象"""
-        if not isinstance(data, dict):
-            raise ValueError(f"Expected dict, got {type(data)}")
-
         return cls(
             type=data.get("type", ""),
             message=data.get("message", ""),
@@ -38,8 +35,7 @@ class MinecraftEvent(Event):
     @classmethod
     def from_mineland_event(cls, event: Event, **kwargs) -> "MinecraftEvent":
         """从mineland.Event对象创建"""
-        minecraft_event = cls(type=event.type, message=event.message, tick=event.tick, **kwargs)
-        return minecraft_event
+        return cls(type=event.type, message=event.message, tick=event.tick, **kwargs)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""

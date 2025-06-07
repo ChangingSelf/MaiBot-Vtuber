@@ -1,149 +1,10 @@
-import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 from src.utils.logger import get_logger
-from ..state.state_analyzers import analyze_voxels, analyze_equipment
-from mineland import Observation, Event, CodeInfo
+from mineland import Observation, CodeInfo
 from ..events.event import MinecraftEvent
 
 logger = get_logger("MinecraftPlugin")
-
-
-def build_state_analysis(
-    agent_info: Dict[str, str], obs: Observation, events: List[MinecraftEvent], code_infos: List[CodeInfo]
-) -> List[str]:
-    """
-    分析游戏状态并生成状态提示
-
-    Args:
-        obs: Mineland观察对象
-
-    Returns:
-        List[str]: 状态提示列表
-    """
-    status_prompts = []
-
-    # 提取坐标信息
-    if hasattr(obs, "location_stats") and obs.location_stats:
-        if pos := getattr(obs.location_stats, "pos", None):
-            status_prompts.append(f"你的当前坐标是{pos}")
-
-    # 提取生命统计信息
-    if hasattr(obs, "life_stats") and obs.life_stats:
-        # 饥饿状态分析
-        food_level = getattr(obs.life_stats, "food", 20)
-        if food_level <= 6:
-            status_prompts.append("你现在非常饥饿，需要尽快寻找食物。")
-        elif food_level <= 10:
-            status_prompts.append("你的饥饿值较低，应该考虑寻找食物。")
-
-        # 生命值分析
-        health = getattr(obs.life_stats, "life", 20)
-        if health <= 5:
-            status_prompts.append("警告：你的生命值极低，处于危险状态！")
-        elif health <= 10:
-            status_prompts.append("你的生命值较低，需要小心行动。")
-
-        # 氧气值分析
-        oxygen = getattr(obs.life_stats, "oxygen", 20)
-        if oxygen < 20:
-            status_prompts.append(f"你的氧气值不足，当前只有{oxygen}/20。")
-
-    # 分析当前装备状态
-    if hasattr(obs, "equip") and obs.equip:
-        equipment_prompts = analyze_equipment(obs.equip)
-        status_prompts.extend(equipment_prompts)
-
-    # 分析并提取库存状态
-    if hasattr(obs, "inventory_full_slot_count") and hasattr(obs, "inventory_slot_count"):
-        full_slots = getattr(obs, "inventory_full_slot_count", 0)
-        total_slots = getattr(obs, "inventory_slot_count", 36)
-        if full_slots >= total_slots - 5:
-            status_prompts.append("你的物品栏几乎已满，需要整理或丢弃一些物品。")
-
-        # 使用inventory_all字段提取物品栏内容摘要
-        if hasattr(obs, "inventory_all") and obs.inventory_all:
-            inventory_items = {}
-
-            # 遍历inventory_all字典，直接获取物品名称和数量
-            for slot_id, item_info in obs.inventory_all.items():
-                if isinstance(item_info, dict) and "name" in item_info and "count" in item_info:
-                    item_name = item_info["name"]
-                    item_count = item_info["count"]
-
-                    # 过滤空气和空物品
-                    if item_name and item_name != "air" and item_name != "null" and item_count > 0:
-                        if item_name in inventory_items:
-                            inventory_items[item_name] += item_count
-                        else:
-                            inventory_items[item_name] = item_count
-
-            if inventory_items:
-                # 构建详细的物品栏信息
-                items_list = []
-                total_items = 0
-                for item_name, count in inventory_items.items():
-                    items_list.append(f"{count}个{item_name}")
-                    total_items += count
-
-                items_summary = ", ".join(items_list)
-                status_prompts.append(f"你的物品栏包含: {items_summary}（共{total_items}个物品）")
-
-                # 如果物品种类较多，额外提供分类总结
-                if len(inventory_items) > 5:
-                    status_prompts.append(f"你总共有{len(inventory_items)}种不同的物品")
-            else:
-                status_prompts.append("你的物品栏是空的")
-
-        # 如果没有inventory_all字段，回退到原来的inventory字段处理方式
-        elif hasattr(obs, "inventory") and hasattr(obs.inventory, "name"):
-            inventory_items = {}
-            for idx, item_name in enumerate(obs.inventory.name):
-                if item_name and item_name != "null" and item_name != "air":
-                    quantity = (
-                        obs.inventory.quantity[idx]
-                        if hasattr(obs.inventory, "quantity") and idx < len(obs.inventory.quantity)
-                        else 1
-                    )
-                    if item_name in inventory_items:
-                        inventory_items[item_name] += quantity
-                    else:
-                        inventory_items[item_name] = quantity
-
-            if inventory_items:
-                status_prompts.append(f"你的物品栏包含: {', '.join([f'{v}个{k}' for k, v in inventory_items.items()])}")
-            else:
-                status_prompts.append("你的物品栏是空的")
-
-    # 分析并提取环境状态
-    if hasattr(obs, "location_stats"):
-        location_summary = {}
-
-        # 位置坐标
-        if hasattr(obs.location_stats, "pos"):
-            pos = getattr(obs.location_stats, "pos", [0, 0, 0])
-            location_summary["position"] = pos
-            if pos[1] < 30:  # Y坐标较低
-                status_prompts.append("你处于较低的高度，可能接近地下洞穴或矿层。")
-
-        # 天气状态
-        is_raining = getattr(obs.location_stats, "is_raining", False)
-        location_summary["is_raining"] = is_raining
-        if is_raining:
-            status_prompts.append("当前正在下雨，可能影响视野和移动。")
-
-    # 提取时间状态
-    if hasattr(obs, "time"):
-        game_time = getattr(obs, "time", 0)
-        if 13000 <= game_time <= 23000:
-            status_prompts.append("现在是夜晚，小心可能出现的敌对生物。")
-
-    # 分析周围方块环境 (voxels)
-    if hasattr(obs, "voxels") and obs.voxels:
-        voxel_prompts = analyze_voxels(obs.voxels)
-        status_prompts.extend(voxel_prompts)
-
-    return status_prompts
 
 
 def build_prompt(
@@ -231,9 +92,13 @@ def build_prompt(
                         last_content = last_msg.split("<你>")[-1].strip() if "<你>" in last_msg else ""
 
                         # 检查内容相似性（简单的包含检查）
-                        if content and last_content and len(content) > 10:
-                            if content in last_content or last_content in content:
-                                similar_count += 1
+                        if (
+                            content
+                            and last_content
+                            and len(content) > 10
+                            and (content in last_content or last_content in content)
+                        ):
+                            similar_count += 1
 
                 if similar_count >= 2:
                     repetition_warning = """
