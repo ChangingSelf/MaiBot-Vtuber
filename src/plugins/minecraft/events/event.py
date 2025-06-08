@@ -48,7 +48,7 @@ class MinecraftEvent(Event):
         }
 
     def __str__(self) -> str:
-        return f"MinecraftEvent(type='{self.type}', message='{self.message}', tick={self.tick})"
+        return f"MinecraftEvent(type='{self.type}', message='{self.message}', tick={self.tick}, username={self.username}, only_message={self.only_message}, step_num={self.step_num}, timestamp={self.timestamp})"
 
     def __repr__(self) -> str:
         return self.__str__()

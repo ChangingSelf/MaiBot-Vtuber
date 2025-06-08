@@ -69,6 +69,8 @@ short_message_threshold = 10
 long_message_threshold = 15
 # 相似度阈值
 similarity_threshold = 0.7
+# 忽略的事件类型
+ignore_event_types = ["blockIsBeingBroken"]
 
 # 游戏状态配置
 [minecraft.game_state]

@@ -22,6 +22,8 @@ class MinecraftEventManager:
         self.long_message_threshold = event_manager_config.get("long_message_threshold", 15)
         self.similarity_threshold = event_manager_config.get("similarity_threshold", 0.7)
 
+        self.ignore_event_types = event_manager_config.get("ignore_event_types", ["blockIsBeingBroken"])
+
     def update_event_history(self, agent_events: List[MinecraftEvent], current_step_num: int):
         """更新事件历史记录，去重并保留最近的记录"""
         if not agent_events:
@@ -151,6 +153,8 @@ class MinecraftEventManager:
         if current_events:
             for event in current_events:
                 if hasattr(event, "type") and hasattr(event, "message"):
-                    clean_message = event.message.replace(agent_name, "你")
+                    clean_message = event.message.replace(f"<{agent_name}>", "<你>")
+                    if event.type in self.ignore_event_types:
+                        continue
                     event_messages.append(f"[{event.type}] {clean_message}")
         return event_messages

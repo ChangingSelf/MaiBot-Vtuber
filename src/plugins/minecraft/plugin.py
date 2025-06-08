@@ -155,6 +155,11 @@ class MinecraftPlugin(BasePlugin):
                 self.game_state, self.event_manager, self.agents_config
             )
 
+            # 如果消息为空，则执行no_op
+            if not msg_to_maicore:
+                await self.action_executor.execute_no_op()
+                return
+
             await self.core.send_to_maicore(msg_to_maicore)
             self.logger.info(
                 f"已将 Mineland 事件状态 (step {self.game_state.current_step_num}, done: {self.game_state.current_done}) 发送给 MaiCore。"

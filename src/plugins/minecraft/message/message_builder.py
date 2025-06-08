@@ -38,6 +38,9 @@ class MinecraftMessageBuilder:
         # 构建消息文本
         message_text = self._build_message_text(event_manager, game_state.current_event, agent_info["name"])
 
+        if not message_text:
+            return None
+
         message_segment = Seg(
             type="seglist",
             data=[
