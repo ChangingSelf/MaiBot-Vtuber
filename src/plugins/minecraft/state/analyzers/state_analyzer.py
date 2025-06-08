@@ -67,6 +67,7 @@ class StateAnalyzer(BaseAnalyzer):
             status_prompts.extend(self.inventory_analyzer.analyze())
             status_prompts.extend(self.analyze_environment())
             status_prompts.extend(self.collision_analyzer.analyze())
+            status_prompts.extend(self.collision_analyzer.analyze_facing_direction_wall())
             status_prompts.extend(self.environment_analyzer.analyze())
 
         except Exception as e:

@@ -149,6 +149,7 @@ class MinecraftGameState:
             "inventory": self._state_analyzer.inventory_analyzer.analyze(),
             "environment": self._state_analyzer.analyze_environment(),
             "collision": self._state_analyzer.collision_analyzer.analyze(),
+            "facing_wall": self._state_analyzer.collision_analyzer.analyze_facing_direction_wall(),
             "time": self._state_analyzer.environment_analyzer.analyze_time(),
             "weather": self._state_analyzer.environment_analyzer.analyze_weather(),
             "game_info": self._state_analyzer.environment_analyzer.analyze_game_info(),
