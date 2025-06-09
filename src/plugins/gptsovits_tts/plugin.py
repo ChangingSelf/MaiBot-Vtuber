@@ -662,6 +662,16 @@ class TTSPlugin(BasePlugin):
             self.logger.error(f"处理WAV数据失败: {str(e)}")
             return
 
+        # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
+        if pcm_data and len(pcm_data) > 0:
+            vts_lip_sync_service = self.core.get_service("vts_lip_sync")
+            if vts_lip_sync_service:
+                try:
+                    # 异步发送音频数据进行口型同步分析
+                    await vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE)
+                except Exception as e:
+                    self.logger.debug(f"口型同步处理失败: {e}")
+
         # PCM数据缓冲处理
         async with self.input_pcm_queue_lock:
             self.input_pcm_queue.extend(pcm_data)
@@ -859,6 +869,15 @@ class TTSPlugin(BasePlugin):
         """执行 TTS 合成和播放，并通知 Subtitle Service。"""
 
         self.logger.info(f"请求播放: '{text[:30]}...'")
+        
+        # --- 启动口型同步会话 ---
+        vts_lip_sync_service = self.core.get_service("vts_lip_sync")
+        if vts_lip_sync_service:
+            try:
+                await vts_lip_sync_service.start_lip_sync_session(text)
+            except Exception as e:
+                self.logger.debug(f"启动口型同步会话失败: {e}")
+        
         async with self.tts_lock:
             self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
             duration_seconds: Optional[float] = 10.0  # 初始化时长变量
@@ -895,6 +914,13 @@ class TTSPlugin(BasePlugin):
             self.logger.info(f"音频流播放完成: '{text[:30]}...'")
         except Exception as e:
             self.logger.error(f"音频流处理出错: {e}", exc_info=True)
+        finally:
+            # --- 停止口型同步会话 ---
+            if vts_lip_sync_service:
+                try:
+                    await vts_lip_sync_service.stop_lip_sync_session()
+                except Exception as e:
+                    self.logger.debug(f"停止口型同步会话失败: {e}")
 
 
 plugin_entrypoint = TTSPlugin
