@@ -5,6 +5,9 @@ import time
 import hashlib
 import signal
 import threading
+import json
+import os
+from pathlib import Path
 from typing import Dict, Any, Optional, List, Set
 from dataclasses import dataclass
 
@@ -146,6 +149,28 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         self.poll_interval = max(0.5, self.config.get("poll_interval", 1.0))
         self.max_messages_per_check = max(1, self.config.get("max_messages_per_check", 10))
 
+        # --- 弹幕文件保存与读取配置 ---
+        self.enable_danmaku_save = self.config.get("enable_danmaku_save", False)
+        self.danmaku_save_file = self.config.get("danmaku_save_file", f"danmaku_{self.room_id}.jsonl")
+        self.enable_danmaku_load = self.config.get("enable_danmaku_load", False)
+        self.danmaku_load_file = self.config.get("danmaku_load_file", "")
+        self.skip_initial_danmaku = self.config.get("skip_initial_danmaku", True)
+        
+        # --- 创建data目录 ---
+        self.data_dir = Path(__file__).parent / "data"
+        self.data_dir.mkdir(exist_ok=True)
+        
+        # --- 弹幕文件路径设置 ---
+        if self.enable_danmaku_save and self.danmaku_save_file:
+            self.save_file_path = self.data_dir / self.danmaku_save_file
+        else:
+            self.save_file_path = None
+            
+        if self.enable_danmaku_load and self.danmaku_load_file:
+            self.load_file_path = self.data_dir / self.danmaku_load_file
+        else:
+            self.load_file_path = None
+
         # --- Selenium 配置 ---
         self.headless = self.config.get("headless", True)
         self.webdriver_timeout = self.config.get("webdriver_timeout", 30)
@@ -193,10 +218,30 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         self.processed_messages: Set[str] = set()
         self.last_cleanup_time = time.time()
         
+        # --- 新增状态变量 ---
+        self.is_initial_load = True  # 标记是否为初始加载
+        self.initial_load_complete = False  # 标记初始加载是否完成
+        self.loaded_danmaku_queue = []  # 从文件读取的弹幕队列
+        self.loaded_danmaku_index = 0  # 当前发送的弹幕索引
+        
+        # --- 纯文件模式判断 ---
+        # 如果启用了文件读取，则进入纯文件模式（不启动浏览器，按时间轴重放）
+        self.file_only_mode = self.enable_danmaku_load
+        if self.file_only_mode:
+            self.logger.info("进入纯文件模式：将按时间轴重放文件中的弹幕，不启动浏览器")
+        
         # --- 初始化消息缓存服务 ---
         cache_size = self.config.get("message_cache_size", 1000)
         self.message_cache_service = MessageCacheService(max_cache_size=cache_size)
         
+        # --- 日志记录配置信息 ---
+        if self.enable_danmaku_save:
+            self.logger.info(f"弹幕保存已启用，文件: {self.save_file_path}")
+        if self.enable_danmaku_load:
+            self.logger.info(f"弹幕读取已启用，文件: {self.load_file_path}")
+        if self.skip_initial_danmaku:
+            self.logger.info("跳过初始弹幕已启用")
+
         # --- 添加退出机制相关属性 ---
         self.shutdown_timeout = self.config.get('shutdown_timeout', 30)  # 30秒超时
         self.cleanup_lock = threading.Lock()
@@ -264,12 +309,24 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             self.core.register_service("message_cache", self.message_cache_service)
             self.logger.info("消息缓存服务已注册到 AmaidesuCore")
 
-            # 创建 WebDriver
-            await self._create_webdriver()
+            # 如果启用了从文件读取弹幕，加载弹幕数据
+            if self.enable_danmaku_load and self.load_file_path:
+                await self._load_danmaku_from_file()
+
+            # 只有在非纯文件模式下才创建 WebDriver
+            if not self.file_only_mode:
+                # 创建 WebDriver
+                await self._create_webdriver()
+            else:
+                self.logger.info("纯文件模式：跳过 WebDriver 创建")
 
             # 启动后台监控任务
             self.monitoring_task = asyncio.create_task(self._run_monitoring_loop(), name=f"BiliDanmakuSelenium_{self.room_id}")
-            self.logger.info(f"启动 Bilibili Selenium 弹幕监控任务 (房间: {self.room_id})...")
+            
+            if self.file_only_mode:
+                self.logger.info(f"启动弹幕文件重放任务 (文件: {self.load_file_path.name if self.load_file_path else 'N/A'})...")
+            else:
+                self.logger.info(f"启动 Bilibili Selenium 弹幕监控任务 (房间: {self.room_id})...")
 
         except Exception as e:
             self.logger.error(f"设置 BiliDanmakuSeleniumPlugin 时发生错误: {e}", exc_info=True)
@@ -345,8 +402,12 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         def _create_driver():
             options = ChromeOptions()
-            # if self.headless:
-            #     options.add_argument("--headless")
+            # 根据配置设置headless模式
+            if self.headless:
+                self.logger.info("使用无头模式运行浏览器")
+                options.add_argument("--headless")
+            else:
+                self.logger.info("使用有界面模式运行浏览器")
 
             # 基础安全和性能参数
             options.add_argument("--no-sandbox")
@@ -395,7 +456,25 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             )
 
             # 尝试使用 webdriver-manager 自动管理 ChromeDriver
-            if WEBDRIVER_MANAGER_AVAILABLE:
+            if self.config.get("chromedriver_path"):
+                try:
+                    chromedriver_path = self.config.get("chromedriver_path")
+                    self.logger.info(f"使用配置的 ChromeDriver 路径: {chromedriver_path}")
+                    service = Service(executable_path=chromedriver_path)
+                    driver = webdriver.Chrome(service=service, options=options)
+                except Exception as e:
+                    self.logger.warning(f"使用配置的 ChromeDriver 路径失败: {e}，尝试其他方式")
+                    if WEBDRIVER_MANAGER_AVAILABLE:
+                        try:
+                            service = Service(ChromeDriverManager().install())
+                            driver = webdriver.Chrome(service=service, options=options)
+                            self.logger.info("使用 webdriver-manager 创建 ChromeDriver")
+                        except Exception as e:
+                            self.logger.warning(f"webdriver-manager 创建失败，尝试系统 ChromeDriver: {e}")
+                            driver = webdriver.Chrome(options=options)
+                    else:
+                        driver = webdriver.Chrome(options=options)
+            elif WEBDRIVER_MANAGER_AVAILABLE:
                 try:
                     service = Service(ChromeDriverManager().install())
                     driver = webdriver.Chrome(service=service, options=options)
@@ -435,9 +514,77 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
     async def _run_monitoring_loop(self):
         """运行监控循环"""
-        self.logger.info(f"开始监控 Bilibili 直播间 {self.room_id} 的弹幕...")
+        if self.file_only_mode:
+            self.logger.info(f"开始按时间轴重放弹幕文件: {self.load_file_path}")
+            await self._run_file_replay_loop()
+        else:
+            self.logger.info(f"开始监控 Bilibili 直播间 {self.room_id} 的弹幕...")
+            await self._run_live_monitoring_loop()
+
+    async def _run_file_replay_loop(self):
+        """运行文件重放循环"""
+        if not self.loaded_danmaku_queue:
+            self.logger.warning("没有加载到弹幕数据，重放任务结束")
+            return
+        
+        self.logger.info(f"开始重放 {len(self.loaded_danmaku_queue)} 条弹幕")
+        
+        try:
+            # 获取第一条弹幕的时间作为起始时间
+            first_message_time = self.loaded_danmaku_queue[0].message_info.time if self.loaded_danmaku_queue else 0
+            replay_start_time = time.time()
+            
+            for i, message_base in enumerate(self.loaded_danmaku_queue):
+                if self.stop_event.is_set() or self.is_shutting_down:
+                    self.logger.info("重放被中断")
+                    break
+                
+                try:
+                    # 计算应该等待的时间
+                    message_time = message_base.message_info.time
+                    expected_elapsed = message_time - first_message_time
+                    actual_elapsed = time.time() - replay_start_time
+                    
+                    wait_time = expected_elapsed - actual_elapsed
+                    if wait_time > 0:
+                        self.logger.debug(f"等待 {wait_time:.2f} 秒后发送第 {i+1} 条弹幕")
+                        try:
+                            await asyncio.wait_for(self.stop_event.wait(), timeout=wait_time)
+                            break  # 如果收到停止信号，退出循环
+                        except asyncio.TimeoutError:
+                            pass  # 超时继续
+                    
+                    # 发送弹幕
+                    self.message_cache_service.cache_message(message_base)
+                    await self.core.send_to_maicore(message_base)
+                    
+                    self.logger.debug(f"重放弹幕 ({i+1}/{len(self.loaded_danmaku_queue)}): {message_base.raw_message[:50] if message_base.raw_message else '(无内容)'}")
+                    
+                except Exception as e:
+                    self.logger.error(f"重放第 {i+1} 条弹幕时出错: {e}")
+                    continue
+            
+            self.logger.info("弹幕文件重放完成")
+            
+        except asyncio.CancelledError:
+            self.logger.info("文件重放循环被取消")
+        except Exception as e:
+            self.logger.error(f"文件重放循环发生错误: {e}", exc_info=True)
+        finally:
+            self.logger.info("文件重放循环已结束")
+
+    async def _run_live_monitoring_loop(self):
+        """运行实时监控循环"""
         consecutive_errors = 0
         max_consecutive_errors = 5
+        
+        # 等待一段时间以让页面完全加载，然后标记初始加载完成
+        if self.skip_initial_danmaku:
+            await asyncio.sleep(5)  # 等待5秒让页面加载完成
+            self.initial_load_complete = True
+            self.logger.info("初始加载完成，开始处理新弹幕")
+        else:
+            self.initial_load_complete = True
         
         try:
             while not self.stop_event.is_set():
@@ -447,6 +594,10 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                         self.logger.info("检测到关闭信号，退出监控循环")
                         break
                         
+                    # 如果启用了从文件读取弹幕，优先发送文件中的弹幕
+                    if self.enable_danmaku_load and self.loaded_danmaku_queue:
+                        await self._send_loaded_danmaku()
+                    
                     await self._fetch_and_process_messages()
                     consecutive_errors = 0  # 重置错误计数
 
@@ -511,6 +662,10 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
     async def _fetch_and_process_messages(self):
         """获取并处理弹幕消息"""
+        # 在纯文件模式下跳过实时弹幕获取
+        if self.file_only_mode:
+            return
+            
         fetch_start_time = time.time()
         self.logger.debug(f"[计时] 开始获取弹幕消息 - {fetch_start_time:.3f}")
 
@@ -618,6 +773,11 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             self.logger.debug(f"[计时] 线程池执行耗时: {(executor_end_time - executor_start_time) * 1000:.1f}ms")
 
             if messages:
+                # 如果启用了跳过初始弹幕且还未完成初始加载，则跳过这些消息
+                if self.skip_initial_danmaku and not self.initial_load_complete:
+                    self.logger.info(f"跳过初始加载的 {len(messages)} 条弹幕")
+                    return
+                
                 # 计时：消息处理
                 msg_process_start = time.time()
                 self.logger.info(f"收到 {len(messages)} 条新消息")
@@ -636,7 +796,13 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                             self.message_cache_service.cache_message(message_base)
                             self.logger.debug(f"消息已缓存: {message_base.message_info.message_id}")
                             
-                            await self.core.send_to_maicore(message_base)
+                            # 发送消息
+                            # await self.core.send_to_maicore(message_base)
+                            
+                            # 如果启用了弹幕保存，将消息保存到文件
+                            if self.enable_danmaku_save and self.save_file_path:
+                                await self._save_danmaku_to_file(message_base)
+                                
                     except Exception as e:
                         self.logger.error(f"处理消息时出错: {message} - {e}", exc_info=True)
 
@@ -753,7 +919,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         message_info = BaseMessageInfo(
             platform=self.core.platform,
             message_id=f"bili_selenium_{self.room_id}_{int(message.timestamp)}_{message.element_id}",
-            time=int(message.timestamp),
+            time=message.timestamp,
             user_info=user_info,
             group_info=group_info,
             template_info=final_template_info_value,
@@ -766,6 +932,78 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         # --- Final MessageBase ---
         return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=message.text)
+
+    async def _load_danmaku_from_file(self):
+        """从文件加载弹幕数据"""
+        if not self.load_file_path or not self.load_file_path.exists():
+            self.logger.warning(f"弹幕文件不存在: {self.load_file_path}")
+            return
+        
+        try:
+            with open(self.load_file_path, 'r', encoding='utf-8') as file:
+                for line_num, line in enumerate(file, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        # 解析JSON行
+                        danmaku_data = json.loads(line.strip())
+                        
+                        # 将字典转换为MessageBase对象
+                        from maim_message import MessageBase
+                        message_base = MessageBase.from_dict(danmaku_data)
+                        self.loaded_danmaku_queue.append(message_base)
+                        
+                    except json.JSONDecodeError as e:
+                        self.logger.warning(f"解析第{line_num}行JSON失败: {e}")
+                    except Exception as e:
+                        self.logger.warning(f"处理第{line_num}行数据失败: {e}")
+            
+            self.logger.info(f"成功从文件加载 {len(self.loaded_danmaku_queue)} 条弹幕")
+            
+        except Exception as e:
+            self.logger.error(f"读取弹幕文件失败: {e}")
+
+    async def _save_danmaku_to_file(self, message_base: MessageBase):
+        """将弹幕保存到文件"""
+        if not self.save_file_path:
+            return
+            
+        try:
+            # 将MessageBase转换为字典
+            message_dict = message_base.to_dict()
+            
+            # 异步写入文件
+            def write_to_file():
+                with open(self.save_file_path, 'a', encoding='utf-8') as file:
+                    json.dump(message_dict, file, ensure_ascii=False)
+                    file.write('\n')
+            
+            await asyncio.get_event_loop().run_in_executor(None, write_to_file)
+            self.logger.debug(f"弹幕已保存到文件: {message_base.message_info.message_id}")
+            
+        except Exception as e:
+            self.logger.error(f"保存弹幕到文件失败: {e}")
+
+    async def _send_loaded_danmaku(self):
+        """发送从文件读取的弹幕"""
+        if self.loaded_danmaku_index >= len(self.loaded_danmaku_queue):
+            return
+        
+        try:
+            # 获取当前要发送的弹幕
+            message_base = self.loaded_danmaku_queue[self.loaded_danmaku_index]
+            self.loaded_danmaku_index += 1
+            
+            # 缓存消息
+            self.message_cache_service.cache_message(message_base)
+            
+            # 发送消息
+            await self.core.send_to_maicore(message_base)
+            
+            self.logger.debug(f"发送文件弹幕: {message_base.raw_message[:50] if message_base.raw_message else '(无内容)'}")
+            
+        except Exception as e:
+            self.logger.error(f"发送文件弹幕失败: {e}")
 
 
 # --- Plugin Entry Point ---
