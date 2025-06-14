@@ -71,3 +71,4 @@ enable_gptsovits_tts = false
 enable_mock_danmaku = false
 enable_minecraft = true
 enable_bili_danmaku_selenium = false
+enable_bili_danmaku_official = false # 请不要和 bili_danmaku_selenium 同时启用
