@@ -36,12 +36,21 @@ class GuardMessage(BiliBaseMessage):
             cmd=data.get("cmd", ""),
             raw_data=data,
             user_info=UserInfo(
-                uid=msg_data.get("uid", 0),
                 open_id=msg_data.get("open_id", ""),
                 union_id=msg_data.get("union_id", ""),
                 uname=msg_data.get("uname", ""),
                 uface=msg_data.get("uface", ""),
             ),
+            guard_level=msg_data.get("guard_level", 0),
+            guard_num=msg_data.get("guard_num", 0),
+            guard_unit=msg_data.get("guard_unit", ""),
+            price=msg_data.get("price", 0),
+            fans_medal_level=msg_data.get("fans_medal_level", 0),
+            fans_medal_name=msg_data.get("fans_medal_name", ""),
+            fans_medal_wearing_status=msg_data.get("fans_medal_wearing_status", False),
+            room_id=msg_data.get("room_id", 0),
+            msg_id=msg_data.get("msg_id", ""),
+            timestamp=msg_data.get("timestamp", 0),
         )
 
     async def to_message_base(
