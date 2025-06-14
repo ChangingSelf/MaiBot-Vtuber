@@ -7,7 +7,7 @@
 ### 核心功能
 
 - 🔥 **实时弹幕获取**：基于官方 WebSocket API，获取高质量实时弹幕
-- 🎁 **多类型事件支持**：支持弹幕、礼物、守护、超级聊天、进入房间等事件
+- 🎁 **多类型事件支持**：支持弹幕、礼物、守护、醒目留言、进入房间等事件
 - 📦 **消息缓存机制**：完善的消息缓存系统，避免重复处理
 - 🔄 **优雅关闭处理**：完善的资源清理和错误处理机制
 - 🏷️ **模板信息支持**：支持上下文标签和模板信息功能
@@ -40,7 +40,7 @@ bili_danmaku_official/
     ├── enter.py            # 进入房间消息
     ├── gift.py             # 礼物消息
     ├── guard.py            # 大航海消息
-    └── superchat.py        # 超级聊天消息
+    └── superchat.py        # 醒目留言消息
 ````
 
 ## 🔄 工作流程时序图
@@ -116,7 +116,7 @@ sequenceDiagram
 | `LIVE_OPEN_PLATFORM_LIVE_ROOM_ENTER` | `EnterMessage`     | 处理进入房间   |
 | `LIVE_OPEN_PLATFORM_SEND_GIFT`       | `GiftMessage`      | 处理礼物消息   |
 | `LIVE_OPEN_PLATFORM_GUARD`           | `GuardMessage`     | 处理大航海消息 |
-| `LIVE_OPEN_PLATFORM_SUPER_CHAT`      | `SuperChatMessage` | 处理超级聊天   |
+| `LIVE_OPEN_PLATFORM_SUPER_CHAT`      | `SuperChatMessage` | 处理醒目留言   |
 
 ## 🔧 核心组件说明
 

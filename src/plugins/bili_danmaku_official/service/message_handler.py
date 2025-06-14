@@ -1,5 +1,6 @@
 # src/plugins/bili_danmaku_official/message_handler.py
 
+import json
 from typing import Dict, Any, Optional, List
 
 from maim_message import MessageBase
@@ -65,7 +66,9 @@ class BiliMessageHandler:
                 self.logger.debug(f"无法解析消息类型: {cmd}")
                 return None
 
-            self.logger.debug(f"处理消息: {cmd}, 用户: {bili_message.uname}")
+            self.logger.debug(
+                f"处理bilibili直播间消息【{cmd}】: {json.dumps(message_data, ensure_ascii=False, indent=2)}"
+            )
 
             # 调用消息类自身的to_message_base方法
             return await bili_message.to_message_base(self.core, self.config, self.context_tags, self.template_items)

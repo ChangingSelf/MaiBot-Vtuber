@@ -6,7 +6,7 @@ from .base import BiliBaseMessage
 
 @dataclass
 class SuperChatMessage(BiliBaseMessage):
-    """超级聊天消息 - LIVE_OPEN_PLATFORM_SUPER_CHAT"""
+    """醒目留言消息 - LIVE_OPEN_PLATFORM_SUPER_CHAT"""
 
     room_id: int  # 直播间id
     open_id: str  # 用户唯一标识
@@ -57,16 +57,16 @@ class SuperChatMessage(BiliBaseMessage):
         context_tags: Optional[list] = None,
         template_items: Optional[Dict[str, Any]] = None,
     ) -> MessageBase:
-        """构建超级聊天消息的MessageBase对象"""
+        """构建醒目留言消息的MessageBase对象"""
 
         # 创建基础消息信息
         message_info = await self._create_base_message_info(core, config, context_tags, template_items)
 
-        # 创建消息段 - 超级聊天消息
+        # 创建消息段 - 醒目留言消息
         if self.message.strip():
             text = f"[SC {self.rmb}元] {self.uname}: {self.msg.strip()}"
         else:
-            text = f"[SC {self.rmb}元] {self.uname} 发送了超级聊天"
+            text = f"[SC {self.rmb}元] {self.uname} 发送了醒目留言"
 
         message_segment = Seg(type="text", data=text)
 

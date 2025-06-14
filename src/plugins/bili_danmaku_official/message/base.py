@@ -13,7 +13,7 @@ class BiliMessageType(Enum):
     ENTER = "LIVE_OPEN_PLATFORM_LIVE_ROOM_ENTER"  # 进入直播间
     GIFT = "LIVE_OPEN_PLATFORM_SEND_GIFT"  # 礼物消息
     GUARD = "LIVE_OPEN_PLATFORM_GUARD"  # 大航海消息
-    SUPER_CHAT = "LIVE_OPEN_PLATFORM_SUPER_CHAT"  # 超级聊天
+    SUPER_CHAT = "LIVE_OPEN_PLATFORM_SUPER_CHAT"  # 醒目留言
 
 
 @dataclass

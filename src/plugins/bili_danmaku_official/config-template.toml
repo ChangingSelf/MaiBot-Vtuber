@@ -17,7 +17,7 @@ api_host = "https://live-open.biliapi.com" # API地址，通常不需要修改
 handle_enter_messages = true     # 是否处理进入直播间消息
 handle_gift_messages = true      # 是否处理礼物消息
 handle_guard_messages = true     # 是否处理守护消息
-handle_superchat_messages = true # 是否处理超级聊天消息
+handle_superchat_messages = true # 是否处理醒目留言消息
 
 # === 消息缓存配置 ===
 message_cache_size = 1000 # 消息缓存最大数量
