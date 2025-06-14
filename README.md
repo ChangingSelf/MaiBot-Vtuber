@@ -7,7 +7,7 @@ Amadeus?
 
 Amaidesu!
 
-### -project alphia - 在zzzzyc/d的强烈要求下添加
+
 
   ![Python Version](https://img.shields.io/badge/Python-3.10+-blue)
   ![Status](https://img.shields.io/badge/状态-开摆中-red)
@@ -372,11 +372,3 @@ param2 = 100
 3. 消息按优先级顺序依次通过各个管道处理
 4. 如果任何管道返回 `None`，消息处理终止（消息被丢弃）
 5. 最终处理后的消息发送到 MaiCore 
-
-
-
-
-
-
-
-### 如果你需要更多帮助-查阅[help.md](https://github.com/ChangingSelf/Amaidesu/blob/main/help.md)

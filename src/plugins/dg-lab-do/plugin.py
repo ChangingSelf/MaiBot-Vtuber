@@ -59,18 +59,12 @@ class ElectricityMonitorPlugin(BasePlugin):
         # loaded_config = load_plugin_config()
         # self.config = loaded_config.get("electricity_monitor", {})
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
-        self.enabled = self.config.get("enabled", True)
 
         # --- 检查依赖 ---
         if aiohttp is None:
             self.logger.error(  # 修改: logger -> self.logger
                 "aiohttp library not found. Please install it (`pip install aiohttp`). ElectricityMonitorPlugin disabled."
             )
-            self.enabled = False
-            return
-
-        if not self.enabled:
-            self.logger.warning("ElectricityMonitorPlugin 在配置中被禁用。")  # 修改: logger -> self.logger
             return
 
         # --- 获取配置值 ---
@@ -92,8 +86,6 @@ class ElectricityMonitorPlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            return
 
         # 创建 aiohttp Session
         if aiohttp:
@@ -101,7 +93,6 @@ class ElectricityMonitorPlugin(BasePlugin):
             self.logger.info("aiohttp.ClientSession 已创建。")  # logger 已是 self.logger
         else:
             self.logger.error("aiohttp 未安装，插件功能受限。")  # logger 已是 self.logger
-            self.enabled = False  # 禁用插件如果核心依赖缺失
             return
 
         # 注册通配符处理器，监听所有来自 MaiCore 的消息
@@ -187,7 +178,7 @@ class ElectricityMonitorPlugin(BasePlugin):
 
     async def check_and_control_device(self, message: MessageBase):
         """检查收到的消息是否包含关键词，如果包含则触发设备控制。"""
-        if not self.enabled or not self.http_session:
+        if not self.http_session:
             return
 
         # 检查消息类型和内容

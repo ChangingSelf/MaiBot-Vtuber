@@ -34,16 +34,10 @@ class SubtitlePlugin(BasePlugin):
         # loaded_config = load_plugin_config()
         # self.config = loaded_config.get("subtitle_display", {})  # 使用新的配置段 'subtitle_display'
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
-        self.enabled = self.config.get("enabled", True)
 
         # --- 检查依赖 ---
         if tk is None:
             self.logger.error("Tkinter library not found or failed to import. SubtitlePlugin disabled.")
-            self.enabled = False
-            return
-
-        if not self.enabled:
-            self.logger.warning("SubtitlePlugin 在配置中被禁用。")
             return
 
         # --- GUI 配置 ---
@@ -219,8 +213,6 @@ class SubtitlePlugin(BasePlugin):
     # --- Plugin Lifecycle ---
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            return
 
         # 注册自己为服务，供 TTS 插件调用
         self.core.register_service("subtitle_service", self)
@@ -262,7 +254,7 @@ class SubtitlePlugin(BasePlugin):
         """
         接收文本和时长 (时长当前未使用)，将其放入队列供 GUI 线程显示。
         """
-        if not self.enabled or not self.is_running:
+        if not self.is_running:
             return
 
         if not text:

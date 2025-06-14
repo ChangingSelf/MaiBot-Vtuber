@@ -69,36 +69,56 @@ class MessagePipeline(ABC):
 
 class PipelineManager:
     """
-    管道管理器，负责注册、排序和执行消息管道。
+    管道管理器，负责加载、排序和执行双向消息管道。
     """
 
     def __init__(self):
-        self._pipelines: List[MessagePipeline] = []
-        self._sorted: bool = True  # 标记管道列表是否已排序
+        self._inbound_pipelines: List[MessagePipeline] = []
+        self._outbound_pipelines: List[MessagePipeline] = []
+        self._inbound_sorted: bool = True
+        self._outbound_sorted: bool = True
         self.logger = get_logger("PipelineManager")
 
-    def register_pipeline(self, pipeline: MessagePipeline) -> None:
+    def _register_pipeline(self, pipeline: MessagePipeline, direction: str) -> None:
         """
-        注册一个消息管道。
+        根据方向注册一个消息管道。
 
         Args:
-            pipeline: MessagePipeline 的实例
+            pipeline: MessagePipeline 的实例。
+            direction: 管道方向 ("inbound" 或 "outbound")。
         """
-        self._pipelines.append(pipeline)
-        self._sorted = False
-        self.logger.info(f"管道已注册: {pipeline.__class__.__name__} (优先级: {pipeline.priority})")
+        if direction == "inbound":
+            self._inbound_pipelines.append(pipeline)
+            self._inbound_sorted = False
+        else: # 默认 "outbound"
+            self._outbound_pipelines.append(pipeline)
+            self._outbound_sorted = False
+        
+        self.logger.info(f"管道已注册: {pipeline.__class__.__name__} (方向: {direction}, 优先级: {pipeline.priority})")
 
     def _ensure_sorted(self) -> None:
-        """确保管道列表按优先级排序"""
-        if not self._sorted:
-            self._pipelines.sort(key=lambda x: x.priority)
-            self._sorted = True
-            pipe_info = ", ".join([f"{p.__class__.__name__}({p.priority})" for p in self._pipelines])
-            self.logger.debug(f"管道已排序: {pipe_info}")
+        """确保管道列表按优先级排序 (此方法已废弃，请使用带有方向的方法)"""
+        pass # 保留为空以防万一，但不应再被调用
 
-    async def process_message(self, message: MessageBase) -> Optional[MessageBase]:
+    def _ensure_outbound_sorted(self) -> None:
+        """确保出站管道列表按优先级排序"""
+        if not self._outbound_sorted:
+            self._outbound_pipelines.sort(key=lambda x: x.priority)
+            self._outbound_sorted = True
+            pipe_info = ", ".join([f"{p.__class__.__name__}({p.priority})" for p in self._outbound_pipelines])
+            self.logger.debug(f"出站管道已排序: {pipe_info}")
+
+    def _ensure_inbound_sorted(self) -> None:
+        """确保入站管道列表按优先级排序"""
+        if not self._inbound_sorted:
+            self._inbound_pipelines.sort(key=lambda x: x.priority)
+            self._inbound_sorted = True
+            pipe_info = ", ".join([f"{p.__class__.__name__}({p.priority})" for p in self._inbound_pipelines])
+            self.logger.debug(f"入站管道已排序: {pipe_info}")
+
+    async def process_outbound_message(self, message: MessageBase) -> Optional[MessageBase]:
         """
-        按优先级顺序通过所有注册的管道处理消息。
+        按优先级顺序通过所有出站管道处理消息。
 
         Args:
             message: 要处理的 MessageBase 对象
@@ -106,27 +126,51 @@ class PipelineManager:
         Returns:
             处理后的 MessageBase 对象，如果任何管道返回 None 则返回 None
         """
-        self._ensure_sorted()
+        self._ensure_outbound_sorted()
 
         current_message = message
-        for pipeline in self._pipelines:
+        for pipeline in self._outbound_pipelines:
             if current_message is None:
-                # 如果消息被某个管道丢弃，则终止处理
-                self.logger.info(f"消息被前序管道丢弃，终止于管道 {pipeline.__class__.__name__} 之前")
+                self.logger.info(f"消息被前序管道丢弃，终止于出站管道 {pipeline.__class__.__name__} 之前")
                 return None
 
             try:
-                self.logger.debug(f"管道 {pipeline.__class__.__name__} 开始处理消息: {message.message_info.message_id}")
+                self.logger.debug(f"出站管道 {pipeline.__class__.__name__} 开始处理消息: {message.message_info.message_id}")
                 current_message = await pipeline.process_message(current_message)
                 if current_message is None:
-                    self.logger.info(
-                        f"消息 {message.message_info.message_id} 被管道 {pipeline.__class__.__name__} 丢弃"
-                    )
+                    self.logger.info(f"消息 {message.message_info.message_id} 被出站管道 {pipeline.__class__.__name__} 丢弃")
                     return None
             except Exception as e:
-                self.logger.error(f"管道 {pipeline.__class__.__name__} 处理消息时出错: {e}", exc_info=True)
-                # 在出错时可以选择继续处理或终止
-                # 这里选择继续，但在生产环境中可能需要更谨慎的策略
+                self.logger.error(f"出站管道 {pipeline.__class__.__name__} 处理消息时出错: {e}", exc_info=True)
+        
+        return current_message
+
+    async def process_inbound_message(self, message: MessageBase) -> Optional[MessageBase]:
+        """
+        按优先级顺序通过所有入站管道处理消息。
+
+        Args:
+            message: 要处理的 MessageBase 对象
+
+        Returns:
+            处理后的 MessageBase 对象，如果任何管道返回 None 则返回 None
+        """
+        self._ensure_inbound_sorted()
+
+        current_message = message
+        for pipeline in self._inbound_pipelines:
+            if current_message is None:
+                self.logger.info(f"消息被前序管道丢弃，终止于入站管道 {pipeline.__class__.__name__} 之前")
+                return None
+
+            try:
+                self.logger.debug(f"入站管道 {pipeline.__class__.__name__} 开始处理消息: {message.message_info.message_id}")
+                current_message = await pipeline.process_message(current_message)
+                if current_message is None:
+                    self.logger.info(f"消息 {message.message_info.message_id} 被入站管道 {pipeline.__class__.__name__} 丢弃")
+                    return None
+            except Exception as e:
+                self.logger.error(f"入站管道 {pipeline.__class__.__name__} 处理消息时出错: {e}", exc_info=True)
 
         return current_message
 
@@ -175,6 +219,17 @@ class PipelineManager:
                 )
                 continue
 
+            # --- 新增：确定管道方向 ---
+            # 默认为 "outbound" 以保持向后兼容
+            direction = pipeline_global_settings.get("direction", "outbound").lower()
+            if direction not in ["inbound", "outbound"]:
+                self.logger.warning(
+                    f"管道 '{pipeline_name_snake}' 的方向配置 '{direction}' 无效，将默认为 'outbound'。"
+                )
+                direction = "outbound"
+            
+            self.logger.debug(f"管道 '{pipeline_name_snake}' 方向设置为: {direction}")
+
             pipeline_package_path = os.path.join(pipeline_dir_abs, pipeline_name_snake)
 
             # 检查预期的管道目录和文件是否存在
@@ -189,8 +244,10 @@ class PipelineManager:
                 )
                 continue
 
-            # 1. 提取全局覆盖配置 (排除 'priority' 键)
-            global_override_config = {k: v for k, v in pipeline_global_settings.items() if k != "priority"}
+            # 1. 提取全局覆盖配置 (排除 'priority' 和 'direction' 键)
+            global_override_config = {
+                k: v for k, v in pipeline_global_settings.items() if k not in ["priority", "direction"]
+            }
             self.logger.debug(f"管道 '{pipeline_name_snake}' 的全局覆盖配置: {global_override_config}")
 
             # 2. 加载管道自身的独立配置
@@ -229,7 +286,7 @@ class PipelineManager:
                     pipeline_instance = pipeline_class(config=final_pipeline_config)
                     pipeline_instance.priority = priority  # 设置实例的优先级，用于排序
 
-                    self.register_pipeline(pipeline_instance)  # register_pipeline 内部会记录优先级
+                    self._register_pipeline(pipeline_instance, direction) # 使用新的注册方法
                     loaded_pipeline_count += 1
                     # self.logger.info(f"成功加载并设置管道: {pipeline_class.__name__} (来自 {pipeline_name_snake}/pipeline.py, 优先级: {priority})") # register_pipeline 已记录
                 else:
@@ -245,42 +302,31 @@ class PipelineManager:
         else:
             self.logger.warning("未加载任何启用的管道。请检查根配置文件 [pipelines] 部分和管道目录结构。")
 
-        self._ensure_sorted()
+        self._ensure_inbound_sorted()
+        self._ensure_outbound_sorted()
 
     async def notify_connect(self) -> None:
-        """
-        通知所有注册的管道连接已建立。
-
-        在 AmaidesuCore 成功连接到 MaiCore 后调用。
-        按管道优先级顺序调用每个管道的 on_connect 方法。
-        """
-        self._ensure_sorted()
-        self.logger.info("通知所有管道：连接已建立")
-
-        for pipeline in self._pipelines:
+        """当 AmaidesuCore 连接时通知所有管道。"""
+        all_pipelines = self._inbound_pipelines + self._outbound_pipelines
+        if not all_pipelines:
+            return
+            
+        self.logger.debug(f"通知 {len(all_pipelines)} 个管道连接已建立...")
+        for pipeline in all_pipelines:
             try:
-                self.logger.debug(f"调用管道 {pipeline.__class__.__name__} 的 on_connect 方法")
                 await pipeline.on_connect()
             except Exception as e:
-                self.logger.error(
-                    f"调用管道 {pipeline.__class__.__name__} 的 on_connect 方法时出错: {e}", exc_info=True
-                )
+                self.logger.error(f"通知管道 {pipeline.__class__.__name__} 连接事件时出错: {e}", exc_info=True)
 
     async def notify_disconnect(self) -> None:
-        """
-        通知所有注册的管道连接已断开。
+        """当 AmaidesuCore 断开连接时通知所有管道。"""
+        all_pipelines = self._inbound_pipelines + self._outbound_pipelines
+        if not all_pipelines:
+            return
 
-        在 AmaidesuCore 与 MaiCore 断开连接时调用。
-        按管道优先级顺序调用每个管道的 on_disconnect 方法。
-        """
-        self._ensure_sorted()
-        self.logger.info("通知所有管道：连接已断开")
-
-        for pipeline in self._pipelines:
+        self.logger.debug(f"通知 {len(all_pipelines)} 个管道连接已断开...")
+        for pipeline in all_pipelines:
             try:
-                self.logger.debug(f"调用管道 {pipeline.__class__.__name__} 的 on_disconnect 方法")
                 await pipeline.on_disconnect()
             except Exception as e:
-                self.logger.error(
-                    f"调用管道 {pipeline.__class__.__name__} 的 on_disconnect 方法时出错: {e}", exc_info=True
-                )
+                self.logger.error(f"通知管道 {pipeline.__class__.__name__} 断开连接事件时出错: {e}", exc_info=True)
