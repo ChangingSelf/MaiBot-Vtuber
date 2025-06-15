@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 import asyncio
 import contextlib
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union
 import time
 import mineland
 
@@ -13,16 +14,13 @@ from .events.event_manager import MinecraftEventManager
 from .actions.action_executor import MinecraftActionExecutor
 from .message.message_builder import MinecraftMessageBuilder
 
-# 新增导入 - 延迟导入控制器以避免循环依赖
+# 核心管理组件
 from .core.config_manager import ConfigManager
 from .core.agent_manager import AgentManager
-from .core.mode_switcher import ModeSwitcher
-from .controllers.maicore_controller import MaiCoreController
-from .controllers.agent_controller import AgentController
 
 
 class MinecraftPlugin(BasePlugin):
-    """Minecraft插件"""
+    """Minecraft插件 - 支持MaiCore和智能体两种控制模式"""
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
@@ -34,9 +32,16 @@ class MinecraftPlugin(BasePlugin):
         self.server_host: str = config.get("server_host", "127.0.0.1")
         self.server_port: int = config.get("server_port", 1746)
 
-        # 智能体配置（从配置文件读取）
+        # 智能体配置（转换为兼容格式）
         self.agents_count: int = config.get("agents_count", 1)
-        self.agents_config: List[Dict[str, str]] = config.get("agents_config", [{"name": "Mai"}])
+        raw_agents_config = config.get("agents_config", [{"name": "Mai"}])
+        # 确保agents_config符合类型要求
+        self.agents_config: List[Dict[str, Union[str, int]]] = []
+        for agent_cfg in raw_agents_config:
+            converted_cfg = {}
+            for k, v in agent_cfg.items():
+                converted_cfg[k] = v  # 保持原值，Dict[str, Union[str, int]]能接受str
+            self.agents_config.append(converted_cfg)
 
         self.headless: bool = config.get("mineland_headless", True)
         self.ticks_per_step: int = config.get("mineland_ticks_per_step", 20)
@@ -57,13 +62,17 @@ class MinecraftPlugin(BasePlugin):
         # MineLand实例
         self.mland: Optional[mineland.MineLand] = None
 
-        # 新增组件
+        # 管理组件
         self.config_manager = ConfigManager(plugin_config)
         self.agent_manager = AgentManager()
-        self.mode_switcher = ModeSwitcher(self)
 
-        # 控制策略（延迟创建以避免循环依赖）
-        self.mode_controller = None
+        # 当前控制模式 - 简化为直接的模式标识
+        self.current_mode: str = self.config_manager.get_control_mode()
+        self._mode_tasks: Dict[str, Optional[asyncio.Task]] = {
+            "maicore_auto_send": None,
+            "agent_decision": None,
+            "status_report": None,
+        }
 
         # 核心组件 - 使用配置文件中的参数
         action_executor_config = config.get("action_executor", {})
@@ -90,41 +99,26 @@ class MinecraftPlugin(BasePlugin):
             config=config.get("prompt", {}),
         )
 
-    def _create_initial_controller(self):
-        """延迟创建初始控制器以避免循环依赖"""
-        control_mode = self.config_manager.get_control_mode()
-        if control_mode == "maicore":
-            return MaiCoreController()
-        elif control_mode == "agent":
-            return AgentController()
-        else:
-            self.logger.warning(f"不支持的控制模式: {control_mode}，使用默认maicore模式")
-
-            return MaiCoreController()
-
     async def setup(self):
-        """重构后的初始化方法"""
+        """初始化插件"""
         await super().setup()
 
-        # 创建控制器（延迟创建）
-        self.mode_controller = self._create_initial_controller()
-
-        # 初始化MineLand环境（保持现有逻辑）
+        # 初始化MineLand环境
         await self._initialize_mineland()
 
         # 初始化智能体管理器
         await self.agent_manager.initialize(self.config_manager.get_agent_config())
 
-        # 初始化控制器
-        await self.mode_controller.initialize(self)
+        # 注册消息处理器 - 修复类型问题，使用wrapper
+        def message_handler_wrapper(message: MessageBase):
+            return asyncio.create_task(self.handle_external_message(message))
 
-        # 注册消息处理器
-        self.core.register_websocket_handler("*", self.handle_external_message)
+        self.core.register_websocket_handler("*", message_handler_wrapper)
 
-        # 启动控制循环
-        await self.mode_controller.start_control_loop()
+        # 启动对应模式的控制循环
+        await self._start_mode_control_loop()
 
-        self.logger.info(f"Minecraft插件初始化完成，当前模式: {self.mode_controller.get_mode_name()}")
+        self.logger.info(f"Minecraft插件初始化完成，当前模式: {self.current_mode}")
 
     async def _initialize_mineland(self):
         """初始化MineLand环境"""
@@ -158,8 +152,45 @@ class MinecraftPlugin(BasePlugin):
             self.logger.exception(f"初始化 MineLand 环境失败: {e}")
             raise
 
-    async def _auto_send_loop(self):
-        """定期发送状态的循环任务"""
+    async def _start_mode_control_loop(self):
+        """启动对应模式的控制循环"""
+        if self.current_mode == "maicore":
+            await self._start_maicore_mode()
+        elif self.current_mode == "agent":
+            await self._start_agent_mode()
+        else:
+            self.logger.warning(f"不支持的控制模式: {self.current_mode}，使用默认maicore模式")
+            self.current_mode = "maicore"
+            await self._start_maicore_mode()
+
+    async def _start_maicore_mode(self):
+        """启动MaiCore模式"""
+        if self._mode_tasks["maicore_auto_send"] is None:
+            self._mode_tasks["maicore_auto_send"] = asyncio.create_task(
+                self._maicore_auto_send_loop(), name="MaiCoreAutoSend"
+            )
+            self.logger.info(f"已启动MaiCore自动发送任务，间隔: {self.auto_send_interval}秒")
+
+    async def _start_agent_mode(self):
+        """启动智能体模式"""
+        if self._mode_tasks["agent_decision"] is None:
+            self._mode_tasks["agent_decision"] = asyncio.create_task(
+                self._agent_decision_loop(), name="AgentDecisionLoop"
+            )
+            self.logger.info("已启动智能体决策循环")
+
+        # 如果启用了MaiCore集成，启动状态报告任务
+        maicore_config = self.plugin_config.get("maicore_integration", {})
+        if maicore_config.get("accept_commands", True) and self._mode_tasks["status_report"] is None:
+            report_interval = maicore_config.get("status_report_interval", 60)
+            self._mode_tasks["status_report"] = asyncio.create_task(
+                self._status_report_loop(report_interval), name="StatusReportLoop"
+            )
+            self.logger.info(f"已启动状态报告任务，间隔: {report_interval}秒")
+
+    # === MaiCore模式相关方法 ===
+    async def _maicore_auto_send_loop(self):
+        """MaiCore模式：定期发送状态的循环任务"""
         while True:
             try:
                 await asyncio.sleep(self.auto_send_interval)
@@ -173,17 +204,19 @@ class MinecraftPlugin(BasePlugin):
                         # 如果智能体准备好，则发送状态
                         await self._send_state_to_maicore()
             except asyncio.CancelledError:
-                self.logger.info("自动发送状态任务被取消")
+                self.logger.info("MaiCore自动发送状态任务被取消")
                 break
             except Exception as e:
-                self.logger.error(f"自动发送状态时出错: {e}")
+                self.logger.error(f"MaiCore自动发送状态时出错: {e}")
                 await asyncio.sleep(1)
 
     async def _send_state_to_maicore(self):
         """构建并发送当前Mineland状态给AmaidesuCore"""
         try:
+            # 转换agents_config类型以匹配接口要求
+            agents_config_str = [{k: str(v) for k, v in agent_cfg.items()} for agent_cfg in self.agents_config]
             msg_to_maicore = self.message_builder.build_state_message(
-                self.game_state, self.event_manager, self.agents_config
+                self.game_state, self.event_manager, agents_config_str
             )
 
             # 如果消息为空，则执行no_op
@@ -199,13 +232,357 @@ class MinecraftPlugin(BasePlugin):
             self.logger.error(f"构建或发送状态消息时出错: {e}")
             raise
 
-    async def handle_external_message(self, message: MessageBase):
-        """委托给当前控制器处理外部消息"""
-        await self.mode_controller.handle_external_message(message)
+    async def _handle_maicore_message(self, message: MessageBase):
+        """MaiCore模式：处理从 MaiCore 返回的动作指令"""
+        self.logger.info(f"收到来自 MaiCore 的响应: {message.message_segment.data}")
 
+        # 更新最后响应时间
+        self._last_response_time = time.time()
+
+        if not self.mland:
+            self.logger.error("收到 MaiCore 响应，但 MineLand 环境未初始化。忽略消息。")
+            return
+
+        if message.message_segment.type not in ["text", "seglist"]:
+            self.logger.warning(
+                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'或'seglist'。丢弃消息。"
+            )
+            return
+
+        # 提取消息内容
+        message_json_str = ""
+        if message.message_segment.type == "seglist":
+            # 取出其中的text类型消息
+            seg_data = message.message_segment.data
+            if isinstance(seg_data, list):
+                for seg in seg_data:
+                    if hasattr(seg, "type") and seg.type == "text" and hasattr(seg, "data"):
+                        # 安全地获取和处理数据
+                        seg_data_content = seg.data
+                        if isinstance(seg_data_content, str):
+                            message_json_str = seg_data_content.strip()
+                        else:
+                            message_json_str = str(seg_data_content).strip()
+                        self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
+                        break
+                else:
+                    self.logger.warning("从 MaiCore 收到seglist消息，但其中没有text类型消息。丢弃消息。")
+                    return
+            else:
+                self.logger.warning("消息段数据格式不正确。丢弃消息。")
+                return
+        elif message.message_segment.type == "text":
+            if hasattr(message.message_segment, "data") and isinstance(message.message_segment.data, str):
+                message_json_str = message.message_segment.data.strip()
+                self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
+            else:
+                self.logger.warning("消息数据格式不正确。丢弃消息。")
+                return
+
+        try:
+            # 执行动作（包括等待完成、状态更新等）
+            await self.action_executor.execute_maicore_action(message_json_str)
+
+            # 发送新的状态给 MaiCore
+            await self._send_state_to_maicore()
+
+        except Exception as e:
+            self.logger.error(f"处理 MaiCore 动作指令时出错: {e}")
+            # 发送错误状态给 MaiCore
+            await self._send_state_to_maicore()
+
+    # === 智能体模式相关方法 ===
+    async def _agent_decision_loop(self):
+        """智能体模式：智能体决策循环"""
+        loop_count = 0
+        while True:
+            try:
+                loop_count += 1
+
+                # 每100次循环输出一次调试信息
+                if loop_count % 100 == 1:
+                    self.logger.info(f"智能体决策循环运行中，第 {loop_count} 次")
+
+                # 获取当前智能体
+                agent = await self.agent_manager.get_current_agent()
+                if not agent:
+                    if loop_count % 100 == 1:
+                        self.logger.warning("没有当前智能体，等待中...")
+                    await asyncio.sleep(1)
+                    continue
+
+                # 检查游戏状态是否准备好
+                is_ready = self.game_state.is_ready_for_next_action()
+                if not is_ready:
+                    if loop_count % 100 == 1:
+                        self.logger.debug(
+                            f"游戏状态未准备好，等待中... (code_info: {self.game_state.current_code_info is not None})"
+                        )
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # 构建观察数据
+                obs = self._build_agent_observation()
+                if loop_count % 100 == 1:
+                    self.logger.debug(f"构建观察数据: {len(str(obs))} 字符")
+
+                # 智能体决策
+                self.logger.debug(f"开始智能体决策...")
+                # 转换code_info为dict类型
+                code_info_dict = None
+                if self.game_state.current_code_info:
+                    code_info_dict = getattr(self.game_state.current_code_info, "__dict__", {})
+
+                action = await agent.run(
+                    obs,
+                    code_info=code_info_dict,
+                    done=self.game_state.current_done,
+                    task_info=self.game_state.current_task_info,
+                )
+
+                if action:
+                    # 执行动作
+                    self.logger.info(f"智能体生成动作: {action.code}")
+                    await self.action_executor.execute_action(action)
+                    self.logger.debug(f"动作执行完成")
+                else:
+                    # 如果智能体没有返回动作，执行no_op
+                    self.logger.warning("智能体没有返回动作，执行no_op")
+                    await self.action_executor.execute_no_op()
+
+                await asyncio.sleep(0.1)
+
+            except asyncio.CancelledError:
+                self.logger.info("智能体决策循环被取消")
+                break
+            except Exception as e:
+                self.logger.error(f"智能体决策循环错误: {e}")
+                import traceback
+
+                self.logger.error(f"错误详情: {traceback.format_exc()}")
+                await asyncio.sleep(1)
+
+    def _build_agent_observation(self) -> Dict[str, Any]:
+        """构建智能体的观察数据 - 集成状态分析器"""
+        try:
+            observation_data = {}
+
+            # 从游戏状态中获取当前观察
+            current_obs = self.game_state.current_obs
+            if current_obs:
+                # 基础观察数据
+                if hasattr(current_obs, "__dict__"):
+                    observation_data["raw_observation"] = current_obs.__dict__
+                else:
+                    observation_data["raw_observation"] = str(current_obs)
+
+                # 集成状态分析器的环境感知能力
+                try:
+                    # 获取完整的状态分析
+                    status_analysis = self.game_state.get_status_analysis()
+                    if status_analysis:
+                        observation_data["environment_analysis"] = {
+                            "summary": status_analysis,
+                            "analysis_count": len(status_analysis),
+                        }
+
+                    # 获取详细的分类状态分析
+                    detailed_analysis = self.game_state.get_detailed_status_analysis()
+                    if detailed_analysis:
+                        observation_data["detailed_environment"] = detailed_analysis
+
+                        # 提取关键环境信息作为顶级字段
+                        if "life_stats" in detailed_analysis:
+                            observation_data["health_status"] = detailed_analysis["life_stats"]
+
+                        if "environment" in detailed_analysis:
+                            observation_data["surrounding_blocks"] = detailed_analysis["environment"]
+
+                        if "position" in detailed_analysis:
+                            observation_data["position_info"] = detailed_analysis["position"]
+
+                        if "inventory" in detailed_analysis:
+                            observation_data["inventory_status"] = detailed_analysis["inventory"]
+
+                        if "equipment" in detailed_analysis:
+                            observation_data["equipment_status"] = detailed_analysis["equipment"]
+
+                        # 碰撞和移动信息
+                        if "collision" in detailed_analysis:
+                            observation_data["movement_obstacles"] = detailed_analysis["collision"]
+
+                        if "facing_wall" in detailed_analysis:
+                            observation_data["facing_direction"] = detailed_analysis["facing_wall"]
+
+                        # 时间和天气信息
+                        if "time" in detailed_analysis:
+                            observation_data["game_time"] = detailed_analysis["time"]
+
+                        if "weather" in detailed_analysis:
+                            observation_data["weather_info"] = detailed_analysis["weather"]
+
+                    self.logger.debug(f"成功集成状态分析器数据，包含 {len(observation_data)} 个数据类别")
+
+                except Exception as e:
+                    self.logger.warning(f"获取状态分析时出错: {e}")
+                    observation_data["analysis_error"] = str(e)
+            else:
+                observation_data["error"] = "没有可用的观察数据"
+
+            return observation_data
+
+        except Exception as e:
+            self.logger.error(f"构建智能体观察数据时出错: {e}")
+            return {"error": f"构建观察数据失败: {str(e)}"}
+
+    async def _status_report_loop(self, interval: int):
+        """智能体模式：定期向MaiCore报告状态"""
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self._report_status_to_maicore()
+            except asyncio.CancelledError:
+                self.logger.info("状态报告循环被取消")
+                break
+            except Exception as e:
+                self.logger.error(f"状态报告循环错误: {e}")
+                await asyncio.sleep(1)
+
+    async def _report_status_to_maicore(self):
+        """向MaiCore报告当前状态"""
+        try:
+            # 获取智能体状态
+            agent = await self.agent_manager.get_current_agent()
+            if agent:
+                agent_status = await agent.get_status()
+            else:
+                agent_status = {"status": "no_agent"}
+
+            # 构建状态消息 - 转换agents_config类型
+            agents_config_str = [{k: str(v) for k, v in agent_cfg.items()} for agent_cfg in self.agents_config]
+            msg_to_maicore = self.message_builder.build_state_message(
+                self.game_state, self.event_manager, agents_config_str
+            )
+
+            if msg_to_maicore:
+                await self.core.send_to_maicore(msg_to_maicore)
+                self.logger.debug("已向MaiCore报告智能体状态")
+
+        except Exception as e:
+            self.logger.error(f"向MaiCore报告状态时出错: {e}")
+
+    async def _handle_agent_message(self, message: MessageBase):
+        """智能体模式：处理外部消息 - 可选地传递给智能体"""
+        maicore_config = self.plugin_config.get("maicore_integration", {})
+        if not maicore_config.get("accept_commands", True):
+            self.logger.debug("MaiCore集成已禁用，忽略外部消息")
+            return
+
+        self.logger.info(f"收到来自 MaiCore 的指令: {message.message_segment.data}")
+
+        # 提取消息内容
+        command = ""
+        if message.message_segment.type == "text":
+            if hasattr(message.message_segment, "data") and isinstance(message.message_segment.data, str):
+                command = message.message_segment.data.strip()
+            else:
+                self.logger.warning("消息数据格式不正确。忽略消息。")
+                return
+        elif message.message_segment.type == "seglist":
+            # 取出其中的text类型消息
+            seg_data = message.message_segment.data
+            if isinstance(seg_data, list):
+                for seg in seg_data:
+                    if hasattr(seg, "type") and seg.type == "text" and hasattr(seg, "data"):
+                        # 安全地获取和处理数据
+                        seg_data_content = seg.data
+                        if isinstance(seg_data_content, str):
+                            command = seg_data_content.strip()
+                        else:
+                            command = str(seg_data_content).strip()
+                        break
+                else:
+                    self.logger.warning("从 MaiCore 收到seglist消息，但其中没有text类型消息。忽略消息。")
+                    return
+            else:
+                self.logger.warning("消息段数据格式不正确。忽略消息。")
+                return
+        else:
+            self.logger.warning(f"不支持的消息类型: {message.message_segment.type}")
+            return
+
+        # 获取指令优先级配置
+        priority = maicore_config.get("default_command_priority", "normal")
+
+        # 传递给当前智能体
+        try:
+            agent = await self.agent_manager.get_current_agent()
+            if agent:
+                await agent.receive_command(command, priority)
+                self.logger.info(f"已将MaiCore指令传递给智能体: {command}")
+            else:
+                self.logger.warning("没有可用的智能体接收MaiCore指令")
+
+        except Exception as e:
+            self.logger.error(f"传递MaiCore指令给智能体时出错: {e}")
+
+    # === 统一入口方法 ===
+    async def handle_external_message(self, message: MessageBase):
+        """处理外部消息 - 根据当前模式分发"""
+        if self.current_mode == "maicore":
+            await self._handle_maicore_message(message)
+        elif self.current_mode == "agent":
+            await self._handle_agent_message(message)
+        else:
+            self.logger.warning(f"未知的控制模式: {self.current_mode}")
+
+    # === 模式切换方法 ===
+    async def switch_mode(self, new_mode: str) -> bool:
+        """切换控制模式"""
+        if new_mode not in ["maicore", "agent"]:
+            self.logger.error(f"不支持的模式: {new_mode}")
+            return False
+
+        if self.current_mode == new_mode:
+            self.logger.info(f"已经处于{new_mode}模式")
+            return True
+
+        try:
+            self.logger.info(f"开始从{self.current_mode}模式切换到{new_mode}模式")
+
+            # 停止当前模式的任务
+            await self._stop_current_mode_tasks()
+
+            # 切换模式
+            old_mode = self.current_mode
+            self.current_mode = new_mode
+
+            # 启动新模式的控制循环
+            await self._start_mode_control_loop()
+
+            self.logger.info(f"成功从{old_mode}模式切换到{new_mode}模式")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"模式切换失败: {e}")
+            return False
+
+    async def _stop_current_mode_tasks(self):
+        """停止当前模式的任务"""
+        for task_name, task in self._mode_tasks.items():
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                self._mode_tasks[task_name] = None
+                self.logger.debug(f"已停止任务: {task_name}")
+
+    # === 状态查询方法 ===
     async def get_current_mode(self) -> str:
         """获取当前模式"""
-        return await self.mode_switcher.get_current_mode()
+        return self.current_mode
 
     async def get_agent_status(self) -> dict:
         """获取智能体状态"""
@@ -217,12 +594,8 @@ class MinecraftPlugin(BasePlugin):
         """清理插件资源"""
         self.logger.info("正在清理 Minecraft 插件...")
 
-        # 清理控制器
-        if hasattr(self, "mode_controller") and self.mode_controller:
-            try:
-                await self.mode_controller.cleanup()
-            except Exception as e:
-                self.logger.error(f"清理控制器时出错: {e}")
+        # 停止所有模式任务
+        await self._stop_current_mode_tasks()
 
         # 清理智能体管理器
         if hasattr(self, "agent_manager") and self.agent_manager:
@@ -230,14 +603,6 @@ class MinecraftPlugin(BasePlugin):
                 await self.agent_manager.cleanup()
             except Exception as e:
                 self.logger.error(f"清理智能体管理器时出错: {e}")
-
-        # 停止自动发送任务（向后兼容）
-        if self._auto_send_task:
-            self.logger.info("正在停止自动发送状态任务...")
-            self._auto_send_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._auto_send_task
-            self._auto_send_task = None
 
         # 关闭MineLand环境
         if self.mland:
