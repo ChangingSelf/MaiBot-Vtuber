@@ -601,3 +601,74 @@ python main.py
     *   不再使用自定义的 `MinelandJSONEncoder` 或 `json_serialize_mineland`。
     *   插件配置加载由基类 `BasePlugin` 处理。
     *   不再有 `mineland_enable_low_level_action` 的概念，插件完全基于高级动作。
+
+# Minecraft插件架构说明 - 简化版
+
+## 概述
+
+本插件支持两种控制模式：
+- **MaiCore模式**：传统的MaiCore通信控制模式
+- **智能体模式**：基于智能体的自主决策模式
+
+## 核心架构
+
+```
+MinecraftPlugin (主插件)
+├── 模式管理 (内置)
+│   ├── current_mode: 当前模式标识
+│   ├── _start_maicore_mode(): MaiCore模式启动
+│   └── _start_agent_mode(): 智能体模式启动
+├── 管理组件
+│   ├── ConfigManager: 配置管理
+│   └── AgentManager: 智能体管理
+├── 核心组件 (复用现有)
+│   ├── MinecraftGameState: 游戏状态
+│   ├── MinecraftEventManager: 事件管理
+│   ├── MinecraftActionExecutor: 动作执行
+│   └── MinecraftMessageBuilder: 消息构建
+└── 智能体
+    ├── BaseAgent: 智能体基类
+    └── SimpleAgent: 简单智能体实现
+```
+
+## 主要简化
+
+1. **去除策略模式**：直接在主插件中实现两种模式逻辑
+2. **合并控制器**：将MaiCore和Agent控制器功能直接集成到主插件
+3. **简化配置管理**：减少配置层次，使用更直观的配置结构
+4. **统一消息处理**：一个入口方法根据模式分发消息
+
+## 使用方式
+
+### 配置示例
+
+```toml
+[minecraft]
+control_mode = "agent"  # 或 "maicore"
+allow_mode_switching = true
+
+[minecraft.agents.simple]
+model = "gpt-3.5-turbo"
+temperature = 0.7
+max_tokens = 512
+
+[minecraft.maicore_integration]
+accept_commands = true
+status_report_interval = 60
+```
+
+### 模式切换
+
+```python
+# 在运行时切换模式
+await plugin.switch_mode("agent")
+await plugin.switch_mode("maicore")
+```
+
+## 优势
+
+1. **简洁性**：减少了抽象层，代码更易理解
+2. **可维护性**：集中化的逻辑，减少文件数量
+3. **性能**：减少函数调用层次，提高执行效率
+4. **类型安全**：修复了大部分类型错误
+5. **向后兼容**：保持与现有功能的完全兼容
