@@ -1,0 +1,80 @@
+# Minecraft 插件配置示例文件
+# 复制此文件为 config.toml 并修改相应配置
+
+[minecraft]
+enable = true
+
+# 控制模式: maicore | agent  
+control_mode = "maicore" # 默认保持现有行为
+# control_mode = "agent"  # 启用智能体模式
+
+# 是否允许运行时切换模式
+allow_mode_switching = true
+
+# MineLand 服务器配置
+server_host = "ChangingSelf.xyz"
+server_port = 25565
+
+# 用户信息配置
+user_id = 0
+group_id = "MinecraftLiveRoom"
+nickname = "Minecraft"
+
+# 其他基础配置...
+# (这里省略了其他配置项，请参考完整的config.toml)
+
+# =====================================
+# 智能体API配置 - 重要！
+# =====================================
+
+# 简单智能体配置
+[minecraft.agents.simple]
+model = "Pro/deepseek-ai/DeepSeek-V3" # 支持各种模型
+temperature = 0.1
+max_tokens = 1024
+max_memory = 10
+
+# 简单智能体LLM API配置
+# 方法1: 直接配置（不推荐）
+api_key = "your_deepseek_api_key_here"
+base_url = "https://api.deepseek.com"
+
+# 方法2: 使用环境变量（推荐）
+# api_key_env = "DEEPSEEK_API_KEY"     # 指定API密钥的环境变量名
+# base_url_env = "DEEPSEEK_BASE_URL"   # 指定Base URL的环境变量名
+
+# =====================================
+# 环境变量设置方法
+# =====================================
+
+# Windows (PowerShell):
+# $env:DEEPSEEK_API_KEY="your_key_here"
+
+# Windows (CMD):
+# set DEEPSEEK_API_KEY=your_key_here
+
+# Linux/macOS:
+# export DEEPSEEK_API_KEY="your_key_here"
+
+# 或者创建 .env 文件:
+# DEEPSEEK_API_KEY=your_key_here
+
+# =====================================
+# 支持的API提供商
+# =====================================
+
+# OpenAI:
+# base_url = "https://api.openai.com/v1"
+# model = "gpt-4-turbo" 或 "gpt-3.5-turbo"
+
+# DeepSeek:
+# base_url = "https://api.deepseek.com"
+# model = "Pro/deepseek-ai/DeepSeek-V3"
+
+# SiliconFlow:
+# base_url = "https://api.siliconflow.cn/v1/"
+# model = "Pro/deepseek-ai/DeepSeek-V3"
+
+# 其他兼容OpenAI API的提供商:
+# base_url = "你的API提供商的base_url"
+# model = "对应的模型名称"
