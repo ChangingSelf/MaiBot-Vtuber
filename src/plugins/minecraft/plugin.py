@@ -13,6 +13,13 @@ from .events.event_manager import MinecraftEventManager
 from .actions.action_executor import MinecraftActionExecutor
 from .message.message_builder import MinecraftMessageBuilder
 
+# 新增导入 - 延迟导入控制器以避免循环依赖
+from .core.config_manager import ConfigManager
+from .core.agent_manager import AgentManager
+from .core.mode_switcher import ModeSwitcher
+from .controllers.maicore_controller import MaiCoreController
+from .controllers.agent_controller import AgentController
+
 
 class MinecraftPlugin(BasePlugin):
     """Minecraft插件"""
@@ -50,6 +57,14 @@ class MinecraftPlugin(BasePlugin):
         # MineLand实例
         self.mland: Optional[mineland.MineLand] = None
 
+        # 新增组件
+        self.config_manager = ConfigManager(plugin_config)
+        self.agent_manager = AgentManager()
+        self.mode_switcher = ModeSwitcher(self)
+
+        # 控制策略（延迟创建以避免循环依赖）
+        self.mode_controller = None
+
         # 核心组件 - 使用配置文件中的参数
         action_executor_config = config.get("action_executor", {})
         event_manager_config = config.get("event_manager", {})
@@ -71,15 +86,48 @@ class MinecraftPlugin(BasePlugin):
             platform=self.core.platform,
             user_id=config.get("user_id", "minecraft_bot"),
             nickname=config.get("nickname", "Minecraft Observer"),
-            group_id=config.get("group_id"),
+            group_id=config.get("group_id", ""),
             config=config.get("prompt", {}),
         )
 
-    async def setup(self):
-        """初始化插件"""
-        await super().setup()
-        self.core.register_websocket_handler("*", self.handle_maicore_response)
+    def _create_initial_controller(self):
+        """延迟创建初始控制器以避免循环依赖"""
+        control_mode = self.config_manager.get_control_mode()
+        if control_mode == "maicore":
+            return MaiCoreController()
+        elif control_mode == "agent":
+            return AgentController()
+        else:
+            self.logger.warning(f"不支持的控制模式: {control_mode}，使用默认maicore模式")
 
+            return MaiCoreController()
+
+    async def setup(self):
+        """重构后的初始化方法"""
+        await super().setup()
+
+        # 创建控制器（延迟创建）
+        self.mode_controller = self._create_initial_controller()
+
+        # 初始化MineLand环境（保持现有逻辑）
+        await self._initialize_mineland()
+
+        # 初始化智能体管理器
+        await self.agent_manager.initialize(self.config_manager.get_agent_config())
+
+        # 初始化控制器
+        await self.mode_controller.initialize(self)
+
+        # 注册消息处理器
+        self.core.register_websocket_handler("*", self.handle_external_message)
+
+        # 启动控制循环
+        await self.mode_controller.start_control_loop()
+
+        self.logger.info(f"Minecraft插件初始化完成，当前模式: {self.mode_controller.get_mode_name()}")
+
+    async def _initialize_mineland(self):
+        """初始化MineLand环境"""
         self.logger.info("Minecraft 插件已加载，正在初始化 MineLand 环境...")
         try:
             # 初始化MineLand环境
@@ -106,19 +154,9 @@ class MinecraftPlugin(BasePlugin):
             self.logger.info(f"MineLand 环境已重置，收到初始观察: {len(initial_obs)} 个智能体。")
             self.logger.info(f"已记录初始目标: {self.game_state.goal}")
 
-            # 发送初始状态
-            if self.game_state.current_obs:
-                await self._send_state_to_maicore()
-            else:
-                self.logger.warning("初始化时没有观察数据，将在自动发送循环中重试")
-
-            # 启动自动发送任务
-            self._auto_send_task = asyncio.create_task(self._auto_send_loop(), name="MinecraftAutoSend")
-            self.logger.info(f"已启动自动发送状态任务，间隔: {self.auto_send_interval}秒")
-
         except Exception as e:
             self.logger.exception(f"初始化 MineLand 环境失败: {e}")
-            return
+            raise
 
     async def _auto_send_loop(self):
         """定期发送状态的循环任务"""
@@ -161,52 +199,39 @@ class MinecraftPlugin(BasePlugin):
             self.logger.error(f"构建或发送状态消息时出错: {e}")
             raise
 
-    async def handle_maicore_response(self, message: MessageBase):
-        """处理从 MaiCore 返回的动作指令"""
-        self.logger.info(f"收到来自 MaiCore 的响应: {message.message_segment.data}")
+    async def handle_external_message(self, message: MessageBase):
+        """委托给当前控制器处理外部消息"""
+        await self.mode_controller.handle_external_message(message)
 
-        # 更新最后响应时间
-        self._last_response_time = time.time()
+    async def get_current_mode(self) -> str:
+        """获取当前模式"""
+        return await self.mode_switcher.get_current_mode()
 
-        if not self.mland:
-            self.logger.error("收到 MaiCore 响应，但 MineLand 环境未初始化。忽略消息。")
-            return
-
-        if message.message_segment.type not in ["text", "seglist"]:
-            self.logger.warning(
-                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'或'seglist'。丢弃消息。"
-            )
-            return
-
-        if message.message_segment.type == "seglist":
-            # 取出其中的text类型消息
-            for seg in message.message_segment.data:
-                if seg.type == "text":
-                    message_json_str = seg.data.strip()
-                    self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
-                    break
-            else:
-                self.logger.warning("从 MaiCore 收到seglist消息，但其中没有text类型消息。丢弃消息。")
-                return
-        elif message.message_segment.type == "text":
-            message_json_str = message.message_segment.data.strip()
-            self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
-
-        try:
-            # 执行动作（包括等待完成、状态更新等）
-            await self.action_executor.execute_maicore_action(message_json_str)
-
-            # 发送新的状态给 MaiCore
-            await self._send_state_to_maicore()
-
-        except Exception as e:
-            self.logger.exception(f"执行 Mineland step 或处理后续状态时出错: {e}")
+    async def get_agent_status(self) -> dict:
+        """获取智能体状态"""
+        if hasattr(self, "agent_manager") and self.agent_manager:
+            return await self.agent_manager.get_agent_status()
+        return {"error": "智能体管理器未初始化"}
 
     async def cleanup(self):
         """清理插件资源"""
         self.logger.info("正在清理 Minecraft 插件...")
 
-        # 停止自动发送任务
+        # 清理控制器
+        if hasattr(self, "mode_controller") and self.mode_controller:
+            try:
+                await self.mode_controller.cleanup()
+            except Exception as e:
+                self.logger.error(f"清理控制器时出错: {e}")
+
+        # 清理智能体管理器
+        if hasattr(self, "agent_manager") and self.agent_manager:
+            try:
+                await self.agent_manager.cleanup()
+            except Exception as e:
+                self.logger.error(f"清理智能体管理器时出错: {e}")
+
+        # 停止自动发送任务（向后兼容）
         if self._auto_send_task:
             self.logger.info("正在停止自动发送状态任务...")
             self._auto_send_task.cancel()
