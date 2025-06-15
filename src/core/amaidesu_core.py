@@ -335,7 +335,7 @@ class AmaidesuCore:
             # 确保 message_to_send 是有效的 MessageBase 对象
             if isinstance(message_to_send, MessageBase):
                 self.logger.debug(f"准备通过 Router 发送消息: {message_to_send.message_info.message_id}")
-                await self._router.send(self.platform, message_to_send)
+                await self._router.send_message(message_to_send)
                 self.logger.info(f"消息 {message_to_send.message_info.message_id} 已发送至 MaiCore。")
             else:
                 self.logger.error(f"管道处理后返回了无效类型 {type(message_to_send)}，期望是 MessageBase。消息未发送。")
