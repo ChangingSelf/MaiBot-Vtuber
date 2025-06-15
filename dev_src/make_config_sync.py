@@ -114,24 +114,30 @@ def update_config_template():
     else:
         print(f"发现 {len(missing_plugins)} 个缺失的插件条目: {', '.join(missing_plugins)}")
 
-        # 在清理后的行列表中找到插入点
+        # 在清理后的行列表中找到插入点。
+        # 注意：我们选择直接操作文本行而不是重新序列化TOML对象，是为了
+        # 最大限度地保留原始文件中的注释和格式。这种方法的缺点是比
+        # 使用专业的TOML库（如 tomlkit）更脆弱，但在当前场景下是可接受的。
         try:
-            # 在 Python 3.8+ 中，list.index() 存在
             plugins_section_index = next(i for i, line in enumerate(lines) if line.strip() == "[plugins]")
         except StopIteration:
-            print("错误: 在配置文件中未找到 '[plugins]' 区域。")
+            print("错误: 在配置文件中未找到 '[plugins]' 区域。无法添加新条目。")
             return
 
+        # 从 [plugins] 标题后开始，寻找插入新条目的最佳位置
+        # 目标是该区域的末尾，即下一个区域的开头或文件末尾
         insert_index = plugins_section_index + 1
         while insert_index < len(lines) and not lines[insert_index].strip().startswith("["):
             insert_index += 1
 
-        # 准备要插入的新行
+        # 准备要插入的新行，并排序以保证每次运行结果一致
         lines_to_insert = [f"enable_{name} = true\n" for name in sorted(missing_plugins)]
 
-        # 优雅地处理换行
+        # 优雅地处理空行，以保持格式美观
+        # 如果插入点之前不是空行，则在前面加一个空行
         if insert_index > 0 and lines[insert_index - 1].strip() != "":
             lines_to_insert.insert(0, "\n")
+        # 如果插入点不是文件末尾，且其后不是空行，则在后面加一个空行
         if insert_index < len(lines) and lines[insert_index].strip() != "":
             lines_to_insert.append("\n")
 

@@ -55,20 +55,19 @@ class CommandProcessorPipeline(MessagePipeline):
         self.logger.info(f"在消息 {message.message_info.message_id} 中找到 {len(commands_found)} 个指令。")
 
         # 异步执行所有找到的命令
-        execution_tasks = []
+        coroutines_to_run = []
         for command_full_match in commands_found:
-            task = self._execute_single_command(command_full_match)
-            if task:
-                execution_tasks.append(task)
+            coro = self._execute_single_command(command_full_match)
+            if coro:
+                coroutines_to_run.append(coro)
         
-        if execution_tasks:
+        if coroutines_to_run:
             # "即发即忘" (Fire-and-forget) 模式：
-            # 我们使用 asyncio.create_task() 来安排命令的执行，但并不等待它们完成 (不使用 await)。
+            # 我们将所有命令的协程收集起来，然后使用 asyncio.create_task()
+            # 来安排它们的并发执行，但我们不在此处等待它们完成 (不使用 await)。
             # 这允许消息处理流程（例如，将清理后的文本发送到TTS）可以无阻塞地继续进行。
-            # 这种设计的优点是响应迅速，缺点是后续的管道环节无法保证此时命令的副作用已经完成。
-            # 在当前设计中，这通常是期望的行为。
-            for task in execution_tasks:
-                asyncio.create_task(task)
+            for coro in coroutines_to_run:
+                asyncio.create_task(coro)
 
         # 从文本中移除所有命令标签
         processed_text = self.command_pattern.sub("", original_text).strip()
@@ -80,8 +79,11 @@ class CommandProcessorPipeline(MessagePipeline):
 
         return message
 
-    async def _execute_single_command(self, command_full_match: str):
-        """解析并执行单个命令字符串。"""
+    async def _execute_single_command(self, command_full_match: str) -> Optional[asyncio.Task]:
+        """
+        解析单个命令字符串并返回一个可执行的协程。
+        返回 None 如果命令无效或无法执行。
+        """
         self.logger.debug(f"处理指令标签内容: '{command_full_match}'")
         
         parts = command_full_match.strip().split(":", 1)
@@ -90,7 +92,7 @@ class CommandProcessorPipeline(MessagePipeline):
 
         if command_name not in self.command_map:
             self.logger.warning(f"发现未知指令: '{command_name}'")
-            return
+            return None
 
         command_config = self.command_map[command_name]
         service_name = command_config.get("service")
@@ -98,30 +100,24 @@ class CommandProcessorPipeline(MessagePipeline):
 
         if not service_name or not method_name:
             self.logger.error(f"指令 '{command_name}' 的配置不完整 (缺少 service 或 method)。")
-            return
+            return None
 
         service_instance = self.core.get_service(service_name)
         if not service_instance:
             self.logger.warning(f"未找到指令 '{command_name}' 所需的服务 '{service_name}'。")
-            return
+            return None
 
         method_to_call = getattr(service_instance, method_name, None)
         if not method_to_call or not asyncio.iscoroutinefunction(method_to_call):
             self.logger.warning(
                 f"服务 '{service_name}' 上的方法 '{method_name}' 不存在或是非异步方法。无法执行指令 '{command_name}'。"
             )
-            return
+            return None
 
         args = [arg.strip() for arg in args_str.split(",") if arg.strip()]
-        self.logger.info(
-            f"准备通过服务 '{service_name}'.{method_name} 执行指令 '{command_name}' (参数: {args})。"
-        )
         
-        try:
-            # 注意：这里我们返回协程对象，由调用者决定何时以及如何运行它
-            await method_to_call(*args)
-        except Exception as e:
-            self.logger.error(f"执行指令 '{command_name}' 时发生异常: {e}", exc_info=True)
+        # 返回协程本身，而不是在此处 await 它
+        return method_to_call(*args)
 
     # on_connect 和 on_disconnect 可以在需要时实现
     # async def on_connect(self) -> None:

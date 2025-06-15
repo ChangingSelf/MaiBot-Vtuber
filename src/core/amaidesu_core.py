@@ -324,6 +324,9 @@ class AmaidesuCore:
                 self.logger.error(f"处理出站管道时发生错误: {e}", exc_info=True)
                 # 出现错误时，可以选择是发送原始消息还是阻止发送
                 # 当前策略: 阻止发送以避免意外行为
+                # 设计决策：对于出站消息（例如，即将被TTS朗读的文本），如果处理管道
+                # （如内容审查、格式化）失败，发送原始消息可能导致问题（例如，读出
+                # 未经处理的标签）。因此，更安全的做法是直接阻止消息发送。
                 self.logger.warning("由于出站管道错误，消息将不会被发送。")
                 return
 
@@ -365,8 +368,12 @@ class AmaidesuCore:
             except Exception as e:
                 self.logger.error(f"处理入站管道时发生错误: {e}", exc_info=True)
                 # 错误策略：继续分发原始消息
+                # 设计决策：对于入站消息（通常包含来自LLM的指令），如果处理管道
+                # （如CommandProcessor）失败，完全丢弃消息可能会丢失重要的非指令性
+                # 文本内容。回退到原始消息可以确保其他不依赖此管道的插件（如字幕插件）
+                # 仍然能收到完整的原始文本。
                 self.logger.warning("由于入站管道错误，将尝试分发原始消息给插件。")
-                message_to_broadcast = message # Fallback to original message
+                message_to_broadcast = message  # Fallback to original message
 
         # --- 分发给插件处理器 ---
         # 确定分发键 (例如, 消息段类型)

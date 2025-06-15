@@ -305,28 +305,32 @@ class PipelineManager:
         self._ensure_inbound_sorted()
         self._ensure_outbound_sorted()
 
+        self.logger.info(
+            f"所有管道加载完成, 入站: {len(self._inbound_pipelines)} 个, 出站: {len(self._outbound_pipelines)} 个"
+        )
+
     async def notify_connect(self) -> None:
-        """当 AmaidesuCore 连接时通知所有管道。"""
+        """当 AmaidesuCore 连接时，按优先级顺序通知所有管道。"""
+        self.logger.debug("正在按顺序通知管道连接...")
+        self._ensure_inbound_sorted()
+        self._ensure_outbound_sorted()
+
         all_pipelines = self._inbound_pipelines + self._outbound_pipelines
-        if not all_pipelines:
-            return
-            
-        self.logger.debug(f"通知 {len(all_pipelines)} 个管道连接已建立...")
         for pipeline in all_pipelines:
             try:
                 await pipeline.on_connect()
             except Exception as e:
-                self.logger.error(f"通知管道 {pipeline.__class__.__name__} 连接事件时出错: {e}", exc_info=True)
+                self.logger.error(f"管道 {pipeline.__class__.__name__} 的 on_connect 钩子出错: {e}", exc_info=True)
 
     async def notify_disconnect(self) -> None:
-        """当 AmaidesuCore 断开连接时通知所有管道。"""
-        all_pipelines = self._inbound_pipelines + self._outbound_pipelines
-        if not all_pipelines:
-            return
+        """当 AmaidesuCore 断开连接时，按优先级顺序通知所有管道。"""
+        self.logger.debug("正在按顺序通知管道断开连接...")
+        self._ensure_inbound_sorted()
+        self._ensure_outbound_sorted()
 
-        self.logger.debug(f"通知 {len(all_pipelines)} 个管道连接已断开...")
+        all_pipelines = self._inbound_pipelines + self._outbound_pipelines
         for pipeline in all_pipelines:
             try:
                 await pipeline.on_disconnect()
             except Exception as e:
-                self.logger.error(f"通知管道 {pipeline.__class__.__name__} 断开连接事件时出错: {e}", exc_info=True)
+                self.logger.error(f"管道 {pipeline.__class__.__name__} 的 on_disconnect 钩子出错: {e}", exc_info=True)
