@@ -71,6 +71,8 @@ class MinecraftPromptTemplates:
 - `placeItem(bot, name, position)`: 放置方块
 - `smeltItem(bot, name, count)`: 冶炼物品
 - `killMob(bot, name, timeout)`: 击杀生物
+- `followPlayer(bot,playerName,followDistance=3,timeout=60)`: 跟随玩家
+- `swimToLand(bot, maxDistance = 100, timeout = 60)`: 游泳到岸边
 - `bot.toss(itemType, metadata, count)`: 丢弃物品，丢弃时记得离开原地，否则物品会被吸收回来
 """
 
