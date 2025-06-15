@@ -62,7 +62,11 @@ class CommandProcessorPipeline(MessagePipeline):
                 execution_tasks.append(task)
         
         if execution_tasks:
-            # 我们创建任务让它们在后台运行，不阻塞消息流
+            # "即发即忘" (Fire-and-forget) 模式：
+            # 我们使用 asyncio.create_task() 来安排命令的执行，但并不等待它们完成 (不使用 await)。
+            # 这允许消息处理流程（例如，将清理后的文本发送到TTS）可以无阻塞地继续进行。
+            # 这种设计的优点是响应迅速，缺点是后续的管道环节无法保证此时命令的副作用已经完成。
+            # 在当前设计中，这通常是期望的行为。
             for task in execution_tasks:
                 asyncio.create_task(task)
 
