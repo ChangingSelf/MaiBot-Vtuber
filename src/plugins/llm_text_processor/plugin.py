@@ -34,11 +34,6 @@ class LLMTextProcessorPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.config = self.plugin_config
-        self.enabled = self.config.get("enabled", True)
-
-        if not self.enabled:
-            self.logger.warning("LLMTextProcessorPlugin is disabled in the configuration.")
-            return
 
         # --- Read configuration values from self.config ---
         self.base_url = self.config.get("base_url")
@@ -52,7 +47,6 @@ class LLMTextProcessorPlugin(BasePlugin):
         # --- Validate essential config ---
         if not self.base_url:
             self.logger.error("Missing 'base_url' in llm_text_processor config. Plugin disabled.")
-            self.enabled = False
             return
         if not self.api_key:
             self.logger.warning("Missing 'api_key' in llm_text_processor config. Set to '-' if no key is needed.")
@@ -73,15 +67,11 @@ class LLMTextProcessorPlugin(BasePlugin):
             self.logger.info(f"LLM 客户端初始化成功 (URL: {self.base_url}, Model: {self.model_name})")
         except Exception as e:
             self.logger.error(f"初始化 LLM 客户端失败: {e}", exc_info=True)
-            self.enabled = False
             # No need to set self.client to None here, it's already None if init fails
 
     async def setup(self):
         """Register the plugin instance as both services."""
         await super().setup()
-        if not self.enabled:
-            self.logger.warning("LLM 文本处理器插件未启用，不注册服务。")
-            return
 
         # Register this instance for both service names
         self.core.register_service("text_cleanup", self)
@@ -102,8 +92,8 @@ class LLMTextProcessorPlugin(BasePlugin):
 
     async def clean_text(self, text: str) -> Optional[str]:
         """Cleans the input text using the cleanup prompt."""
-        if not self.enabled or not self.cleanup_prompt:
-            self.logger.warning("文本清理功能未启用或缺少 Prompt。")
+        if not self.cleanup_prompt:
+            self.logger.debug("文本清理功能缺少 Prompt，跳过。")
             return None
 
         prompt = self.cleanup_prompt.format(text=text)
@@ -115,8 +105,8 @@ class LLMTextProcessorPlugin(BasePlugin):
 
     async def correct_text(self, text: str) -> Optional[str]:
         """Corrects the input STT result using the correction prompt."""
-        if not self.enabled or not self.correction_prompt:
-            self.logger.warning("STT 修正功能未启用或缺少 Prompt。")
+        if not self.correction_prompt:
+            self.logger.debug("STT 修正功能缺少 Prompt，跳过。")
             return None
 
         prompt = self.correction_prompt.format(text=text)

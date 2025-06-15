@@ -77,7 +77,6 @@ class ScreenMonitorPlugin(BasePlugin):
         # loaded_config = load_plugin_config()
         # self.config = loaded_config.get("screen_monitor", {})
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
-        self.enabled = self.config.get("enabled", True)
 
         # --- 检查核心依赖 ---
         # 更新依赖检查，需要 openai
@@ -86,11 +85,6 @@ class ScreenMonitorPlugin(BasePlugin):
             self.logger.error(  # 修改: logger -> self.logger
                 f"缺少必要的库: {', '.join(missing)}。请运行 `pip install mss openai Pillow`。ScreenMonitorPlugin 已禁用。"
             )
-            self.enabled = False
-            return
-
-        if not self.enabled:
-            self.logger.warning("ScreenMonitorPlugin 在配置中被禁用。")  # 修改: logger -> self.logger
             return
 
         # --- 加载配置 (使用新配置项) ---
@@ -108,13 +102,11 @@ class ScreenMonitorPlugin(BasePlugin):
             self.logger.error(
                 "API Key 未在 config.toml 中配置！ScreenMonitorPlugin 已禁用。"
             )  # 修改: logger -> self.logger
-            self.enabled = False
             return
         if not self.base_url:
             self.logger.error(  # 修改: logger -> self.logger
                 "OpenAI 兼容 Base URL (openai_compatible_base_url) 未在 config.toml 中配置！ScreenMonitorPlugin 已禁用。"
             )
-            self.enabled = False
             return
 
         # --- 状态变量 ---
@@ -137,7 +129,6 @@ class ScreenMonitorPlugin(BasePlugin):
             )  # 无需修改，基类已有logger
         except Exception as e:
             self.logger.error(f"初始化 AsyncOpenAI 客户端失败: {e}", exc_info=True)  # 修改: logger -> self.logger
-            self.enabled = False
             return
 
         # self.logger.info(f"ScreenMonitorPlugin 初始化完成。截图间隔: {self.interval}s, 模型: {self.model_name}") # 此日志可移除，基类有通用初始化日志
@@ -149,8 +140,6 @@ class ScreenMonitorPlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            return
 
         # --- 移除 aiohttp Session 创建 ---
 

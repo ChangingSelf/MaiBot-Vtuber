@@ -92,13 +92,11 @@ class STTPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)  # Initialize BasePlugin
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
-        self.enabled = True  # Assume enabled unless dependencies fail
         # self.logger = logger  # 已由基类初始化
 
         # --- Basic Dependency Check ---
         if torch is None or sd is None or aiohttp is None or tomllib is None:
             self.logger.error("缺少核心依赖 (torch, sounddevice, aiohttp, toml)，STT 插件禁用。")
-            self.enabled = False
             return
 
         # --- Load Specific Config Sections ---
@@ -132,7 +130,6 @@ class STTPlugin(BasePlugin):
         # --- iFlytek Config Check ---
         if not all([self.iflytek_config.get(k) for k in ["appid", "api_key", "api_secret", "host", "path"]]):
             self.logger.error("讯飞 ASR 配置不完整 (appid, api_key, api_secret, host, path)，STT 插件禁用。")
-            self.enabled = False
             return
 
         # --- VAD Model Loading ---
@@ -157,10 +154,9 @@ class STTPlugin(BasePlugin):
                 self.logger.error(f"加载 Silero VAD 模型失败: {e}", exc_info=True)
                 self.logger.warning("VAD 功能将不可用，禁用 STT 插件。")
                 self.vad_enabled = False
-                self.enabled = False
         else:
             self.logger.info("VAD 在配置中被禁用，无法运行真流式 STT，禁用插件。")
-            self.enabled = False
+            self.vad_enabled = False # Keep this to indicate VAD is off
 
         # --- Audio Config ---
         self.sample_rate = self.audio_config.get(
@@ -216,7 +212,7 @@ class STTPlugin(BasePlugin):
         self._is_speaking: bool = False
         self._silence_started_time: Optional[float] = None
 
-        self.logger.info(f"STT 插件初始化完成。Enabled={self.enabled}, VAD Enabled={self.vad_enabled}")
+        self.logger.info(f"STT 插件初始化完成。VAD Enabled={self.vad_enabled}")
 
     def _find_device_index(self, device_name: Optional[str], kind: str = "input") -> Optional[int]:
         """根据设备名称查找设备索引。"""
@@ -254,28 +250,14 @@ class STTPlugin(BasePlugin):
             return None
 
     async def setup(self):
-        """启动 STT 音频捕获和处理任务。"""
+        """启动 STT 主任务。"""
         await super().setup()
-        if not self.enabled:
-            self.logger.warning("STT 插件未启用或初始化失败，不启动。")
+        if not self.vad_enabled:
+            self.logger.warning("VAD is not enabled or failed to load. STT plugin will not run.")
             return
 
-        self.logger.info(
-            "启动 STT (真流式) 音频处理任务..."
-            + (f" (设备: {self.input_device_index})" if self.input_device_index is not None else " (默认设备)")
-        )
-        self.stop_event.clear()
-        try:
-            if not self._session or self._session.closed:
-                self._session = aiohttp.ClientSession()
-                self.logger.info("已为 STT 创建 aiohttp ClientSession。")
-            self._stt_task = asyncio.create_task(self._stt_worker(), name="STT_Worker")
-        except Exception as e:
-            self.logger.error(f"启动 STT worker 或创建 session 时出错: {e}", exc_info=True)
-            if self._session and not self._session.closed:
-                await self._session.close()
-                self._session = None
-            self.enabled = False
+        # 启动后台任务
+        self._stt_task = asyncio.create_task(self._stt_worker())
 
     async def cleanup(self):
         """停止 STT 任务并清理资源。"""
