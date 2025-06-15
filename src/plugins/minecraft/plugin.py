@@ -78,7 +78,7 @@ class MinecraftPlugin(BasePlugin):
     async def setup(self):
         """初始化插件"""
         await super().setup()
-        self.core.register_websocket_handler("text", self.handle_maicore_response)
+        self.core.register_websocket_handler("*", self.handle_maicore_response)
 
         self.logger.info("Minecraft 插件已加载，正在初始化 MineLand 环境...")
         try:
@@ -179,14 +179,25 @@ class MinecraftPlugin(BasePlugin):
             self.logger.error("收到 MaiCore 响应，但 MineLand 环境未初始化。忽略消息。")
             return
 
-        if message.message_segment.type != "text":
+        if message.message_segment.type not in ["text", "seglist"]:
             self.logger.warning(
-                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'。丢弃消息。"
+                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'或'seglist'。丢弃消息。"
             )
             return
 
-        message_json_str = message.message_segment.data.strip()
-        self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
+        if message.message_segment.type == "seglist":
+            # 取出其中的text类型消息
+            for seg in message.message_segment.data:
+                if seg.type == "text":
+                    message_json_str = seg.data.strip()
+                    self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
+                    break
+            else:
+                self.logger.warning("从 MaiCore 收到seglist消息，但其中没有text类型消息。丢弃消息。")
+                return
+        elif message.message_segment.type == "text":
+            message_json_str = message.message_segment.data.strip()
+            self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
 
         try:
             # 执行动作（包括等待完成、状态更新等）

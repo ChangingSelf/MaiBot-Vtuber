@@ -325,7 +325,7 @@ class AmaidesuCore:
             try:
                 message_dict_for_log = processed_message.to_dict()
                 self.logger.debug(
-                    f"发送给 Router 的消息内容: {str(message_dict_for_log)}..."
+                    f"发送给 Router 的消息内容: {str(message_dict_for_log)}"[:100]
                 )  # Log partial dict string
             except Exception as log_err:
                 self.logger.error(f"在记录消息日志时出错: {log_err}")  # Log error during logging itself

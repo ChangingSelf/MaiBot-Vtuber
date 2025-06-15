@@ -45,7 +45,7 @@ class MinecraftMessageBuilder:
             type="seglist",
             data=[
                 Seg(type="text", data=message_text),
-                Seg(type="image", data=game_state.current_obs.rgb_base64),
+                # Seg(type="image", data=game_state.current_obs.rgb_base64),
             ],
         )
 
