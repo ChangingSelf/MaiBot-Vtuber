@@ -70,12 +70,6 @@ class MockDanmakuPlugin(BasePlugin):
         # self.config = load_plugin_config("mock_danmaku")  # 加载 [mock_danmaku] 部分
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
 
-        self.enabled = self.config.get("enabled", False)  # 如果未指定，默认为 False
-
-        if not self.enabled:
-            self.logger.warning("模拟弹幕插件已在配置中禁用。")  # 此处 logger 已是 self.logger
-            return
-
         # --- 配置值 ---
         # 日志文件名，从配置中读取，默认为 msg_default.jsonl
         # 我们只关心文件名，路径固定在插件目录下的 data/ 子目录中
@@ -125,15 +119,12 @@ class MockDanmakuPlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            return
 
         # --- 加载消息 ---
         await self._load_message_lines()
 
         if not self._message_lines:
             self.logger.warning(f"未从 '{self.log_file_path}' 加载任何消息。插件将不会发送任何内容。")
-            self.enabled = False  # 如果没有消息则禁用
             return
 
         # --- 启动发送任务 (如果已配置) ---
@@ -264,20 +255,14 @@ class MockDanmakuPlugin(BasePlugin):
             self.logger.error(f"字典转换为 MessageBase 时缺少键: {e}. 行内容: {line[:100]}...", exc_info=True)
             self.logger.error(traceback.format_exc())
             return None
-        except Exception as e:
-            # 捕获 MessageBase 重建期间可能未被 from_dict 处理的错误
-            self.logger.error(f"从字典创建 MessageBase 时出错: {e}. 行内容: {line[:100]}...", exc_info=True)
-            # 打印反序列化逻辑中意外错误的 traceback
-            self.logger.error(traceback.format_exc())
+        except Exception:
+            # 捕获任何其他反序列化错误
+            self.logger.error(f"从字典创建 MessageBase 时出错: {line[:100]}...", exc_info=True)
             return None
 
-    # --- 潜在的控制方法 (可选) ---
-    # 如果需要，可以通过核心命令添加方法来启动/停止/重新加载消息
+    # --- 公共控制方法 ---
     async def start_mocking(self):
         """公共方法，用于在未运行时启动消息发送。"""
-        if not self.enabled:
-            self.logger.warning("插件已禁用，无法启动模拟。")
-            return
         if self._task and not self._task.done():
             self.logger.info("模拟已在运行。")
             return
@@ -289,16 +274,16 @@ class MockDanmakuPlugin(BasePlugin):
         self._start_sending_task()
 
     async def stop_mocking(self):
-        """公共方法，用于停止发送消息。"""
+        """公共方法，用于停止正在运行的消息发送任务。"""
         if not self._task or self._task.done():
-            self.logger.info("模拟当前未运行。")
+            self.logger.info("模拟当前未运行，无需停止。")
             return
         self.logger.info("正在停止模拟弹幕发送...")
         self._stop_event.set()
-        # 任务的清理逻辑在 _run_sending_loop 和 cleanup 中处理
+        # The task will see the event and stop. Cleanup happens in the loop.
 
     async def reload_messages(self):
-        """公共方法，用于从文件重新加载消息。"""
+        """公共方法，用于重新加载消息文件。"""
         self.logger.info(f"正在从 {self.log_file_path.name} 重新加载消息...")
         was_running = self._task and not self._task.done()
         if was_running:

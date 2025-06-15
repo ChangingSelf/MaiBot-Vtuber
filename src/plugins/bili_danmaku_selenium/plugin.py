@@ -117,88 +117,61 @@ class MessageCacheService:
 class BiliDanmakuSeleniumPlugin(BasePlugin):
     """Bilibili 直播弹幕插件（Selenium版），使用浏览器直接获取弹幕和礼物。"""
 
-    def __init__(self, core: AmaidesuCore, config: Dict[str, Any]):
-        super().__init__(core, config)
-        
-        # --- 显式加载自己目录下的 config.toml ---
-        self.config = self.plugin_config
-        self.enabled = self.config.get("enabled", True)
+    def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
+        super().__init__(core, plugin_config)
         
         # --- 依赖检查 ---
         if webdriver is None:
             self.logger.error(
                 "selenium library not found. Please install it (`pip install selenium`). BiliDanmakuSeleniumPlugin disabled."
             )
-            self.enabled = False
-            return
-
-        if not self.enabled:
-            self.logger.warning("BiliDanmakuSeleniumPlugin is disabled in the configuration.")
             return
 
         # --- 基本配置 ---
-        self.room_id = self.config.get("room_id")
-        if not self.room_id or not isinstance(self.room_id, int) or self.room_id <= 0:
-            self.logger.error(f"Invalid or missing 'room_id' in config: {self.room_id}. Plugin disabled.")
-            self.enabled = False
+        self.room_id = self.plugin_config.get("room_id")
+        if not self.room_id:
+            self.logger.error(f"Required 'room_id' not found in config. Plugin disabled.")
             return
             
-        self.poll_interval = max(0.5, self.config.get("poll_interval", 1.0))
-        self.max_messages_per_check = max(1, self.config.get("max_messages_per_check", 10))
+        self.poll_interval = self.plugin_config.get("poll_interval", 1.0)
+        self.max_messages_per_check = self.plugin_config.get("max_messages_per_check", 10)
 
         # --- Selenium 配置 ---
-        self.headless = self.config.get("headless", True)
-        self.webdriver_timeout = self.config.get("webdriver_timeout", 30)
-        self.page_load_timeout = self.config.get("page_load_timeout", 30)
-        self.implicit_wait = self.config.get("implicit_wait", 10)
+        self.headless = self.plugin_config.get("headless", True)
+        self.webdriver_timeout = self.plugin_config.get("webdriver_timeout", 30)
+        self.page_load_timeout = self.plugin_config.get("page_load_timeout", 30)
+        self.implicit_wait = self.plugin_config.get("implicit_wait", 10)
         
         # --- 选择器配置 ---
-        self.danmaku_container_selector = self.config.get("danmaku_container_selector", "#chat-items")
-        self.danmaku_item_selector = self.config.get("danmaku_item_selector", ".chat-item.danmaku-item")
-        self.danmaku_text_selector = self.config.get("danmaku_text_selector", ".danmaku-item-right")
-        self.username_selector = self.config.get("username_selector", ".user-name")
-        self.gift_selector = self.config.get("gift_selector", ".gift-item")
-        self.gift_text_selector = self.config.get("gift_text_selector", ".gift-item-text")
+        self.danmaku_container_selector = self.plugin_config.get("danmaku_container_selector", "#chat-items")
+        self.danmaku_item_selector = self.plugin_config.get("danmaku_item_selector", ".chat-item.danmaku-item")
+        self.danmaku_text_selector = self.plugin_config.get("danmaku_text_selector", ".danmaku-item-right")
+        self.username_selector = self.plugin_config.get("username_selector", ".user-name")
+        self.gift_selector = self.plugin_config.get("gift_selector", ".gift-item")
+        self.gift_text_selector = self.plugin_config.get("gift_text_selector", ".gift-item-text")
 
         # --- Prompt Context Tags ---
-        self.context_tags: Optional[List[str]] = self.config.get("context_tags")
-        if not isinstance(self.context_tags, list):
-            if self.context_tags is not None:
-                self.logger.warning(
-                    f"Config 'context_tags' is not a list ({type(self.context_tags)}), will fetch all context."
-                )
-            self.context_tags = None
-        elif not self.context_tags:
-            self.logger.info("'context_tags' is empty, will fetch all context.")
-            self.context_tags = None
-        else:
-            self.logger.info(f"Will fetch context with tags: {self.context_tags}")
+        self.context_tags: Optional[List[str]] = self.plugin_config.get("context_tags")
 
         # --- Load Template Items ---
-        self.template_items = None
-        if self.config.get("enable_template_info", False):
-            self.template_items = self.config.get("template_items", {})
-            if not self.template_items:
-                self.logger.warning(
-                    "BiliDanmakuSelenium 配置启用了 template_info，但在 config.toml 中未找到 template_items。"
-                )
+        self.template_items = self.plugin_config.get("template_items") if self.plugin_config.get("enable_template_info") else None
 
         # --- 直播间URL ---
         self.live_url = f"https://live.bilibili.com/{self.room_id}"
         
         # --- 状态变量 ---
-        self.driver = None
-        self.monitoring_task = None
+        self.driver: Optional[webdriver.Chrome] = None
+        self.monitoring_task: Optional[asyncio.Task] = None
         self.stop_event = asyncio.Event()
         self.processed_messages: Set[str] = set()
         self.last_cleanup_time = time.time()
         
         # --- 初始化消息缓存服务 ---
-        cache_size = self.config.get("message_cache_size", 1000)
+        cache_size = self.plugin_config.get("message_cache_size", 1000)
         self.message_cache_service = MessageCacheService(max_cache_size=cache_size)
         
         # --- 添加退出机制相关属性 ---
-        self.shutdown_timeout = self.config.get('shutdown_timeout', 30)  # 30秒超时
+        self.shutdown_timeout = self.plugin_config.get('shutdown_timeout', 30)
         self.cleanup_lock = threading.Lock()
         self.is_shutting_down = False
         
@@ -256,8 +229,6 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            return
 
         try:
             # 注册消息缓存服务到 core
@@ -273,7 +244,6 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         except Exception as e:
             self.logger.error(f"设置 BiliDanmakuSeleniumPlugin 时发生错误: {e}", exc_info=True)
-            self.enabled = False
 
     async def cleanup(self):
         """清理资源"""
@@ -679,33 +649,33 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             return None
 
         # 用户ID生成
-        user_id = self.config.get("default_user_id", f"bili_{message.username}")
+        user_id = self.plugin_config.get("default_user_id", f"bili_{message.username}")
 
         # --- User Info ---
         user_info = UserInfo(
             platform=self.core.platform,
             user_id=str(user_id),
             user_nickname=message.username,
-            user_cardname=self.config.get("user_cardname", ""),
+            user_cardname=self.plugin_config.get("user_cardname", ""),
         )
 
         # --- Group Info (Conditional) ---
         group_info: Optional[GroupInfo] = None
-        if self.config.get("enable_group_info", False):
+        if self.plugin_config.get("enable_group_info", False):
             group_info = GroupInfo(
                 platform=self.core.platform,
-                group_id=self.config.get("group_id", self.room_id),
-                group_name=self.config.get("group_name", f"bili_{self.room_id}"),
+                group_id=self.plugin_config.get("group_id", self.room_id),
+                group_name=self.plugin_config.get("group_name", f"bili_{self.room_id}"),
             )
 
         # --- Format Info ---
         format_info = FormatInfo(
-            content_format=self.config.get("content_format", ["text"]),
-            accept_format=self.config.get("accept_format", ["text"]),
+            content_format=self.plugin_config.get("content_format", ["text"]),
+            accept_format=self.plugin_config.get("accept_format", ["text"]),
         )
 
         # --- Additional Config ---
-        additional_config = self.config.get("additional_config", {}).copy()
+        additional_config = self.plugin_config.get("additional_config", {}).copy()
         additional_config.update(
             {
                 "source": "bili_danmaku_selenium_plugin",
@@ -720,7 +690,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
 
         # --- Template Info (Conditional & Modification) ---
         final_template_info_value = None
-        if self.config.get("enable_template_info", False) and self.template_items:
+        if self.plugin_config.get("enable_template_info", False) and self.template_items:
             # 获取原始模板项 (创建副本)
             modified_template_items = (self.template_items or {}).copy()
 
@@ -745,7 +715,7 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
             # 使用修改后的模板项构建最终结构
             final_template_info_value = TemplateInfo(
                 template_items=modified_template_items,
-                template_name=self.config.get("template_name", f"bili_{self.room_id}"),
+                template_name=self.plugin_config.get("template_name", f"bili_{self.room_id}"),
                 template_default=False,
             )
 
