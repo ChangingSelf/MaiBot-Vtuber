@@ -128,19 +128,12 @@ class MinecraftPlugin(BasePlugin):
 
                 current_time = time.time()
                 if current_time - self._last_response_time > self.auto_send_interval:
+                    # 超时时间内未收到响应，刷新状态并重新发送
+                    await self.action_executor.execute_no_op()
+                    self.logger.info("超时时间内未收到响应，刷新状态并重新发送")
                     if self.game_state.is_ready_for_next_action():
-                        self.logger.info("未收到响应且已准备好，重新发送状态...")
+                        # 如果智能体准备好，则发送状态
                         await self._send_state_to_maicore()
-                    else:
-                        self.logger.info("未收到响应但智能体未准备好，执行no_op等待...")
-                        try:
-                            await self.action_executor.execute_no_op()
-                            self.logger.debug(
-                                f"自动发送循环中执行no_op完毕，当前步骤: {self.game_state.current_step_num}"
-                            )
-                        except Exception as e:
-                            self.logger.error(f"自动发送循环中执行no_op时出错: {e}")
-
             except asyncio.CancelledError:
                 self.logger.info("自动发送状态任务被取消")
                 break
