@@ -42,6 +42,8 @@
 
 Minecraft插件是AmaidesuCore生态系统的重要组成部分，它将[MineLand](https://github.com/cocacola-lab/MineLand/)模拟器无缝集成到系统中。通过该插件，AmaidesuCore可以控制在MineLand环境中运行的Minecraft智能体，实现智能对话机器人在虚拟世界中的自主操作。
 
+本项目对MineLand进行了扩展，添加了一些高级，代码在[MaiM-with-u/MineLand](https://github.com/MaiM-with-u/MineLand/tree/amaidesu)的amaidesu分支。如果不需要，则在提示中删除以下高级动作：followPlayer、swimToLand
+
 ## 架构设计
 
 ### 核心架构图
