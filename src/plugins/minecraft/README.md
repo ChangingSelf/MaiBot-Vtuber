@@ -5,6 +5,31 @@
 - [Minecraft 插件 for AmaidesuCore](#minecraft-插件-for-amaidesucore)
   - [目录](#目录)
   - [概述](#概述)
+  - [架构设计](#架构设计)
+    - [核心架构图](#核心架构图)
+    - [组件协作时序图](#组件协作时序图)
+    - [数据流向图](#数据流向图)
+  - [核心组件详解](#核心组件详解)
+    - [1. MinecraftGameState（游戏状态管理）](#1-minecraftgamestate游戏状态管理)
+    - [2. MinecraftActionExecutor（动作执行器）](#2-minecraftactionexecutor动作执行器)
+    - [3. MinecraftEventManager（事件管理）](#3-minecrafteventmanager事件管理)
+    - [4. MinecraftMessageBuilder（消息构建）](#4-minecraftmessagebuilder消息构建)
+  - [消息交互协议](#消息交互协议)
+    - [插件 → AmaidesuCore（状态同步）](#插件--amaidesucore状态同步)
+    - [AmaidesuCore → 插件（动作指令）](#amaidesucore--插件动作指令)
+  - [工作流程](#工作流程)
+    - [系统启动流程](#系统启动流程)
+    - [动作执行流程](#动作执行流程)
+  - [安装和使用](#安装和使用)
+    - [环境准备](#环境准备)
+    - [快速开始](#快速开始)
+  - [开发指南](#开发指南)
+    - [扩展新功能](#扩展新功能)
+    - [调试和监控](#调试和监控)
+    - [性能优化](#性能优化)
+  - [故障排除](#故障排除)
+    - [常见问题](#常见问题)
+    - [日志分析](#日志分析)
   - [核心功能](#核心功能)
   - [使用流程](#使用流程)
   - [与 AmaidesuCore 的消息交互](#与-amaidesucore-的消息交互)
@@ -15,9 +40,376 @@
 
 ## 概述
 
-本插件旨在将 [MineLand](https://github.com/cocacola-lab/MineLand/) 模拟器集成到 AmaidesuCore 中。它允许 AmaidesuCore 通过发送高级动作指令 (JavaScript 代码) 来控制在 MineLand 环境中运行的 Minecraft 智能体，并从模拟器接收详细的环境状态、观察数据、事件以及代码执行信息。插件经过重构，引入了更丰富的状态管理、目标跟踪和与 AmaidesuCore 的交互机制。
+Minecraft插件是AmaidesuCore生态系统的重要组成部分，它将[MineLand](https://github.com/cocacola-lab/MineLand/)模拟器无缝集成到系统中。通过该插件，AmaidesuCore可以控制在MineLand环境中运行的Minecraft智能体，实现智能对话机器人在虚拟世界中的自主操作。
 
-MineLand 是一个为研究大规模互动、有限多模态感知和物理需求的 AI 智能体而设计的多智能体 Minecraft 模拟器。本插件目前主要针对单智能体（名为 "Mai"）进行操作。
+本项目对MineLand进行了扩展，添加了一些高级，代码在[MaiM-with-u/MineLand](https://github.com/MaiM-with-u/MineLand/tree/amaidesu)的amaidesu分支。如果不需要，则在提示中删除以下高级动作：followPlayer、swimToLand
+
+## 架构设计
+
+### 核心架构图
+
+```mermaid
+graph TB
+    subgraph "AmaidesuCore"
+        AC[AmaidesuCore]
+        WS[WebSocket Handler]
+    end
+    
+    subgraph "Minecraft Plugin"
+        MP[MinecraftPlugin]
+        
+        subgraph "State Management"
+            GS[MinecraftGameState]
+            SA[StateAnalyzer]
+        end
+        
+        subgraph "Action System"
+            AE[MinecraftActionExecutor]
+        end
+        
+        subgraph "Event System"
+            EM[MinecraftEventManager]
+            EV[MinecraftEvent]
+        end
+        
+        subgraph "Message System"
+            MB[MinecraftMessageBuilder]
+            PM[MinecraftPromptManager]
+        end
+    end
+    
+    subgraph "MineLand Environment"
+        ML[MineLand]
+        MC[Minecraft Server]
+    end
+    
+    AC <--> WS
+    WS <--> MP
+    MP --> GS
+    MP --> AE
+    MP --> EM
+    MP --> MB
+    
+    GS --> SA
+    AE --> GS
+    AE --> EM
+    EM --> EV
+    MB --> PM
+    
+    AE <--> ML
+    ML <--> MC
+```
+
+### 组件协作时序图
+
+```mermaid
+sequenceDiagram
+    participant AC as AmaidesuCore
+    participant MP as MinecraftPlugin
+    participant GS as GameState
+    participant AE as ActionExecutor
+    participant EM as EventManager
+    participant MB as MessageBuilder
+    participant ML as MineLand
+    
+    Note over MP: 插件启动
+    MP->>ML: 连接MineLand环境
+    ML-->>MP: 初始化完成
+    MP->>GS: reset_state(initial_obs)
+    MP->>MB: build_state_message()
+    MB->>GS: get_status_analysis()
+    MB->>EM: get_events_text()
+    MB-->>MP: MessageBase
+    MP->>AC: send_to_maicore()
+    
+    Note over AC: AI分析状态
+    AC-->>MP: handle_maicore_response()
+    MP->>AE: execute_maicore_action()
+    
+    Note over AE: 等待动作完成
+    loop 等待动作完成
+        AE->>GS: is_ready_for_next_action()
+        alt 未准备好
+            AE->>ML: step(no_op)
+            ML-->>AE: 状态更新
+        end
+    end
+    
+    AE->>ML: step(action)
+    ML-->>AE: obs, code_info, event, done, task_info
+    AE->>GS: update_state()
+    AE->>EM: update_event_history()
+    
+    alt 任务完成
+        AE->>ML: reset()
+        ML-->>AE: 新的初始观察
+        AE->>GS: reset_state()
+    end
+    
+    MP->>MB: build_state_message()
+    MB-->>MP: 新状态消息
+    MP->>AC: send_to_maicore()
+```
+
+### 数据流向图
+
+```mermaid
+flowchart LR
+    subgraph "输入数据"
+        OBS[观察数据<br/>Observation]
+        CODE[代码信息<br/>CodeInfo]
+        EVENT[事件数据<br/>Event]
+        TASK[任务信息<br/>TaskInfo]
+    end
+    
+    subgraph "状态处理"
+        GS[GameState<br/>状态管理]
+        SA[StateAnalyzer<br/>状态分析]
+        EM[EventManager<br/>事件管理]
+    end
+    
+    subgraph "消息构建"
+        PM[PromptManager<br/>提示管理]
+        MB[MessageBuilder<br/>消息构建]
+    end
+    
+    subgraph "输出消息"
+        TI[TemplateInfo<br/>模板信息]
+        MSG[MessageBase<br/>完整消息]
+    end
+    
+    OBS --> GS
+    CODE --> GS
+    EVENT --> GS
+    EVENT --> EM
+    TASK --> GS
+    
+    GS --> SA
+    SA --> PM
+    EM --> PM
+    GS --> PM
+    
+    PM --> MB
+    MB --> TI
+    TI --> MSG
+```
+
+## 核心组件详解
+
+### 1. MinecraftGameState（游戏状态管理）
+
+负责维护和管理Minecraft世界的完整状态信息：
+
+- **状态数据**：观察数据、代码执行信息、事件、任务完成状态
+- **目标管理**：当前目标、目标历史、计划和进度跟踪
+- **状态分析**：通过StateAnalyzer提供智能状态解读
+- **缓存优化**：避免重复分析相同状态数据
+
+### 2. MinecraftActionExecutor（动作执行器）
+
+处理所有与MineLand的交互操作：
+
+- **动作解析**：解析来自AmaidesuCore的JSON指令
+- **动作执行**：在MineLand环境中执行高级JavaScript动作
+- **等待机制**：智能等待动作完成，必要时执行no_op操作
+- **环境重置**：在任务完成时自动重置环境
+
+### 3. MinecraftEventManager（事件管理）
+
+专门处理游戏事件的收集和管理：
+
+- **事件收集**：收集MineLand产生的各类事件
+- **去重处理**：避免重复事件影响AI决策
+- **历史管理**：维护有限长度的事件历史记录
+- **格式转换**：将MineLand事件转换为统一格式
+
+### 4. MinecraftMessageBuilder（消息构建）
+
+负责构建发送给AmaidesuCore的消息：
+
+- **模板构建**：通过PromptManager构建结构化提示模板
+- **消息封装**：将状态信息封装为MessageBase格式
+- **上下文整合**：整合状态分析、事件信息和目标进度
+
+## 消息交互协议
+
+### 插件 → AmaidesuCore（状态同步）
+
+```json
+{
+  "message_info": {
+    "template_info": {
+      "template_name": "Minecraft",
+      "template_items": {
+        "agent_info": "智能体基本信息",
+        "status_analysis": "详细状态分析",
+        "observations": "原始观察数据",
+        "events": "当前事件信息",
+        "code_infos": "代码执行状态",
+        "event_history": "事件历史记录",
+        "goal_context": "目标和计划信息"
+      }
+    }
+  },
+  "message_segment": {
+    "type": "text",
+    "data": "游戏状态摘要和指导信息"
+  }
+}
+```
+
+### AmaidesuCore → 插件（动作指令）
+
+```json
+{
+  "actions": "bot.chat('Hello!'); bot.collectBlock('oak_log');",
+  "goal": "收集10个橡木原木",
+  "plan": ["找到橡树", "砍伐橡树", "收集原木"],
+  "step": "砍伐橡树获得原木",
+  "targetValue": 10,
+  "currentValue": 3
+}
+```
+
+## 工作流程
+
+### 系统启动流程
+
+```mermaid
+flowchart TD
+    START[插件启动] --> INIT[初始化配置]
+    INIT --> CONNECT[连接MineLand]
+    CONNECT --> RESET[重置环境]
+    RESET --> STATE[初始化状态]
+    STATE --> SEND[发送初始状态]
+    SEND --> LOOP[启动自动发送循环]
+    LOOP --> READY[等待AI响应]
+```
+
+### 动作执行流程
+
+```mermaid
+flowchart TD
+    RECEIVE[接收AI指令] --> PARSE[解析JSON数据]
+    PARSE --> CHECK{检查动作状态}
+    CHECK -->|未准备好| WAIT[等待动作完成]
+    WAIT --> NOOP[执行no_op]
+    NOOP --> CHECK
+    CHECK -->|已准备好| UPDATE[更新目标计划]
+    UPDATE --> EXECUTE[执行动作]
+    EXECUTE --> RESPONSE[获取环境响应]
+    RESPONSE --> STATE_UPDATE[更新状态]
+    STATE_UPDATE --> EVENT_UPDATE[更新事件历史]
+    EVENT_UPDATE --> DONE{任务完成?}
+    DONE -->|是| RESET_ENV[重置环境]
+    DONE -->|否| SEND_STATE[发送新状态]
+    RESET_ENV --> SEND_STATE
+    SEND_STATE --> END[等待下次响应]
+```
+
+## 安装和使用
+
+### 环境准备
+
+1. **启动Minecraft服务器**
+   ```bash
+   # 单人游戏开启局域网联机，或准备独立服务器
+   ```
+
+2. **安装MineLand**
+   ```bash
+   git clone https://github.com/cocacola-lab/MineLand
+   cd MineLand
+   pip install -e .
+   ```
+
+3. **配置插件**
+   - 复制 `config-template.toml` 为 `config.toml`
+   - 配置服务器地址和端口
+   - 设置智能体参数
+
+### 快速开始
+
+```bash
+# 在项目根目录启动
+python main.py
+```
+
+插件将自动：
+1. 连接到MineLand环境
+2. 初始化游戏状态
+3. 开始与AmaidesuCore的交互循环
+
+## 开发指南
+
+### 扩展新功能
+
+1. **添加新的状态分析器**
+   ```python
+   # 在 state/state_analyzers.py 中添加新的分析方法
+   def analyze_custom_feature(self) -> List[str]:
+       # 实现自定义分析逻辑
+       pass
+   ```
+
+2. **扩展事件处理**
+   ```python
+   # 在 events/event_manager.py 中添加新的事件处理逻辑
+   def handle_custom_event(self, event: MinecraftEvent):
+       # 实现自定义事件处理
+       pass
+   ```
+
+3. **自定义消息模板**
+   ```python
+   # 在 message/prompt_templates.py 中添加新的提示模板
+   CUSTOM_TEMPLATE = """
+   自定义提示内容
+   """
+   ```
+
+### 调试和监控
+
+插件提供详细的日志记录：
+- 状态更新日志
+- 动作执行日志
+- 错误和异常日志
+- 性能监控信息
+
+### 性能优化
+
+- **状态分析缓存**：避免重复分析相同状态
+- **事件历史限制**：控制内存使用
+- **异步处理**：提高响应性能
+- **智能等待**：优化动作执行时机
+
+## 故障排除
+
+### 常见问题
+
+1. **连接MineLand失败**
+   - 检查服务器地址和端口配置
+   - 确认MineLand服务正常运行
+
+2. **动作执行超时**
+   - 调整 `max_wait_cycles` 参数
+   - 检查JavaScript代码语法
+
+3. **状态分析错误**
+   - 检查观察数据完整性
+   - 查看StateAnalyzer配置
+
+### 日志分析
+
+插件使用结构化日志记录，关键信息包括：
+- `[INFO]` 正常运行状态
+- `[WARNING]` 潜在问题提醒
+- `[ERROR]` 错误和异常
+- `[DEBUG]` 详细调试信息
+
+---
+
+**注意**：本插件专为单智能体环境设计，如需多智能体支持，请参考相关扩展文档。
 
 ## 核心功能
 

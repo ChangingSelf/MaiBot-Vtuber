@@ -52,7 +52,6 @@ class EmotionJudgePlugin(BasePlugin):
         # loaded_config = load_plugin_config()
         # self.config = loaded_config.get("emotion_judge", {})
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
-        self.enabled = self.config.get("enabled", True)
         self.model = self.config.get("model", {})
         self.base_url = self.config.get("base_url", "https://api.siliconflow.cn/v1/")
         self.api_key = self.config.get("api_key", "")
@@ -67,9 +66,6 @@ class EmotionJudgePlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            self.logger.warning("EmotionJudgePlugin setup skipped (disabled).")
-            return
 
         self.core.register_websocket_handler("*", self.handle_maicore_message)
 
@@ -130,8 +126,8 @@ class EmotionJudgePlugin(BasePlugin):
     async def _judge_and_trigger(self, text: str) -> Optional[str]:
         """使用 LLM 判断文本的情感。"""
         self.logger.info(f"开始情感判断: '{text[:50]}...'")
-        if not self.enabled or not self.api_key:
-            self.logger.warning("EmotionJudgePlugin 未启用或缺少 API Key，跳过情感判断。")
+        if not self.api_key:
+            self.logger.warning("EmotionJudgePlugin 缺少 API Key，跳过情感判断。")
             return None
 
         hotkey_list = await self._get_hotkey_list()

@@ -5,7 +5,7 @@
       "name": "MaiMai0",
       "rgb_height": 0,
       "rgb_width": 0,
-      "rgb_base64": "",
+      "rgb_base64": "在headless=false的情况下，才会返回rgb_base64",
       "rgb": [[], [], []],
       "equipment": {
         "name": ["oak_log", "air", "air", "air", "air", "air"],
@@ -432,7 +432,14 @@
           "tick": 21924
         }
       ],
-      "target_entities": [],
+      "target_entities": [
+        {
+          "name": "千石可乐",
+          "kind": "cow",
+          "health": 10,
+          "position": [553.9150318988038, 63, -361.75018531637977]
+        }
+      ],
       "sound": "placeholder"
     }
   ],

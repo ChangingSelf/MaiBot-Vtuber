@@ -53,12 +53,20 @@ default_priority = 100    # 默认优先级值
 # priority = 300
 # time_window = 10.0 # 覆盖 similar_message_filter/config.toml 中的 time_window
 
+# 示例：启用并配置 command_processor 管道 (入站)
+[pipelines.command_processor]
+# 这是一个入站管道，用于处理和执行来自 MaiCore 消息中的命令
+# 例如，执行 VTubeStudio 热键，然后从文本中移除命令标记
+priority = 50 
+# direction = "inbound" # 此管道的 direction 已在其自己的 config 中设置，此处无需重复
+# 可以在此覆盖 command_map
+# command_map = { vts_trigger_hotkey = { service = "vts_control", method = "trigger_hotkey" } }
+
 # 插件全局配置
 [plugins]
 enable_console_input = true
 enable_tts = true
 enable_stt = true
-enable_llm_text_precessor = true
 enable_vtube_studio = false
 enable_bili_danmaku = false
 enable_subtitle = true
@@ -71,3 +79,9 @@ enable_gptsovits_tts = false
 enable_mock_danmaku = false
 enable_minecraft = true
 enable_bili_danmaku_selenium = false
+enable_bili_danmaku_official = false # 请不要和 bili_danmaku_selenium 同时启用
+
+enable_arknights = true
+enable_dg_lab_service = true
+enable_keyword_action = true
+enable_llm_text_processor = true

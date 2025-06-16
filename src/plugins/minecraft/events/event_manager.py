@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Any, Dict
 import time
 from .event import MinecraftEvent
 
@@ -6,9 +6,23 @@ from .event import MinecraftEvent
 class MinecraftEventManager:
     """Minecraft事件管理器"""
 
-    def __init__(self, max_event_history: int = 20):
-        self.event_history: List[MinecraftEvent] = []
+    def __init__(self, max_event_history: int = 20, config: Dict[str, Any] = None):
         self.max_event_history = max_event_history
+        self.event_history: List[MinecraftEvent] = []
+
+        # 从配置中读取参数
+        self.config = config or {}
+        event_manager_config = self.config.get("event_manager", {})
+
+        # 配置化的阈值参数
+        self.duplicate_event_time_window = event_manager_config.get("duplicate_event_time_window", 2.0)
+        self.recent_events_range = event_manager_config.get("recent_events_range", 5)
+        self.chat_similarity_time_window = event_manager_config.get("chat_similarity_time_window", 10.0)
+        self.short_message_threshold = event_manager_config.get("short_message_threshold", 10)
+        self.long_message_threshold = event_manager_config.get("long_message_threshold", 15)
+        self.similarity_threshold = event_manager_config.get("similarity_threshold", 0.7)
+
+        self.ignore_event_types = event_manager_config.get("ignore_event_types", ["blockIsBeingBroken"])
 
     def update_event_history(self, agent_events: List[MinecraftEvent], current_step_num: int):
         """更新事件历史记录，去重并保留最近的记录"""
@@ -47,11 +61,15 @@ class MinecraftEventManager:
             return False
 
         # 检查最近几条事件是否有完全相同的内容
-        recent_events = self.event_history[-5:]
+        recent_events = self.event_history[-self.recent_events_range :]
         for recent_event in recent_events:
             # 只有在短时间内且内容完全相同时才认为是重复
             time_diff = current_timestamp - getattr(recent_event, "timestamp", 0)
-            if time_diff <= 2.0 and recent_event.type == event.type and recent_event.message == event.message:
+            if (
+                time_diff <= self.duplicate_event_time_window
+                and recent_event.type == event.type
+                and recent_event.message == event.message
+            ):
                 return True
 
             # 对于聊天消息，进行相似度检测
@@ -64,13 +82,13 @@ class MinecraftEventManager:
         self, current_event: MinecraftEvent, recent_event: MinecraftEvent, time_diff: float
     ) -> bool:
         """检查聊天事件是否相似"""
-        if current_event.type != "chat" or recent_event.type != "chat" or time_diff > 10.0:
+        if current_event.type != "chat" or recent_event.type != "chat" or time_diff > self.chat_similarity_time_window:
             return False
 
         current_msg = current_event.message
         recent_msg = recent_event.message
 
-        if len(current_msg) <= 10 or len(recent_msg) <= 10:
+        if len(current_msg) <= self.short_message_threshold or len(recent_msg) <= self.short_message_threshold:
             return False
 
         # 提取实际聊天内容
@@ -78,12 +96,12 @@ class MinecraftEventManager:
         recent_content = self._extract_chat_content(recent_msg)
         # 检查内容相似性
         return (
-            len(current_content) > 15
-            and len(recent_content) > 15
+            len(current_content) > self.long_message_threshold
+            and len(recent_content) > self.long_message_threshold
             and (
                 current_content in recent_content
                 or recent_content in current_content
-                or self._calculate_similarity(current_content, recent_content) > 0.7
+                or self._calculate_similarity(current_content, recent_content) > self.similarity_threshold
             )
         )
 
@@ -109,10 +127,15 @@ class MinecraftEventManager:
         common_chars = sum(min(text1.count(char), text2.count(char)) for char in set(text1))
         return common_chars / max_len
 
-    def get_recent_events_text(self, agent_name: str = "Mai", max_count: int = 10) -> List[str]:
+    def get_recent_events_text(self, agent_name: str = "Mai", max_count: int = None) -> List[str]:
         """获取最近事件的文本描述"""
         if not self.event_history:
             return []
+
+        # 如果没有提供max_count，则使用配置中的值
+        if max_count is None:
+            prompt_config = self.config.get("prompt", {})
+            max_count = prompt_config.get("max_event_display_count", 10)
 
         recent_events = self.event_history[-max_count:]
         event_messages = []
@@ -130,6 +153,8 @@ class MinecraftEventManager:
         if current_events:
             for event in current_events:
                 if hasattr(event, "type") and hasattr(event, "message"):
-                    clean_message = event.message.replace(agent_name, "你")
+                    clean_message = event.message.replace(f"<{agent_name}>", "<你>")
+                    if event.type in self.ignore_event_types:
+                        continue
                     event_messages.append(f"[{event.type}] {clean_message}")
         return event_messages

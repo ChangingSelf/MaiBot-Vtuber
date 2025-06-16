@@ -43,7 +43,6 @@ class FunASRPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.config = self.plugin_config
-        self.enabled = True
 
         # --- Control Flow ---
         self._stt_task: Optional[asyncio.Task] = None
@@ -52,7 +51,6 @@ class FunASRPlugin(BasePlugin):
         # --- Basic Dependency Check ---
         if sd is None or aiohttp is None or tomllib is None:
             self.logger.error("缺少核心依赖 (sounddevice, aiohttp, toml)，插件禁用。")
-            self.enabled = False
             return
 
         # --- Load Config Sections ---
@@ -64,8 +62,7 @@ class FunASRPlugin(BasePlugin):
 
         # --- API Config Check ---
         if not all(self.funasr_config.get(k) for k in ["url"]):
-            self.logger.error("FunASR API 配置不完整 (url, token)，插件禁用。")
-            self.enabled = False
+            self.logger.error("FunASR API 配置不完整 (url)，插件禁用。")
             return
 
         # --- Audio Config ---
@@ -131,9 +128,6 @@ class FunASRPlugin(BasePlugin):
     async def setup(self):
         """启动 STT 监听任务。"""
         await super().setup()
-        if not self.enabled:
-            self.logger.warning("插件未启用或初始化失败，不启动监听任务。")
-            return
 
         self.logger.info(
             "启动 FunASR 音频监听和处理任务..."

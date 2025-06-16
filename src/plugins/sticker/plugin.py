@@ -28,7 +28,6 @@ class StickerPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.config = self.plugin_config
-        self.enabled = self.config.get("enabled", True)
         # 添加表情贴纸配置
         self.sticker_size = self.config.get("sticker_size", 0.33)
         self.sticker_rotation = self.config.get("sticker_rotation", 90)
@@ -81,9 +80,6 @@ class StickerPlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled:
-            self.logger.warning("表情贴纸插件设置跳过（已禁用）")
-            return
 
         self.core.register_websocket_handler("emoji", self.handle_maicore_message)
 

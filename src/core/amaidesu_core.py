@@ -297,96 +297,110 @@ class AmaidesuCore:
 
     async def send_to_maicore(self, message: MessageBase):
         """
-        向 MaiCore 发送 MessageBase 消息。
-        消息将首先通过所有注册的管道处理，再发送到 MaiCore。
+        将消息发送到 MaiCore，在发送前会通过出站管道处理。
 
         Args:
-            message: 要发送的 MessageBase 对象。
+            message: 要发送的消息对象
         """
-        if not self._is_connected or not self._router:
-            self.logger.warning(f"核心未连接，无法发送消息: {message.message_info.message_id}")
-            # 可以考虑将消息放入待发队列
+        if not self._router:
+            self.logger.error("Router 未初始化，无法发送消息。")
+            return
+        if not self._is_connected:
+            self.logger.warning("核心未连接，消息无法发送。")
             return
 
+        # --- 通过管道处理消息 ---
         self.logger.debug(f"准备向 MaiCore 发送消息: {message.message_info.message_id}")
-
-        # 如果有管道管理器，通过管道处理消息
-        processed_message = message
-        if self._pipeline_manager is not None:
-            processed_message = await self._pipeline_manager.process_message(message)
-            if processed_message is None:
-                self.logger.info(f"消息 {message.message_info.message_id} 被管道拦截，不会发送到 MaiCore")
-                return
-        else:
-            self.logger.debug("管道管理器未配置，跳过管道处理")
-
-        try:
-            # Add debug log for the message content just before sending via router
+        message_to_send = message
+        if self._pipeline_manager:
             try:
-                message_dict_for_log = processed_message.to_dict()
-                self.logger.debug(
-                    f"发送给 Router 的消息内容: {str(message_dict_for_log)}..."
-                )  # Log partial dict string
-            except Exception as log_err:
-                self.logger.error(f"在记录消息日志时出错: {log_err}")  # Log error during logging itself
-                self.logger.debug(f"发送给 Router 的消息对象 (repr): {repr(processed_message)}")  # Fallback to repr
+                # 使用出站管道处理
+                processed_message = await self._pipeline_manager.process_outbound_message(message)
+                if processed_message is None:
+                    self.logger.info(f"消息 {message.message_info.message_id} 已被出站管道丢弃，将不会发送。")
+                    return  # 消息被管道丢弃
+                message_to_send = processed_message
+            except Exception as e:
+                self.logger.error(f"处理出站管道时发生错误: {e}", exc_info=True)
+                # 出现错误时，可以选择是发送原始消息还是阻止发送
+                # 当前策略: 阻止发送以避免意外行为
+                # 设计决策：对于出站消息（例如，即将被TTS朗读的文本），如果处理管道
+                # （如内容审查、格式化）失败，发送原始消息可能导致问题（例如，读出
+                # 未经处理的标签）。因此，更安全的做法是直接阻止消息发送。
+                self.logger.warning("由于出站管道错误，消息将不会被发送。")
+                return
 
-            await self._router.send_message(processed_message)
-            self.logger.info(
-                f"消息已发送: {processed_message.message_info.message_id} (Type: {processed_message.message_segment.type if processed_message.message_segment else 'N/A'})"
-            )
+        # --- 发送消息 ---
+        try:
+            # 确保 message_to_send 是有效的 MessageBase 对象
+            if isinstance(message_to_send, MessageBase):
+                self.logger.debug(f"准备通过 Router 发送消息: {message_to_send.message_info.message_id}")
+                await self._router.send_message(message_to_send)
+                self.logger.info(f"消息 {message_to_send.message_info.message_id} 已发送至 MaiCore。")
+            else:
+                self.logger.error(f"管道处理后返回了无效类型 {type(message_to_send)}，期望是 MessageBase。消息未发送。")
         except Exception as e:
-            self.logger.error(f"发送消息到 MaiCore 时出错: {e}", exc_info=True)
-            # 发送失败处理，例如重试或通知插件
+            self.logger.error(f"发送消息到 MaiCore 时发生错误: {e}", exc_info=True)
 
     async def _handle_maicore_message(self, message_data: Dict[str, Any]):
         """
-        内部方法，处理从 MaiCore WebSocket 收到的原始消息。
-        负责解析消息并将其分发给已注册的处理器。
-
-        Args:
-            message_data: 从 Router 收到的原始消息字典。
+        处理从 MaiCore 接收到的消息，先通过入站管道，再分发给插件。
         """
-        self.logger.debug(f"收到来自 MaiCore 的原始数据: {str(message_data)[:200]}...")
         try:
-            message_base = MessageBase.from_dict(message_data)
-            self.logger.info(
-                f"收到并解析消息: {message_base.message_info.message_id} (Type: {message_base.message_segment.type if message_base.message_segment else 'N/A'})"
-            )
-
-            # --- 消息分发逻辑 ---
-            # 这里需要确定如何根据消息内容决定分发给哪些处理器
-            # 可以根据 message_segment.type, message_info.additional_config 中的字段等
-            # 示例：根据 segment 类型分发
-            dispatch_key = "default"  # 默认分发键
-            if message_base.message_segment:
-                dispatch_key = message_base.message_segment.type  # 使用 segment 类型作为分发键
-
-            # 查找并调用处理器
-            if dispatch_key in self._message_handlers:
-                handlers = self._message_handlers[dispatch_key]
-                self.logger.info(
-                    f"为消息 {message_base.message_info.message_id} 找到 {len(handlers)} 个 '{dispatch_key}' 处理器"
-                )
-                # 并发执行所有匹配的处理器
-                tasks = [asyncio.create_task(handler(message_base)) for handler in handlers]
-                await asyncio.gather(*tasks, return_exceptions=True)  # return_exceptions=True 方便调试
-            else:
-                self.logger.info(
-                    f"没有找到适用于消息类型 '{dispatch_key}' 的处理器: {message_base.message_info.message_id}"
-                )
-
-            # 也可以有一个处理所有消息的 "通配符" 处理器列表
-            if "*" in self._message_handlers:
-                wildcard_handlers = self._message_handlers["*"]
-                self.logger.info(
-                    f"为消息 {message_base.message_info.message_id} 找到 {len(wildcard_handlers)} 个通配符处理器"
-                )
-                tasks = [asyncio.create_task(handler(message_base)) for handler in wildcard_handlers]
-                await asyncio.gather(*tasks, return_exceptions=True)
-
+            # 从字典构建 MessageBase 对象
+            message = MessageBase.from_dict(message_data)
         except Exception as e:
-            self.logger.error(f"处理 MaiCore 消息时发生错误: {e}", exc_info=True)
+            self.logger.error(f"从 MaiCore 接收到的消息无法解析为 MessageBase 对象: {e}", exc_info=True)
+            self.logger.debug(f"原始消息数据: {message_data}")
+            return
+
+        # --- 通过入站管道处理消息 ---
+        message_to_broadcast = message
+        if self._pipeline_manager:
+            try:
+                processed_message = await self._pipeline_manager.process_inbound_message(message)
+                if processed_message is None:
+                    self.logger.info(f"消息 {message.message_info.message_id} 已被入站管道丢弃，将不会分发给插件。")
+                    return  # 消息被管道丢弃
+                message_to_broadcast = processed_message
+            except Exception as e:
+                self.logger.error(f"处理入站管道时发生错误: {e}", exc_info=True)
+                # 错误策略：继续分发原始消息
+                # 设计决策：对于入站消息（通常包含来自LLM的指令），如果处理管道
+                # （如CommandProcessor）失败，完全丢弃消息可能会丢失重要的非指令性
+                # 文本内容。回退到原始消息可以确保其他不依赖此管道的插件（如字幕插件）
+                # 仍然能收到完整的原始文本。
+                self.logger.warning("由于入站管道错误，将尝试分发原始消息给插件。")
+                message_to_broadcast = message  # Fallback to original message
+
+        # --- 分发给插件处理器 ---
+        # 确定分发键 (例如, 消息段类型)
+        dispatch_key = "*"  # 通配符，默认所有消息都发送给通配符处理器
+        specific_key = None
+        if message_to_broadcast.message_segment and message_to_broadcast.message_segment.type:
+            specific_key = message_to_broadcast.message_segment.type
+
+        # 获取所有相关处理器 (通配符 + 特定类型)
+        handlers_to_call = self._message_handlers.get(dispatch_key, [])
+        if specific_key and specific_key != dispatch_key:
+            handlers_to_call = handlers_to_call + self._message_handlers.get(specific_key, [])
+
+        if not handlers_to_call:
+            self.logger.debug(f"没有找到消息类型为 '{specific_key or 'N/A'}' 的处理器。")
+            return
+
+        self.logger.info(
+            f"将消息 {message_to_broadcast.message_info.message_id} 分发给 {len(handlers_to_call)} 个处理器..."
+        )
+
+        # 并发执行所有处理器
+        tasks = [handler(message_to_broadcast) for handler in handlers_to_call]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            # gather 会自动处理异常，我们可以在这里添加日志记录
+            # for i, task in enumerate(results):
+            #     if isinstance(task, Exception):
+            #         self.logger.error(f"Handler {handlers_to_call[i].__name__} failed: {task}", exc_info=task)
 
     def register_websocket_handler(self, message_type_or_key: str, handler: Callable[[MessageBase], asyncio.Task]):
         """

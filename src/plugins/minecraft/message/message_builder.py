@@ -2,19 +2,23 @@ import time
 from typing import Dict, List
 
 from maim_message import MessageBase, TemplateInfo, UserInfo, GroupInfo, FormatInfo, BaseMessageInfo, Seg
-from .prompt_builder import build_state_analysis, build_prompt
+from .prompt_manager import MinecraftPromptManager
 from ..state.game_state import MinecraftGameState
 from ..events.event_manager import MinecraftEventManager
+from src.utils.logger import get_logger
 
 
 class MinecraftMessageBuilder:
     """Minecraft消息构建器"""
 
-    def __init__(self, platform: str, user_id: str, nickname: str, group_id: str = None):
+    def __init__(self, platform: str, user_id: str, nickname: str, group_id: str = None, config: dict = None):
         self.platform = platform
         self.user_id = user_id
         self.nickname = nickname
         self.group_id = group_id
+        # 传递提示词相关配置给prompt_manager
+        self.prompt_manager = MinecraftPromptManager(config)
+        self.logger = get_logger("MinecraftPlugin")
 
     def build_state_message(
         self, game_state: MinecraftGameState, event_manager: MinecraftEventManager, agents_config: List[Dict[str, str]]
@@ -24,14 +28,9 @@ class MinecraftMessageBuilder:
         if not game_state.current_obs:
             raise ValueError("当前没有可用的观察数据，无法构建状态")
 
-        # 分析当前游戏状态（单智能体）
-        agent_obs = game_state.current_obs
-        agent_event = game_state.current_event
+        # 使用GameState的状态分析方法
         agent_info = agents_config[0]
-
-        status_prompts = build_state_analysis(
-            agent_info, agent_obs, agent_event, [game_state.current_code_info] if game_state.current_code_info else []
-        )
+        status_prompts = game_state.get_status_analysis()
 
         # 构建消息基础信息
         message_info = self._build_message_info(game_state, event_manager, agent_info, status_prompts)
@@ -39,7 +38,16 @@ class MinecraftMessageBuilder:
         # 构建消息文本
         message_text = self._build_message_text(event_manager, game_state.current_event, agent_info["name"])
 
-        message_segment = Seg(type="text", data=message_text)
+        if not message_text:
+            return None
+
+        message_segment = Seg(
+            type="seglist",
+            data=[
+                Seg(type="text", data=message_text),
+                # Seg(type="image", data=game_state.current_obs.rgb_base64),
+            ],
+        )
 
         return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=message_text)
 
@@ -48,7 +56,7 @@ class MinecraftMessageBuilder:
         game_state: MinecraftGameState,
         event_manager: MinecraftEventManager,
         agent_info: Dict[str, str],
-        status_prompts: str,
+        status_prompts: List[str],
     ) -> BaseMessageInfo:
         """构建消息信息"""
         current_time = int(time.time())
@@ -63,10 +71,10 @@ class MinecraftMessageBuilder:
                 group_id=self.group_id,
             )
 
-        format_info = FormatInfo(content_format="text", accept_format="text")
+        format_info = FormatInfo(content_format=["text", "image"], accept_format=["text"])
 
         # 构建模板信息
-        template_items = build_prompt(
+        template_items = self.prompt_manager.build_prompt(
             agent_info=agent_info,
             status_prompts=status_prompts,
             obs=game_state.current_obs,
@@ -104,7 +112,7 @@ class MinecraftMessageBuilder:
         # 获取当前事件信息，如果当前事件为空，则使用事件历史的最新几条
         event_messages = event_manager.get_current_events_text(
             current_events, agent_name
-        ) or event_manager.get_recent_events_text(agent_name, max_count=10)
+        ) or event_manager.get_recent_events_text(agent_name)
 
         # 构建消息文本
         if event_messages:

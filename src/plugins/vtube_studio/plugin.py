@@ -55,7 +55,6 @@ class VTubeStudioPlugin(BasePlugin):
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.config = self.plugin_config
-        self.enabled = self.config.get("enabled", True)
 
         # --- pyvts 实例 ---
         self.vts: Optional[Any] = None  # 避免在 pyvts 未安装时的类型错误
@@ -70,11 +69,6 @@ class VTubeStudioPlugin(BasePlugin):
             self.logger.error(
                 "pyvts library not found. Please install it (`pip install pyvts`). VTubeStudioPlugin disabled."
             )
-            self.enabled = False
-            return
-
-        if not self.enabled:
-            self.logger.warning("VTubeStudioPlugin is disabled in the configuration.")
             return
 
         # --- 加载配置 ---
@@ -176,7 +170,6 @@ class VTubeStudioPlugin(BasePlugin):
             self.logger.info("pyvts instance created.")
         except Exception as e:
             self.logger.error(f"Failed to initialize pyvts: {e}", exc_info=True)
-            self.enabled = False
 
         # --- OpenAI LLM 检查 ---
         if self.llm_matching_enabled:
@@ -195,8 +188,8 @@ class VTubeStudioPlugin(BasePlugin):
 
     async def setup(self):
         await super().setup()
-        if not self.enabled or not self.vts:
-            self.logger.warning("VTubeStudioPlugin setup skipped (disabled or failed init).")
+        if not self.vts:
+            self.logger.warning("VTubeStudioPlugin setup skipped (failed init).")
             return
         # 注册处理函数，监听所有 WebSocket 消消息
         self.core.register_websocket_handler("*", self.handle_maicore_message)

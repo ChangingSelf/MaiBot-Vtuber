@@ -26,7 +26,11 @@ class MinecraftPlugin(BasePlugin):
         self.task_id: str = config.get("mineland_task_id", "playground")
         self.server_host: str = config.get("server_host", "127.0.0.1")
         self.server_port: int = config.get("server_port", 1746)
-        self.agents_config: List[Dict[str, str]] = [{"name": "Mai"}]
+
+        # 智能体配置（从配置文件读取）
+        self.agents_count: int = config.get("agents_count", 1)
+        self.agents_config: List[Dict[str, str]] = config.get("agents_config", [{"name": "Mai"}])
+
         self.headless: bool = config.get("mineland_headless", True)
         self.ticks_per_step: int = config.get("mineland_ticks_per_step", 20)
 
@@ -46,26 +50,35 @@ class MinecraftPlugin(BasePlugin):
         # MineLand实例
         self.mland: Optional[mineland.MineLand] = None
 
-        # 核心组件
-        self.game_state = MinecraftGameState()
-        self.event_manager = MinecraftEventManager(config.get("max_event_history", 20))
+        # 核心组件 - 使用配置文件中的参数
+        action_executor_config = config.get("action_executor", {})
+        event_manager_config = config.get("event_manager", {})
+        game_state_config = config.get("game_state", {})
+
+        self.game_state = MinecraftGameState(game_state_config)
+        self.event_manager = MinecraftEventManager(
+            event_manager_config.get("max_event_history", 20),
+            config,  # 传递完整配置
+        )
         self.action_executor = MinecraftActionExecutor(
             self.game_state,
             self.event_manager,
-            config.get("max_wait_cycles", 100),
-            config.get("wait_cycle_interval", 0.1),
+            max_wait_cycles=action_executor_config.get("max_wait_cycles", 100),
+            wait_cycle_interval=action_executor_config.get("wait_cycle_interval", 0.1),
+            config=config,  # 传递完整配置
         )
         self.message_builder = MinecraftMessageBuilder(
             platform=self.core.platform,
             user_id=config.get("user_id", "minecraft_bot"),
             nickname=config.get("nickname", "Minecraft Observer"),
             group_id=config.get("group_id"),
+            config=config.get("prompt", {}),
         )
 
     async def setup(self):
         """初始化插件"""
         await super().setup()
-        self.core.register_websocket_handler("text", self.handle_maicore_response)
+        self.core.register_websocket_handler("*", self.handle_maicore_response)
 
         self.logger.info("Minecraft 插件已加载，正在初始化 MineLand 环境...")
         try:
@@ -73,7 +86,7 @@ class MinecraftPlugin(BasePlugin):
             self.mland = mineland.MineLand(
                 server_host=self.server_host,
                 server_port=self.server_port,
-                agents_count=1,
+                agents_count=self.agents_count,
                 agents_config=self.agents_config,
                 headless=self.headless,
                 image_size=self.image_size,
@@ -115,19 +128,12 @@ class MinecraftPlugin(BasePlugin):
 
                 current_time = time.time()
                 if current_time - self._last_response_time > self.auto_send_interval:
+                    # 超时时间内未收到响应，刷新状态并重新发送
+                    await self.action_executor.execute_no_op()
+                    self.logger.info("超时时间内未收到响应，刷新状态并重新发送")
                     if self.game_state.is_ready_for_next_action():
-                        self.logger.info("未收到响应且已准备好，重新发送状态...")
+                        # 如果智能体准备好，则发送状态
                         await self._send_state_to_maicore()
-                    else:
-                        self.logger.info("未收到响应但智能体未准备好，执行no_op等待...")
-                        try:
-                            await self.action_executor.execute_no_op(self.logger)
-                            self.logger.debug(
-                                f"自动发送循环中执行no_op完毕，当前步骤: {self.game_state.current_step_num}"
-                            )
-                        except Exception as e:
-                            self.logger.error(f"自动发送循环中执行no_op时出错: {e}")
-
             except asyncio.CancelledError:
                 self.logger.info("自动发送状态任务被取消")
                 break
@@ -141,6 +147,11 @@ class MinecraftPlugin(BasePlugin):
             msg_to_maicore = self.message_builder.build_state_message(
                 self.game_state, self.event_manager, self.agents_config
             )
+
+            # 如果消息为空，则执行no_op
+            if not msg_to_maicore:
+                await self.action_executor.execute_no_op()
+                return
 
             await self.core.send_to_maicore(msg_to_maicore)
             self.logger.info(
@@ -161,18 +172,29 @@ class MinecraftPlugin(BasePlugin):
             self.logger.error("收到 MaiCore 响应，但 MineLand 环境未初始化。忽略消息。")
             return
 
-        if message.message_segment.type != "text":
+        if message.message_segment.type not in ["text", "seglist"]:
             self.logger.warning(
-                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'。丢弃消息。"
+                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'或'seglist'。丢弃消息。"
             )
             return
 
-        message_json_str = message.message_segment.data.strip()
-        self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
+        if message.message_segment.type == "seglist":
+            # 取出其中的text类型消息
+            for seg in message.message_segment.data:
+                if seg.type == "text":
+                    message_json_str = seg.data.strip()
+                    self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
+                    break
+            else:
+                self.logger.warning("从 MaiCore 收到seglist消息，但其中没有text类型消息。丢弃消息。")
+                return
+        elif message.message_segment.type == "text":
+            message_json_str = message.message_segment.data.strip()
+            self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
 
         try:
             # 执行动作（包括等待完成、状态更新等）
-            await self.action_executor.execute_maicore_action(message_json_str, self.logger)
+            await self.action_executor.execute_maicore_action(message_json_str)
 
             # 发送新的状态给 MaiCore
             await self._send_state_to_maicore()
