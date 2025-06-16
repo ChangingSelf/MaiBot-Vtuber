@@ -3,10 +3,10 @@
 智能体管理器 - 简化版本，负责智能体的注册、创建和切换
 """
 
-import logging
+from src.utils.logger import get_logger
 from typing import Dict, Any, Optional, Type, List
 
-from ..agents.base_agent import BaseAgent
+from .base_agent import BaseAgent
 
 
 class AgentManager:
@@ -16,7 +16,7 @@ class AgentManager:
         self._agents: Dict[str, Type[BaseAgent]] = {}
         self._current_agent: Optional[BaseAgent] = None
         self._agent_configs: Dict[str, Dict[str, Any]] = {}
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger("MinecraftPlugin")
 
     async def initialize(self, config: Dict[str, Any]) -> None:
         """初始化智能体管理器"""
@@ -36,7 +36,7 @@ class AgentManager:
     async def _register_builtin_agents(self):
         """注册内置智能体类型"""
         try:
-            from ..agents.simple_agent import SimpleAgent
+            from .simple_agent import SimpleAgent
 
             self._agents["simple"] = SimpleAgent
             self.logger.info("已注册简单智能体")
