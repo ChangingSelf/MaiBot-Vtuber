@@ -63,6 +63,11 @@ smoothing_factor = 0.3               # 平滑因子（0-1，越大越平滑）
 vowel_detection_sensitivity = 2.0    # 元音检测敏感度
 sample_rate = 32000                  # 音频采样率
 buffer_size = 1024                   # 缓冲区大小
+
+# 🆕 播放时间同步配置
+min_accumulation_duration = 0.1      # 最小累积时长（秒）
+max_accumulation_duration = 0.2      # 最大累积时长（秒）
+playback_sync_enabled = true         # 启用播放时间同步
 ```
 
 ### LLM 智能匹配配置
@@ -125,6 +130,16 @@ llm_temperature = 0.1
    - 检测音频音量并控制 `VoiceVolume` 参数
    - 分析元音特征并控制相应的元音参数
    - 在静音时设置 `VoiceSilence` 参数
+
+#### 🆕 播放时间同步控制
+
+插件现在支持基于**实际播放时间**控制口型，而不仅仅是音频数据长度：
+
+- **播放时间同步模式**：口型更新基于真实的音频播放时间
+- **智能累积策略**：同时考虑播放时间和音频数据时长
+- **精确会话管理**：精确控制口型同步的开始和结束
+
+详细信息请参考：[播放时间控制文档](PLAYBACK_TIMING.md)
 
 ### 手动控制表情
 

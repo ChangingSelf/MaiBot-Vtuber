@@ -227,7 +227,7 @@ class TTSPlugin(BasePlugin):
             return
 
         self.logger.debug(f"请求播放: '{text[:30]}...'")
-        
+
         # --- 启动口型同步会话 ---
         vts_lip_sync_service = self.core.get_service("vts_lip_sync")
         if vts_lip_sync_service:
@@ -235,7 +235,7 @@ class TTSPlugin(BasePlugin):
                 await vts_lip_sync_service.start_lip_sync_session(text)
             except Exception as e:
                 self.logger.debug(f"启动口型同步会话失败: {e}")
-        
+
         async with self.tts_lock:
             self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
             tmp_filename = None
@@ -276,7 +276,7 @@ class TTSPlugin(BasePlugin):
 
                 # --- 播放音频并实时进行口型同步 ---
                 self.logger.info(f"开始播放音频 (设备索引: {self.output_device_index})...")
-                
+
                 # 如果有VTube Studio口型同步服务，使用流式播放进行实时口型同步
                 if vts_lip_sync_service:
                     await self._play_with_lip_sync(audio_data, samplerate, vts_lip_sync_service)
@@ -285,7 +285,7 @@ class TTSPlugin(BasePlugin):
                     await asyncio.to_thread(
                         sd.play, audio_data, samplerate=samplerate, device=self.output_device_index, blocking=True
                     )
-                
+
                 self.logger.info("TTS 播放完成。")
 
             except (sf.SoundFileError, sd.PortAudioError, edge_tts.exceptions.NoAudioReceived, Exception) as e:
@@ -305,7 +305,7 @@ class TTSPlugin(BasePlugin):
                         await vts_lip_sync_service.stop_lip_sync_session()
                     except Exception as e:
                         self.logger.debug(f"停止口型同步会话失败: {e}")
-                
+
                 if tmp_filename and os.path.exists(tmp_filename):
                     try:
                         os.remove(tmp_filename)
@@ -317,7 +317,7 @@ class TTSPlugin(BasePlugin):
     async def _play_with_lip_sync(self, audio_data: np.ndarray, samplerate: int, vts_lip_sync_service):
         """
         播放音频并同时进行口型同步分析
-        
+
         Args:
             audio_data: 音频数据数组
             samplerate: 采样率
@@ -330,32 +330,32 @@ class TTSPlugin(BasePlugin):
                 audio_int16 = (audio_data * 32767).astype(np.int16)
             else:
                 audio_int16 = audio_data
-            
+
             # 计算每个分块的样本数（每100ms一个分块）
             chunk_duration = 0.1  # 100ms
             chunk_samples = int(samplerate * chunk_duration)
-            
+
             # 使用回调函数进行流式播放和口型同步
             chunk_index = 0
-            
+
             def audio_callback(outdata, frames, time, status):
                 nonlocal chunk_index
                 try:
                     start_idx = chunk_index * frames
                     end_idx = start_idx + frames
-                    
+
                     if start_idx < len(audio_data):
                         # 获取当前帧的音频数据
                         current_chunk = audio_data[start_idx:end_idx]
-                        
+
                         # 如果数据不足一帧，用零填充
                         if len(current_chunk) < frames:
                             padded_chunk = np.zeros(frames, dtype=audio_data.dtype)
-                            padded_chunk[:len(current_chunk)] = current_chunk
+                            padded_chunk[: len(current_chunk)] = current_chunk
                             current_chunk = padded_chunk
-                        
+
                         outdata[:] = current_chunk.reshape(-1, 1)
-                        
+
                         # 异步发送音频数据进行口型同步分析
                         if chunk_index % (chunk_samples // frames) == 0:  # 每100ms分析一次
                             analysis_chunk = audio_int16[start_idx:end_idx]
@@ -364,18 +364,18 @@ class TTSPlugin(BasePlugin):
                                 chunk_bytes = analysis_chunk.tobytes()
                                 # 创建异步任务进行口型同步分析
                                 asyncio.create_task(
-                                    vts_lip_sync_service.process_tts_audio(chunk_bytes, samplerate)
+                                    vts_lip_sync_service.process_tts_audio(chunk_bytes, sample_rate=samplerate)
                                 )
                     else:
                         # 音频播放完成，输出静音
                         outdata.fill(0)
-                    
+
                     chunk_index += 1
-                    
+
                 except Exception as e:
                     self.logger.error(f"音频回调函数出错: {e}")
                     outdata.fill(0)
-            
+
             # 创建并启动音频流
             with sd.OutputStream(
                 samplerate=samplerate,
@@ -383,12 +383,12 @@ class TTSPlugin(BasePlugin):
                 dtype=audio_data.dtype,
                 callback=audio_callback,
                 device=self.output_device_index,
-                blocksize=chunk_samples
+                blocksize=chunk_samples,
             ) as stream:
                 # 计算播放时长并等待播放完成
                 play_duration = len(audio_data) / samplerate
                 await asyncio.sleep(play_duration + 0.5)  # 额外等待0.5秒确保播放完成
-                
+
         except Exception as e:
             self.logger.error(f"流式播放和口型同步出错: {e}", exc_info=True)
             # 如果流式播放失败，回退到普通播放

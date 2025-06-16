@@ -18,12 +18,17 @@ vts_api_version = "1.0"
 
 # 口型同步功能配置
 [vtube_studio.lip_sync]
-enabled = true                       # 是否启用口型同步功能
-volume_threshold = 0.01              # 音量阈值，低于此值认为是静音（0.001-0.1推荐）
-smoothing_factor = 0.3               # 平滑因子，0-1之间，越大越平滑
-vowel_detection_sensitivity = 2.0    # 元音检测敏感度（1.0-5.0推荐）
-sample_rate = 32000                  # 音频采样率（推荐32000以匹配TTS插件）
-buffer_size = 1024                   # 音频缓冲区大小
+enabled = true                    # 是否启用口型同步功能
+volume_threshold = 0.01           # 音量阈值，低于此值认为是静音（0.001-0.1推荐）
+smoothing_factor = 0.3            # 平滑因子，0-1之间，越大越平滑
+vowel_detection_sensitivity = 2.0 # 元音检测敏感度（1.0-5.0推荐）
+sample_rate = 32000               # 音频采样率（推荐32000以匹配TTS插件）
+buffer_size = 1024                # 音频缓冲区大小
+
+# 音频累积和时间同步配置
+min_accumulation_duration = 0.1 # 最小累积时长（秒），控制口型更新频率
+max_accumulation_duration = 0.2 # 最大累积时长（秒），防止延迟过大
+playback_sync_enabled = true    # 是否启用播放时间同步，true=基于实际播放时间，false=基于音频数据长度
 
 # 支持的VTS口型参数说明：
 # - VoiceVolume: 音量参数 (0.0-1.0)

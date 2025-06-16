@@ -2,9 +2,9 @@
 
 import asyncio
 from typing import Any, Dict, Optional, TYPE_CHECKING, List
-import re
 import numpy as np
 import threading
+import time
 from collections import deque
 
 from maim_message.message_base import MessageBase
@@ -25,6 +25,7 @@ except ImportError:
 try:
     import librosa
     import scipy.signal
+
     AUDIO_ANALYSIS_AVAILABLE = True
 except ImportError:
     librosa = None
@@ -119,28 +120,36 @@ class VTubeStudioPlugin(BasePlugin):
         self.vowel_detection_sensitivity = lip_sync_config.get("vowel_detection_sensitivity", 0.5)
         self.sample_rate = lip_sync_config.get("sample_rate", 32000)
         self.buffer_size = lip_sync_config.get("buffer_size", 1024)
-        
+
+        # 音频累积和时间同步配置
+        self.min_accumulation_duration = lip_sync_config.get("min_accumulation_duration", 0.1)
+        self.playback_sync_enabled = lip_sync_config.get("playback_sync_enabled", True)
+
         # 口型同步状态变量
         self.audio_buffer = deque(maxlen=self.sample_rate * 2)  # 2秒音频缓存
         self.current_vowel_values = {"A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
         self.current_volume = 0.0
         self.is_speaking = False
         self.audio_analysis_lock = threading.Lock()
-        
+
+        # 音频累积相关变量
+        self.accumulated_audio = bytearray()  # 累积的音频数据
+        self.accumulation_start_time = None  # 累积开始时间（实际时间）
+        self.audio_playback_start_time = None  # 音频播放开始时间
+
         # 元音频率特征（简化版本）
         self.vowel_formants = {
-            "A": [730, 1090],   # /a/ 的第一和第二共振峰
-            "I": [270, 2290],   # /i/ 的第一和第二共振峰  
-            "U": [300, 870],    # /u/ 的第一和第二共振峰
-            "E": [530, 1840],   # /e/ 的第一和第二共振峰
-            "O": [570, 840],    # /o/ 的第一和第二共振峰
+            "A": [730, 1090],  # /a/ 的第一和第二共振峰
+            "I": [270, 2290],  # /i/ 的第一和第二共振峰
+            "U": [300, 870],  # /u/ 的第一和第二共振峰
+            "E": [530, 1840],  # /e/ 的第一和第二共振峰
+            "O": [570, 840],  # /o/ 的第一和第二共振峰
         }
 
         # 检查音频分析依赖
         if self.lip_sync_enabled and not AUDIO_ANALYSIS_AVAILABLE:
             self.logger.warning(
-                "Lip sync enabled but audio analysis libraries not available. "
-                "Install with: pip install librosa scipy"
+                "Lip sync enabled but audio analysis libraries not available. Install with: pip install librosa scipy"
             )
             self.lip_sync_enabled = False
 
@@ -189,7 +198,7 @@ class VTubeStudioPlugin(BasePlugin):
         if not self.enabled or not self.vts:
             self.logger.warning("VTubeStudioPlugin setup skipped (disabled or failed init).")
             return
-        # 注册处理函数，监听所有 WebSocket 消息
+        # 注册处理函数，监听所有 WebSocket 消消息
         self.core.register_websocket_handler("*", self.handle_maicore_message)
         self.logger.info("VTube Studio 插件已设置，监听所有 MaiCore WebSocket 消息。")
 
@@ -200,7 +209,7 @@ class VTubeStudioPlugin(BasePlugin):
         # --- Register self as a service for triggering actions ---
         self.core.register_service("vts_control", self)
         self.logger.info("Registered 'vts_control' service.")
-        
+
         # --- 注册为TTS音频数据处理器 ---
         if self.lip_sync_enabled:
             self.core.register_service("vts_lip_sync", self)
@@ -508,7 +517,7 @@ class VTubeStudioPlugin(BasePlugin):
                 self.vts.vts_request.requestSetParameterValue(parameter_name, value, weight)
             )
             if response and response.get("messageType") == "InjectParameterDataResponse":
-                self.logger.info(f"成功设置 '{parameter_name}' 参数值为 {value}")
+                self.logger.debug(f"成功设置 '{parameter_name}' 参数值为 {value}")
                 return True
             else:
                 self.logger.warning(f"设置 '{parameter_name}' 参数值失败: {response}")
@@ -638,58 +647,58 @@ class VTubeStudioPlugin(BasePlugin):
     async def analyze_audio_chunk(self, audio_data: bytes, sample_rate: int = 32000) -> Dict[str, float]:
         """
         分析音频块，检测音量和元音特征
-        
+
         Args:
             audio_data: 音频数据字节
             sample_rate: 采样率
-            
+
         Returns:
             包含音量和元音检测结果的字典
         """
         if not self.lip_sync_enabled or not AUDIO_ANALYSIS_AVAILABLE:
             return {"volume": 0.0, "A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
-            
+
         try:
             # 转换音频数据为numpy数组
             audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-            
+
             if len(audio_array) == 0:
                 return {"volume": 0.0, "A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
-            
+
             # 计算音量 (RMS)
-            volume = np.sqrt(np.mean(audio_array ** 2))
+            volume = np.sqrt(np.mean(audio_array**2))
             volume = float(max(0.0, min(1.0, volume * 10)))  # 放大并限制在0-1范围，转换为Python float
-            
+
             # 只有音量超过阈值时才进行元音分析
             if volume < self.volume_threshold:
                 return {"volume": volume, "A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
-            
+
             # 计算频谱
             if len(audio_array) < 512:
                 # 音频太短，无法有效分析
                 return {"volume": volume, "A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
-            
+
             # 使用FFT计算频谱
             fft = np.fft.rfft(audio_array)
             magnitude = np.abs(fft)
-            freqs = np.fft.rfftfreq(len(audio_array), 1/sample_rate)
-            
+            freqs = np.fft.rfftfreq(len(audio_array), 1 / sample_rate)
+
             # 分析元音特征
             vowel_scores = self._analyze_vowel_features(magnitude, freqs)
-            
+
             # 归一化元音分数
             total_score = sum(vowel_scores.values()) + 1e-6
             vowel_values = {vowel: float(score / total_score) for vowel, score in vowel_scores.items()}
-            
+
             # 应用敏感度调整
             for vowel in vowel_values:
                 vowel_values[vowel] = float(min(1.0, vowel_values[vowel] * self.vowel_detection_sensitivity))
-            
+
             result = {"volume": volume}
             result.update(vowel_values)
-            
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"音频分析失败: {e}", exc_info=True)
             return {"volume": 0.0, "A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
@@ -697,19 +706,19 @@ class VTubeStudioPlugin(BasePlugin):
     def _analyze_vowel_features(self, magnitude: np.ndarray, freqs: np.ndarray) -> Dict[str, float]:
         """
         基于频谱分析元音特征
-        
+
         Args:
             magnitude: 频谱幅度
             freqs: 频率数组
-            
+
         Returns:
             各元音的分数字典
         """
         vowel_scores = {}
-        
+
         for vowel, formants in self.vowel_formants.items():
             score = 0.0
-            
+
             # 计算每个共振峰的能量
             for formant_freq in formants:
                 # 找到共振峰频率附近的频谱能量
@@ -717,93 +726,138 @@ class VTubeStudioPlugin(BasePlugin):
                 if np.any(freq_mask):
                     formant_energy = float(np.mean(magnitude[freq_mask]))  # 确保转换为Python float
                     score += formant_energy
-            
+
             vowel_scores[vowel] = float(score)  # 确保转换为Python float
-            
+
         return vowel_scores
 
     async def process_tts_audio(self, audio_data: bytes, sample_rate: int = 32000):
         """
         处理来自TTS的音频数据进行口型同步
-        
+        基于实际播放时间控制口型，确保与音频播放同步
+
         Args:
             audio_data: 音频数据字节
             sample_rate: 采样率
         """
         if not self.lip_sync_enabled or not self._is_connected_and_authenticated:
             return
-            
+
         try:
-            # 分析音频特征
-            analysis_result = await self.analyze_audio_chunk(audio_data, sample_rate)
-            
-            # 更新口型参数
-            await self._update_lip_sync_parameters(analysis_result)
-            
+            current_time = time.time()
+
+            # 如果是第一个音频块，初始化累积和播放时间
+            if self.accumulation_start_time is None:
+                self.accumulation_start_time = current_time
+                self.audio_playback_start_time = current_time
+                self.accumulated_audio = bytearray()
+
+            # 累积音频数据
+            self.accumulated_audio.extend(audio_data)
+
+            # 计算实际播放时间经过的时长
+            elapsed_playback_time = current_time - self.audio_playback_start_time
+
+            # 计算音频数据对应的时长
+            accumulated_samples = len(self.accumulated_audio) // 2  # 16位音频，2字节per sample
+            audio_duration = accumulated_samples / sample_rate
+
+            # 检查是否需要处理累积的音频
+            should_process = False
+
+            # 基于实际播放时间的控制策略
+            if (
+                elapsed_playback_time >= self.min_accumulation_duration
+                and audio_duration >= self.min_accumulation_duration
+            ):
+                # 播放时间和音频时长都达到最小要求，可以处理
+                should_process = True
+
+            if should_process:
+                # 分析累积的音频特征
+                analysis_result = await self.analyze_audio_chunk(bytes(self.accumulated_audio), sample_rate)
+
+                # 更新口型参数
+                await self._update_lip_sync_parameters(analysis_result)
+
+                # 重置累积状态，但保持播放时间基准
+                self.accumulated_audio = bytearray()
+                self.accumulation_start_time = current_time
+
         except Exception as e:
             self.logger.error(f"处理TTS音频数据失败: {e}", exc_info=True)
+            # 出错时重置累积状态
+            self.accumulated_audio = bytearray()
+            self.accumulation_start_time = None
 
     async def _update_lip_sync_parameters(self, analysis_result: Dict[str, float]):
         """
         根据音频分析结果更新VTS口型参数
-        
+
         Args:
             analysis_result: 音频分析结果
         """
         if not self._is_connected_and_authenticated:
             return
-            
+
         try:
             volume = float(analysis_result["volume"])  # 确保转换为Python原生float
-            
+
             # 更新音量参数
             await self.set_parameter_value("VoiceVolume", volume)
-            
+
+            # 更新嘴巴张开参数（等效于音量）
+            await self.set_parameter_value("MouthOpen", volume)
+
             # 更新静音参数（音量低于阈值时为1）
             silence_value = 1.0 if volume < self.volume_threshold else 0.0
             await self.set_parameter_value("VoiceSilence", silence_value)
-            
+
             # 更新元音参数（仅在有声音时）
             if volume >= self.volume_threshold:
                 for vowel in ["A", "I", "U", "E", "O"]:
                     param_name = f"Voice{vowel}"
                     vowel_value = float(analysis_result.get(vowel, 0.0))  # 确保转换为Python原生float
-                    
+
                     # 应用平滑滤波
                     with self.audio_analysis_lock:
                         current_value = self.current_vowel_values[vowel]
-                        smoothed_value = (current_value * (1 - self.smoothing_factor) + 
-                                        vowel_value * self.smoothing_factor)
+                        smoothed_value = (
+                            current_value * (1 - self.smoothing_factor) + vowel_value * self.smoothing_factor
+                        )
                         # 确保存储和传递的都是Python原生float
                         smoothed_value = float(smoothed_value)
                         self.current_vowel_values[vowel] = smoothed_value
-                    
+
                     await self.set_parameter_value(param_name, smoothed_value)
             else:
                 # 静音时将所有元音参数设为0
                 for vowel in ["A", "I", "U", "E", "O"]:
                     param_name = f"Voice{vowel}"
                     await self.set_parameter_value(param_name, 0.0)
-                    
+
                 with self.audio_analysis_lock:
                     self.current_vowel_values[vowel] = 0.0
-                    
+
         except Exception as e:
             self.logger.error(f"更新口型参数失败: {e}", exc_info=True)
 
     async def start_lip_sync_session(self, text: str = ""):
         """
         开始口型同步会话
-        
+
         Args:
             text: 即将播放的文本内容
         """
         if not self.lip_sync_enabled:
             return
-            
+
         self.logger.info(f"开始口型同步会话: {text[:50]}...")
         self.is_speaking = True
-        
+
+        # 重置播放时间基准
+        await self.reset_playback_timing()
+
         # 重置口型状态
         with self.audio_analysis_lock:
             for vowel in self.current_vowel_values:
@@ -816,26 +870,47 @@ class VTubeStudioPlugin(BasePlugin):
         """
         if not self.lip_sync_enabled:
             return
-            
+
         self.logger.info("停止口型同步会话")
         self.is_speaking = False
-        
+
         # 重置所有口型参数为静音状态
         try:
             await self.set_parameter_value("VoiceSilence", 1.0)
             await self.set_parameter_value("VoiceVolume", 0.0)
-            
+            await self.set_parameter_value("MouthOpen", 0.0)
+
             for vowel in ["A", "I", "U", "E", "O"]:
                 param_name = f"Voice{vowel}"
                 await self.set_parameter_value(param_name, 0.0)
-                
+
             with self.audio_analysis_lock:
                 for vowel in self.current_vowel_values:
                     self.current_vowel_values[vowel] = 0.0
                 self.current_volume = 0.0
-                
+
+            # 重置音频累积状态和时间基准
+            self.accumulated_audio = bytearray()
+            self.accumulation_start_time = None
+            self.audio_playback_start_time = None
+
         except Exception as e:
             self.logger.error(f"重置口型参数失败: {e}", exc_info=True)
+
+    async def reset_playback_timing(self):
+        """
+        重置播放时间基准，在开始新的TTS播放时调用
+        确保口型同步与新的音频播放同步
+        """
+        if not self.lip_sync_enabled:
+            return
+
+        current_time = time.time()
+        self.audio_playback_start_time = current_time
+        self.accumulation_start_time = None
+        self.accumulated_audio = bytearray()
+
+        self.logger.debug("播放时间基准已重置，开始新的口型同步")
 
 
 # --- Plugin Entry Point ---
