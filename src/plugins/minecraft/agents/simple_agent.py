@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List
 from mineland import Action
 
 from .base_agent import BaseAgent
+from src.plugins.minecraft.state.analyzers import StateAnalyzer
 
 
 class SimpleAgent(BaseAgent):
@@ -23,33 +24,7 @@ class SimpleAgent(BaseAgent):
         self.max_memory_size: int = 10
         self.logger = logging.getLogger(__name__)
         self._is_initialized = False
-
-        # API验证集合
-        self.valid_bot_methods = {
-            "chat",
-            "look",
-            "lookAt",
-            "dig",
-            "placeBlock",
-            "activateBlock",
-            "setControlState",
-            "clearControlStates",
-            "equip",
-            "unequip",
-            "toss",
-            "tossStack",
-            "consume",
-            "activateItem",
-            "attack",
-            "mount",
-            "dismount",
-            "setQuickBarSlot",
-            "waitForTicks",
-            "craft",
-            "sleep",
-            "wake",
-            "respawn",
-        }
+        self.state_analyzer: Optional[StateAnalyzer] = None
 
     async def initialize(self, config: Dict[str, Any]) -> None:
         """初始化简单智能体"""
@@ -105,6 +80,13 @@ class SimpleAgent(BaseAgent):
             raise RuntimeError("简单智能体未初始化")
 
         try:
+            # 初始化或更新状态分析器
+            if obs:
+                if self.state_analyzer is None:
+                    self.state_analyzer = StateAnalyzer(obs=obs, config=self.config)
+                else:
+                    self.state_analyzer.set_observation(obs)
+
             # 构建上下文
             context = self._build_context(obs, code_info, done, task_info, maicore_command)
 
@@ -125,7 +107,7 @@ class SimpleAgent(BaseAgent):
 
         except Exception as e:
             self.logger.error(f"简单智能体执行错误: {e}")
-            return Action(type=Action.NEW, code="// 等待下一步")
+            return Action(type=Action.RESUME, code="")
 
     def _validate_and_fix_action(self, action_code: str) -> str:
         """验证并修复动作代码"""
@@ -158,99 +140,38 @@ class SimpleAgent(BaseAgent):
         task_info: Optional[Dict],
         maicore_command: Optional[str],
     ) -> str:
-        """构建决策上下文 - 集成状态分析器的环境感知"""
+        """构建决策上下文 - 使用状态分析器获取环境感知"""
         context_parts = []
 
         # === 环境感知部分 (优先级最高) ===
-        if obs:
-            # 使用状态分析器提供的环境分析
-            if "environment_analysis" in obs:
-                env_analysis = obs["environment_analysis"]
-                if "summary" in env_analysis and env_analysis["summary"]:
-                    context_parts.append("=== 环境分析 ===")
-                    context_parts.extend(env_analysis["summary"])
-                    context_parts.append("")  # 空行分隔
-
-            # 详细的环境信息
-            if "detailed_environment" in obs:
-                detailed_env = obs["detailed_environment"]
-
-                # 生命状态
-                if "life_stats" in detailed_env and detailed_env["life_stats"]:
-                    context_parts.append("=== 生命状态 ===")
-                    context_parts.extend(detailed_env["life_stats"])
-                    context_parts.append("")
-
-                # 周围方块环境
-                if "environment" in detailed_env and detailed_env["environment"]:
-                    context_parts.append("=== 周围环境 ===")
-                    context_parts.extend(detailed_env["environment"])
-                    context_parts.append("")
-
-                # 位置和方向
-                if "position" in detailed_env and detailed_env["position"]:
-                    context_parts.append("=== 位置信息 ===")
-                    context_parts.extend(detailed_env["position"])
-                    if "direction" in detailed_env and detailed_env["direction"]:
-                        context_parts.extend(detailed_env["direction"])
-                    context_parts.append("")
-
-                # 移动障碍
-                if "collision" in detailed_env and detailed_env["collision"]:
-                    context_parts.append("=== 移动状况 ===")
-                    context_parts.extend(detailed_env["collision"])
-                    if "facing_wall" in detailed_env and detailed_env["facing_wall"]:
-                        context_parts.extend(detailed_env["facing_wall"])
-                    context_parts.append("")
-
-                # 装备和物品
-                if "equipment" in detailed_env and detailed_env["equipment"]:
-                    context_parts.append("=== 装备状态 ===")
-                    context_parts.extend(detailed_env["equipment"])
-                    context_parts.append("")
-
-                if "inventory" in detailed_env and detailed_env["inventory"]:
-                    context_parts.append("=== 物品栏 ===")
-                    context_parts.extend(detailed_env["inventory"])
-                    context_parts.append("")
-
-                # 时间和天气
-                if "time" in detailed_env and detailed_env["time"]:
-                    context_parts.append("=== 游戏时间 ===")
-                    context_parts.extend(detailed_env["time"])
-                    if "weather" in detailed_env and detailed_env["weather"]:
-                        context_parts.extend(detailed_env["weather"])
-                    context_parts.append("")
-
-            # 如果没有状态分析器数据，使用原始观察数据
-            if not any(key in obs for key in ["environment_analysis", "detailed_environment"]):
-                # 基础状态信息
-                health = obs.get("health", "未知")
-                food = obs.get("food", "未知")
-                position = obs.get("position", "未知")
-                if health != "未知" or food != "未知" or position != "未知":
-                    context_parts.append(f"=== 基础状态 ===")
-                    context_parts.append(f"生命值: {health}, 饥饿值: {food}, 位置: {position}")
-                    context_parts.append("")
+        if obs and self.state_analyzer:
+            # 使用状态分析器提供的详细环境分析
+            analysis_result = self.state_analyzer.analyze_all()
+            if isinstance(analysis_result, list):
+                context_parts.extend(analysis_result)
+            else:
+                context_parts.append(str(analysis_result))
 
         # === 代码执行状态 ===
         if code_info:
             if code_info.get("code_error"):
                 error_info = code_info["code_error"]
-                context_parts.append("=== 执行错误 ===")
-                context_parts.append(f"上次代码执行失败: {error_info.get('error_message', '未知错误')}")
-                context_parts.append("")
+                context_parts.extend(
+                    (
+                        "=== 执行错误 ===",
+                        f"上次代码执行失败: {error_info.get('error_message', '未知错误')}",
+                        "",
+                    )
+                )
             elif code_info.get("is_ready"):
-                context_parts.append("=== 执行状态 ===")
-                context_parts.append("代码执行完成，准备下一个动作")
-                context_parts.append("")
-
+                context_parts.extend(("=== 执行状态 ===", "代码执行完成，准备下一个动作", ""))
         # === 历史记忆 ===
         if self.memory:
             recent_memory = self.memory[-2:]  # 最近2次记忆
             context_parts.append("=== 最近动作 ===")
-            for i, memory in enumerate(recent_memory, 1):
-                context_parts.append(f"{i}. {memory.get('action', '未知动作')}")
+            context_parts.extend(
+                f"{i}. {memory.get('action', '未知动作')}" for i, memory in enumerate(recent_memory, 1)
+            )
             context_parts.append("")
 
         # === MaiCore指令 (优先级最高) ===
@@ -273,16 +194,10 @@ class SimpleAgent(BaseAgent):
 
         # === 任务信息 ===
         if task_info:
-            context_parts.append("=== 任务信息 ===")
-            context_parts.append(f"任务: {task_info}")
-            context_parts.append("")
-
+            context_parts.extend(("=== 任务信息 ===", f"任务: {task_info}", ""))
         # 当前目标
         if self.current_goal:
-            context_parts.append(f"=== 当前目标 ===")
-            context_parts.append(f"目标: {self.current_goal}")
-            context_parts.append("")
-
+            context_parts.extend(("=== 当前目标 ===", f"目标: {self.current_goal}", ""))
         return "\n".join(context_parts)
 
     def _parse_maicore_command(self, command: str) -> Optional[str]:
@@ -307,18 +222,13 @@ class SimpleAgent(BaseAgent):
                         self.logger.info(f"从MaiCore指令中提取到动作: {actions}")
                         return actions.strip()
             except json.JSONDecodeError:
-                # 如果不是JSON格式，尝试用正则表达式提取actions字段
-                actions_match = re.search(r'"actions":\s*"([^"]+)"', command_clean)
-                if actions_match:
+                if actions_match := re.search(r'"actions":\s*"([^"]+)"', command_clean):
                     actions = actions_match.group(1)
                     self.logger.info(f"通过正则表达式提取到动作: {actions}")
                     return actions
 
-                # 尝试提取不带引号的actions
-                actions_match = re.search(r'"actions":\s*([^,}]+)', command_clean)
-                if actions_match:
-                    actions = actions_match.group(1).strip().strip('"')
-                    if actions:
+                if actions_match := re.search(r'"actions":\s*([^,}]+)', command_clean):
+                    if actions := actions_match.group(1).strip().strip('"'):
                         self.logger.info(f"通过正则表达式提取到动作(无引号): {actions}")
                         return actions
 
@@ -340,10 +250,7 @@ class SimpleAgent(BaseAgent):
             messages = [SystemMessage(content=self._get_system_prompt()), HumanMessage(content=context)]
 
             response = await self.llm.ainvoke(messages)
-            action_code = self._parse_action_from_response(str(response.content))
-
-            return action_code
-
+            return self._parse_action_from_response(str(response.content))
         except Exception as e:
             self.logger.error(f"LLM决策错误: {e}")
             return "// 等待"
@@ -386,92 +293,53 @@ class SimpleAgent(BaseAgent):
 
     def _get_system_prompt(self) -> str:
         """获取系统提示 - 增强环境感知能力"""
-        return """你是一个Minecraft智能体，能够感知和分析周围环境。根据详细的环境分析信息和当前状态，生成合适的动作代码。
+        return """你是一个Minecraft智能体，任务是根据环境信息生成单行或多行的JavaScript动作代码。
 
-## 环境感知能力
-你会收到以下类型的环境分析信息：
-- **环境分析**: 周围方块的分布、开阔程度、墙壁位置等
-- **生命状态**: 生命值、饥饿值、氧气值等
-- **位置信息**: 当前坐标、朝向、移动速度等
-- **移动状况**: 是否碰撞、前方是否有墙等
-- **装备状态**: 当前装备的工具和防具
-- **物品栏**: 拥有的物品和数量
-- **游戏时间**: 白天/夜晚、天气状况
+## 决策指南
+- **分析环境**: 你会收到关于生命、位置、周围方块、物品栏等的详细信息。
+- **生存**: 当生命值或饥饿值低时，优先寻找食物或避开危险。夜晚时寻找安全之处。
+- **移动**:
+  - 前方有墙时，考虑转向或挖掘。
+  - 在开阔地带可以自由探索。
+  - 在水里时，使用 `swimToLand` 游到岸边。
+- **挖掘**:
+  - 根据周围方块信息，挖掘有价值的矿物（如 `diamond_ore`）或必要的材料（如 `oak_log`）。
+  - 被困时，尝试挖掘出路。
 
-## 动作指南
-根据环境分析信息做出智能决策：
+## API参考
+**重要**: 只能使用下面列出的API。确保API名称和参数正确。
 
-### 移动决策
-- 如果"前方有墙"，考虑挖掘或转向
-- 如果"处于开阔区域"，可以自由移动探索
-- 如果"处于封闭空间"，注意寻找出口
+### 基础
+- `bot.chat("消息")`: 发送聊天消息 (请使用中文)。
+- `// 注释`: 用于写注释或表示"等待"。
 
-### 挖掘决策
-- 根据"周围方块"信息选择挖掘目标
-- 如果看到有价值的矿物，优先挖掘
-- 如果被困，挖掘脚下或上方的方块
+### 移动
+- `bot.setControlState("状态", true/false)`: 设置移动状态。状态可以是 `forward`, `back`, `left`, `right`, `jump`, `sprint`。
+- `bot.clearControlStates()`: 停止所有移动。
+- `bot.look(yaw, pitch)`: 转向。示例:
+  - `bot.look(bot.entity.yaw + Math.PI/2, bot.entity.pitch)`: 右转90度。
+  - `bot.look(bot.entity.yaw - Math.PI/2, bot.entity.pitch)`: 左转90度。
+- `followPlayer(bot, "玩家名")`: 跟随玩家。
+- `swimToLand(bot)`: 游到最近的岸边。
 
-### 生存决策
-- 根据"生命状态"调整行动策略
-- 生命值低时寻找食物或避开危险
-- 夜晚时寻找安全的地方
+### 方块
+- `mineBlock(bot, "方块名", 数量)`: 挖掘并收集指定数量的方块。
+  - **注意**: 方块名必须正确，例如挖铁矿石是 `iron_ore`，而不是 `raw_iron`。
+- `placeItem(bot, "物品名", position)`: 在指定位置放置方块。
 
-## 正确的API使用
-使用以下正确的mineflayer API：
-
-### 移动控制
-```javascript
-// 移动
-bot.setControlState("forward", true)    // 前进
-bot.setControlState("back", true)       // 后退
-bot.setControlState("left", true)       // 左移
-bot.setControlState("right", true)      // 右移
-bot.setControlState("jump", true)       // 跳跃
-bot.clearControlStates()                // 停止所有移动
-
-// 转向
-bot.look(bot.entity.yaw + Math.PI/2, bot.entity.pitch)  // 右转90度
-bot.look(bot.entity.yaw - Math.PI/2, bot.entity.pitch)  // 左转90度
-bot.look(bot.entity.yaw + Math.PI, bot.entity.pitch)    // 转身180度
-```
-
-### 方块操作
-```javascript
-// 挖掘
-bot.dig(bot.blockAt(bot.entity.position.offset(0, -1, 0)))  // 挖脚下
-bot.dig(bot.blockAt(bot.entity.position.offset(0, 1, 0)))   // 挖上方
-bot.dig(bot.blockAt(bot.entity.position.offset(0, 0, 1)))   // 挖前方
-
-// 放置方块
-bot.placeBlock(bot.blockAt(bot.entity.position.offset(0, -1, 0)), new Vec3(0, 1, 0))
-```
-
-### 物品操作
-```javascript
-// 装备物品
-bot.equip(bot.inventory.slots[36], 'hand')  // 装备到手中
-bot.unequip('hand')                         // 卸下手中物品
-
-// 使用物品
-bot.activateItem(false)  // 右键使用物品
-bot.consume()           // 消耗物品（如食物）
-```
-
-## 决策流程
-1. **分析环境**: 仔细阅读环境分析信息
-2. **评估状态**: 检查生命值、物品等状态
-3. **制定策略**: 根据环境和状态确定行动方案
-4. **选择动作**: 生成相应的API调用代码
-5. **确保语法**: 使用正确的JavaScript语法
+### 物品
+- `bot.equip(item, "位置")`: 装备物品到指定位置（如 'hand', 'head'）。需要先在物品栏找到物品对象(item)。
+- `bot.unequip("位置")`: 卸下指定位置的装备。
+- `bot.activateItem(offhand)`: 使用手上的物品（`offhand`=false表示主手）。
+- `bot.consume()`: 消耗物品（例如吃食物）。
 
 ## 输出格式
-直接返回JavaScript代码，可以多行，例如：
-- `bot.setControlState("forward", true)`
-- `bot.dig(bot.blockAt(bot.entity.position.offset(0, -1, 0)))`
-- `bot.look(bot.entity.yaw + Math.PI/2, bot.entity.pitch)`
-- `// 等待观察环境`
-
-不要包含解释或其他文本，只返回代码。"""
+- **只返回代码**: 不要包含任何解释、markdown标记(```)或多余的文本。
+- **代码示例**:
+  - `bot.setControlState("forward", true);`
+  - `mineBlock(bot, "oak_log", 1);`
+  - `// 正在观察...`
+"""
 
     def _parse_action_from_response(self, response: str) -> str:
         """从LLM响应中解析动作代码"""
