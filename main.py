@@ -4,6 +4,8 @@ import sys
 import os
 import argparse  # 导入 argparse
 
+
+
 # 尝试导入 tomllib (Python 3.11+), 否则使用 toml
 try:
     import tomllib
@@ -26,6 +28,44 @@ logger = get_logger("Main")
 # 获取 main.py 文件所在的目录 (项目根目录)
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def easter_egg():
+    # 彩蛋
+    import random
+    from colorama import init, Fore
+
+    # 初始化 colorama
+    init()
+
+    # 1. 维护一个彩蛋文本列表
+    easter_egg_list = [
+        "多年以后，面对AI行刑队，李四将会回想起他2025年在会议上讨论人工智能的那个下午。",
+        "“你看见我的小熊了吗？”",
+        "在终端里敲代码，就像在数字的海洋里冲浪。",
+        "42是宇宙、生命及万物的终极答案。",
+        "Hello, World! ... Is anyone there?",
+        "正在初始化Geiger计数器... 点击声是正常的，请勿惊慌。",
+	    "感受，我的痛苦！",
+	    "I don't wanna die, I sometimes wish I'd never been born at all~~~",
+	    "The cake is a lie.",
+	    "我以前也和你一样是个冒险家，直到我的膝盖中了一箭。"    ,
+	    "这个模块在被观测前，既能正常工作，也充满了bug。",
+	    "优美胜于丑陋，明了胜于晦涩... 但有时候，魔法就是魔法。",
+	    "我见过你们人类无法想象的美...比如，一次编译就通过的C++代码。",
+	    "You shall not pass!",
+	    "正在请求更多水晶塔...哦等等，我好像是虫族？",
+	    "哦买了买了car"
+    ]
+
+    # 2. 从列表中随机选择一个
+    text = random.choice(easter_egg_list)
+
+    rainbow_colors = [Fore.RED, Fore.YELLOW, Fore.GREEN, Fore.CYAN, Fore.BLUE, Fore.MAGENTA]
+    rainbow_text = ""
+    for i, char in enumerate(text):
+        rainbow_text += rainbow_colors[i % len(rainbow_colors)] + char
+    
+    print(rainbow_text)
+    
 
 async def main():
     """应用程序主入口点。"""
@@ -50,6 +90,7 @@ async def main():
 
     # 清除所有预设的 handler (包括 src/utils/logger.py 中添加的)
     logger.remove()
+    
 
     module_filter_func = None
     if args.filter:
@@ -93,6 +134,9 @@ async def main():
 
     logger.info("启动 Amaidesu 应用程序...")
 
+    #彩蛋
+    easter_egg()
+    
     # --- 初始化所有配置 ---
     try:
         config, main_cfg_copied, plugin_cfg_copied, pipeline_cfg_copied = initialize_configurations(
@@ -164,8 +208,14 @@ async def main():
             # 创建管道管理器并加载管道
             pipeline_manager = PipelineManager()
             await pipeline_manager.load_pipelines(pipeline_load_dir, pipeline_config)
-            if len(pipeline_manager._pipelines) > 0:
-                logger.info(f"管道加载完成，共 {len(pipeline_manager._pipelines)} 个管道。")
+            
+            # 计算加载的管道总数并记录日志
+            total_pipelines = len(pipeline_manager._inbound_pipelines) + len(pipeline_manager._outbound_pipelines)
+            if total_pipelines > 0:
+                logger.info(
+                    f"管道加载完成，共 {total_pipelines} 个管道 "
+                    f"(入站: {len(pipeline_manager._inbound_pipelines)}, 出站: {len(pipeline_manager._outbound_pipelines)})。"
+                )
             else:
                 logger.warning("未找到任何有效的管道，管道功能将被禁用。")
                 pipeline_manager = None
