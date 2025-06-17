@@ -18,22 +18,18 @@ class MinecraftActionExecutor:
         self,
         game_state: MinecraftGameState,
         event_manager: MinecraftEventManager,
-        mland: Optional[mineland.MineLand] = None,
+        config: Dict[str, Any],
         max_wait_cycles: int = 100,
         wait_cycle_interval: float = 0.1,
-        config: Dict[str, Any] = None,
     ):
         self.game_state = game_state
         self.event_manager = event_manager
-        self.mland = mland
+        self.mland: Optional[mineland.MineLand] = None
         self.max_wait_cycles = max_wait_cycles
         self.wait_cycle_interval = wait_cycle_interval
+        self.config = config
 
-        # 从配置中读取参数
-        self.config = config or {}
         action_executor_config = self.config.get("action_executor", {})
-
-        # 配置化的参数
         self.agents_count = self.config.get("agents_count", 1)
         self.low_level_action_length = action_executor_config.get("low_level_action_length", 8)
 
@@ -74,7 +70,8 @@ class MinecraftActionExecutor:
             self.game_state.update_state(next_obs, next_code_info, next_event, next_done, next_task_info)
 
             # 更新事件历史
-            self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
+            if self.game_state.current_event:
+                self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
 
             logger.info(f"代码信息: {str(self.game_state.current_code_info)}")
             logger.info(f"事件信息: {str(self.game_state.current_event)}")
@@ -103,7 +100,8 @@ class MinecraftActionExecutor:
             self.game_state.update_state(next_obs, next_code_info, next_event, next_done, next_task_info)
 
             # 更新事件历史
-            self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
+            if self.game_state.current_event:
+                self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
 
             logger.debug(f"no_op执行完毕，当前步骤: {self.game_state.current_step_num}")
 
@@ -139,7 +137,8 @@ class MinecraftActionExecutor:
             self.game_state.update_state(next_obs, next_code_info, next_event, next_done, next_task_info)
 
             # 更新事件历史
-            self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
+            if self.game_state.current_event:
+                self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
 
             logger.debug(f"智能体动作执行完毕，当前步骤: {self.game_state.current_step_num}")
             logger.debug(f"代码信息: {str(self.game_state.current_code_info)}")

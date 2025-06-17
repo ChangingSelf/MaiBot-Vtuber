@@ -41,6 +41,17 @@ class StateAnalyzer(BaseAnalyzer):
         self.environment_analyzer = EnvironmentAnalyzer(obs, config)
         self.collision_analyzer = CollisionAnalyzer(obs, config)
 
+    def set_observation(self, obs):
+        """更新观察对象，并级联更新所有子分析器"""
+        self.obs = obs
+        self.life_stats_analyzer.obs = obs
+        self.motion_analyzer.obs = obs
+        self.equipment_analyzer.obs = obs
+        self.inventory_analyzer.obs = obs
+        self.voxel_analyzer.obs = obs
+        self.environment_analyzer.obs = obs
+        self.collision_analyzer.obs = obs
+
     def analyze(self) -> List[str]:
         """
         执行完整的状态分析
