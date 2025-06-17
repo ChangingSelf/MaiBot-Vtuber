@@ -10,7 +10,7 @@ from .base_agent import BaseAgent
 
 
 class AgentManager:
-    """智能体管理器 - 简化版本"""
+    """智能体管理器"""
 
     def __init__(self):
         self._agents: Dict[str, Type[BaseAgent]] = {}
