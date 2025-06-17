@@ -82,7 +82,7 @@ async def main():
     args = parser.parse_args()
 
     # --- 配置日志 ---
-    base_level = "DEBUG" if args.debug else "DEBUG"
+    base_level = "DEBUG" if args.debug else "INFO"
     log_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{line: <4}</cyan> | <cyan>{extra[module]}</cyan> - <level>{message}</level>"
 
     # 清除所有预设的 handler (包括 src/utils/logger.py 中添加的)
