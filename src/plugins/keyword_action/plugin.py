@@ -116,4 +116,7 @@ class KeywordActionPlugin(BasePlugin):
         except ImportError:
             self.logger.error(f"无法找到或导入动作脚本: {script_name} (路径: {module_path})")
         except Exception as e:
-            self.logger.error(f"执行动作脚本 '{script_name}' 时发生错误: {e}", exc_info=True) 
+            self.logger.error(f"执行动作脚本 '{script_name}' 时发生错误: {e}", exc_info=True)
+
+# 插件入口点
+plugin_entrypoint = KeywordActionPlugin 
