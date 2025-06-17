@@ -65,8 +65,8 @@ priority = 50
 # 插件全局配置
 [plugins]
 enable_console_input = true
-enable_tts = true
-enable_stt = true
+enable_tts = false
+enable_stt = false
 enable_vtube_studio = false
 enable_bili_danmaku = false
 enable_subtitle = true
@@ -80,7 +80,7 @@ enable_mock_danmaku = false
 enable_minecraft = true
 enable_bili_danmaku_selenium = false
 enable_bili_danmaku_official = false # 请不要和 bili_danmaku_selenium 同时启用
-enable_arknights = true
-enable_dg_lab_service = true
+enable_arknights = false
+enable_dg_lab_service = false
 enable_keyword_action = true
-enable_read_pingmu = true
+enable_read_pingmu = false
