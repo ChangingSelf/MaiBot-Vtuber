@@ -36,25 +36,22 @@ def easter_egg():
     # 初始化 colorama
     init()
 
-    # 1. 维护一个彩蛋文本列表
-    easter_egg_list = [
-        "多年以后，面对AI行刑队，李四将会回想起他2025年在会议上讨论人工智能的那个下午。",
-        "“你看见我的小熊了吗？”",
-        "在终端里敲代码，就像在数字的海洋里冲浪。",
-        "42是宇宙、生命及万物的终极答案。",
-        "Hello, World! ... Is anyone there?",
-        "正在初始化Geiger计数器... 点击声是正常的，请勿惊慌。",
-	    "感受，我的痛苦！",
-	    "I don't wanna die, I sometimes wish I'd never been born at all~~~",
-	    "The cake is a lie.",
-	    "我以前也和你一样是个冒险家，直到我的膝盖中了一箭。"    ,
-	    "这个模块在被观测前，既能正常工作，也充满了bug。",
-	    "优美胜于丑陋，明了胜于晦涩... 但有时候，魔法就是魔法。",
-	    "我见过你们人类无法想象的美...比如，一次编译就通过的C++代码。",
-	    "You shall not pass!",
-	    "正在请求更多水晶塔...哦等等，我好像是虫族？",
-	    "哦买了买了car"
-    ]
+    easter_egg_list = ["多年以后，面对AI行刑队，李四将会回想起他2025年在会议上讨论人工智能的那个下午。"] # 默认彩蛋
+    egg_config_path = os.path.join(_BASE_DIR, "egg.toml")
+
+    try:
+        with open(egg_config_path, "rb") as f:
+            egg_data = tomllib.load(f)
+            # 确保 'egg' 表和 'easter_egg_list' 列表存在且不为空
+            if "egg" in egg_data and "easter_egg_list" in egg_data["egg"] and egg_data["egg"]["easter_egg_list"]:
+                easter_egg_list = egg_data["egg"]["easter_egg_list"]
+    except FileNotFoundError:
+        # 如果文件不存在，静默处理，使用默认彩蛋
+        pass
+    except (tomllib.TOMLDecodeError, KeyError, TypeError) as e:
+        # 如果文件格式错误或结构不正确，记录一个警告并使用默认彩蛋
+        logger.warning(f"无法从 {egg_config_path} 加载彩蛋: {e}")
+
 
     # 2. 从列表中随机选择一个
     text = random.choice(easter_egg_list)
