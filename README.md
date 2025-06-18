@@ -34,7 +34,8 @@ Amaidesu!
 2. **PluginManager**: 插件管理器，负责插件的加载和管理
 3. **BasePlugin**: 插件基类，定义插件的基本接口
 4. **PipelineManager**: 管道管理器，负责管道的加载和执行，用于在消息发送到 MaiCore 前进行预处理
-5. **插件系统**: 各种功能插件，如 TTS、STT、LLM 等。各个插件可以利用被注入的 AmaidesuCore 实例发送消息给 MaiCore，在 AmaidesuCore接收到消息时，会分发给注册了对应处理类型的插件进行处理。也可以将本插件作为服务注册到 AmaidesuCore 中，供其他插件使用。
+5. **ContextManager**: 上下文管理器，负责管理和聚合来自不同插件的上下文信息，为需要上下文信息的插件提供统一的数据来源。
+6. **插件系统**: 各种功能插件，如 TTS、STT、LLM 等。各个插件可以利用被注入的 AmaidesuCore 实例发送消息给 MaiCore，在 AmaidesuCore接收到消息时，会分发给注册了对应处理类型的插件进行处理。也可以将本插件作为服务注册到 AmaidesuCore 中，供其他插件使用。
 
 ### 消息处理时序图
 
@@ -112,47 +113,56 @@ python mock_maicore.py
 
 ### 插件列表
 
-| 插件名 | 功能描述 | 类型 |
-|-------|---------|------|
-| bili_danmaku | 连接B站直播间并接收弹幕消息，将弹幕转换为系统消息 | 输入 |
-| command_processor | 处理消息中的嵌入命令（如%{command:args}%），执行命令后移除标记 | 处理 |
-| console_input | 通过控制台输入模拟用户消息，支持配置用户信息和模板 | 输入 |
-| dg-lab-do | 控制DG-Lab设备，当检测到特定关键词时触发设备控制 | 输出 |
-| emotion_judge | 分析麦麦回复的情感，并触发对应的Live2D表情热键 | 处理 |
-| llm_text_processor | 基于大语言模型的文本处理工具，用于文本清理和STT结果修正 | 服务 |
-| prompt_context | 管理和聚合上下文信息，允许其他插件注册和获取上下文 | 服务 |
-| read_pingmu | 监控屏幕内容并通过视觉语言模型生成描述，作为上下文提供 | 输入 |
-| sticker | 处理表情贴纸，将表情图片发送到VTube Studio中显示 | 输出 |
-| stt | 语音转文字功能，通过麦克风采集音频并使用讯飞API识别为文本 | 输入 |
-| subtitle | 创建透明置顶窗口，显示AI语音的实时字幕 | 输出 |
-| tts | 文本转语音功能，使用Edge TTS引擎将文本转换为语音 | 输出 |
-| vtube_studio | 连接VTube Studio API，控制虚拟形象的表情、动作和热键 | 输出 |
+以下是当前项目中包含的插件列表。对于有详细说明的插件，可以直接点击链接查看其 `README.md` 文件。
+
+- [arknights](./src/plugins/arknights)
+- [bili_danmaku](./src/plugins/bili_danmaku/README.md)
+- [bili_danmaku_official](./src/plugins/bili_danmaku_official/README.md)
+- [bili_danmaku_selenium](./src/plugins/bili_danmaku_selenium/README.md)
+- [command_processor](./src/plugins/command_processor)
+- [console_input](./src/plugins/console_input/README.md)
+- [dg-lab-do](./src/plugins/dg-lab-do)
+- [dg_lab_service](./src/plugins/dg_lab_service/README.md)
+- [emotion_judge](./src/plugins/emotion_judge/README.md)
+- [funasr_stt](./src/plugins/funasr_stt)
+- [gptsovits_tts](./src/plugins/gptsovits_tts/README.md)
+- [keyword_action](./src/plugins/keyword_action/README.md)
+- [llm_text_processor](./src/plugins/llm_text_processor/README.md)
+- [message_replayer](./src/plugins/message_replayer)
+- [minecraft](./src/plugins/minecraft/README.md)
+- [mock_danmaku](./src/plugins/mock_danmaku/README.md)
+- [read_pingmu](./src/plugins/read_pingmu/README.md)
+- [sticker](./src/plugins/sticker/README.md)
+- [stt](./src/plugins/stt/README.md)
+- [subtitle](./src/plugins/subtitle/README.md)
+- [tts](./src/plugins/tts/README.md)
+- [vtube_studio](./src/plugins/vtube_studio/README.md)
+
 
 ### 插件依赖关系
 
+**注意: 此图表可能不是最新的，仅供参考。**
 以下图表展示了主要插件之间的服务依赖关系：
 
 ```mermaid
 flowchart TD
-    %% 服务插件 (中心)
-    PromptContext["Prompt Context<br>(上下文服务)"]:::service
-    LLMTextProcessor["LLM Text Processor<br>(文本处理服务)"]:::service
+    %% 核心服务
+    ContextManager["Context Manager<br>(上下文核心服务)"]:::core_service
     
-    %% 提供服务的插件
+    %% 服务插件
+    LLMTextProcessor["LLM Text Processor<br>(文本处理服务)"]:::service
     VTubeStudio["VTube Studio<br>(虚拟形象控制)"]:::output
     Subtitle["Subtitle<br>(字幕服务)"]:::output
     
     %% 服务依赖关系
-    BiliDanmaku["Bili Danmaku<br>(B站弹幕)"]:::input -->|使用| PromptContext
-    ReadPingmu["Read Pingmu<br>(屏幕监控)"]:::input -->|使用| PromptContext
-    DGLabDO["DG-Lab DO<br>(设备控制)"]:::output -->|使用| PromptContext
-    VTubeStudio -->|使用| PromptContext
+    BiliDanmaku["Bili Danmaku<br>(B站弹幕)"]:::input -->|使用| ContextManager
+    ReadPingmu["Read Pingmu<br>(屏幕监控)"]:::input -->|使用| ContextManager
+    VTubeStudio -->|使用| ContextManager
     
     STT["STT<br>(语音识别)"]:::input -->|使用 stt_correction| LLMTextProcessor
     TTS["TTS<br>(语音合成)"]:::output -->|使用 text_cleanup| LLMTextProcessor
     TTS -->|使用 subtitle_service| Subtitle
     
-    CommandProcessor["Command Processor<br>(命令处理)"]:::process -->|使用 vts_control| VTubeStudio
     EmotionJudge["Emotion Judge<br>(情感判断)"]:::process -->|使用 vts_control| VTubeStudio
     Sticker["Sticker<br>(表情贴纸)"]:::output -->|使用 vts_control| VTubeStudio
     
@@ -160,6 +170,7 @@ flowchart TD
     ConsoleInput["Console Input<br>(控制台输入)"]:::input
     
     %% 样式定义
+    classDef core_service fill:#f96,stroke:#333,stroke-width:2px
     classDef input fill:#6af,stroke:#333,stroke-width:1px
     classDef process fill:#fd6,stroke:#333,stroke-width:1px
     classDef service fill:#6d6,stroke:#333,stroke-width:2px
@@ -171,6 +182,7 @@ flowchart TD
         ProcessEx["处理插件"]:::process
         ServiceEx["服务插件"]:::service
         OutputEx["输出插件"]:::output
+        CoreSrvEx["核心服务"]:::core_service
     end
 ```
 
