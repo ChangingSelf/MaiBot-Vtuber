@@ -1,227 +1,78 @@
+# -*- coding: utf-8 -*-
 import asyncio
-import contextlib
-from typing import Any, Dict, Optional, List
-import time
-import mineland
+from typing import Any, Dict, Optional
 
-from src.core.plugin_manager import BasePlugin
-from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase
 
-from .state.game_state import MinecraftGameState
-from .events.event_manager import MinecraftEventManager
-from .actions.action_executor import MinecraftActionExecutor
-from .message.message_builder import MinecraftMessageBuilder
+from src.core.amaidesu_core import AmaidesuCore
+from src.core.plugin_manager import BasePlugin
+
+from .context import MinecraftContext
+from .modes.agent_handler import AgentModeHandler
+from .modes.base_handler import BaseModeHandler
+from .modes.maicore_handler import MaiCoreModeHandler
 
 
 class MinecraftPlugin(BasePlugin):
-    """Minecraft插件"""
+    """
+    Minecraft插件 - 支持MaiCore和智能体两种控制模式。
+    """
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
+        self.context = MinecraftContext(core, plugin_config)
+        self._setup_mode_handler()
 
-        config = self.plugin_config
+        self.handler: BaseModeHandler
 
-        # 基础配置
-        self.task_id: str = config.get("mineland_task_id", "playground")
-        self.server_host: str = config.get("server_host", "127.0.0.1")
-        self.server_port: int = config.get("server_port", 1746)
+    def _setup_mode_handler(self):
+        """初始化并设置当前控制模式的处理器"""
+        self.mode_handlers: Dict[str, BaseModeHandler] = {
+            "maicore": MaiCoreModeHandler(self.context),
+            "agent": AgentModeHandler(self.context),
+        }
+        initial_mode = self.plugin_config.get("control_mode", "maicore")
+        if initial_mode not in self.mode_handlers:
+            self.logger.warning(f"不支持的控制模式: {initial_mode}，使用默认maicore模式")
+            initial_mode = "maicore"
 
-        # 智能体配置（从配置文件读取）
-        self.agents_count: int = config.get("agents_count", 1)
-        self.agents_config: List[Dict[str, str]] = config.get("agents_config", [{"name": "Mai"}])
+        self.mode: str = initial_mode
+        self.handler: BaseModeHandler = self.mode_handlers[self.mode]
 
-        self.headless: bool = config.get("mineland_headless", True)
-        self.ticks_per_step: int = config.get("mineland_ticks_per_step", 20)
-
-        # 图像大小配置
-        image_size_config = config.get("mineland_image_size", [180, 320])
-        if isinstance(image_size_config, list) and len(image_size_config) == 2:
-            self.image_size: tuple[int, int] = tuple(image_size_config)
-        else:
-            self.logger.warning(f"配置的 image_size 无效: {image_size_config}，使用默认值 (180, 320)")
-            self.image_size: tuple[int, int] = (180, 320)
-
-        # 自动发送配置
-        self.auto_send_interval: float = config.get("auto_send_interval", 30.0)
-        self._auto_send_task: Optional[asyncio.Task] = None
-        self._last_response_time: float = 0.0
-
-        # MineLand实例
-        self.mland: Optional[mineland.MineLand] = None
-
-        # 核心组件 - 使用配置文件中的参数
-        action_executor_config = config.get("action_executor", {})
-        event_manager_config = config.get("event_manager", {})
-        game_state_config = config.get("game_state", {})
-
-        self.game_state = MinecraftGameState(game_state_config)
-        self.event_manager = MinecraftEventManager(
-            event_manager_config.get("max_event_history", 20),
-            config,  # 传递完整配置
-        )
-        self.action_executor = MinecraftActionExecutor(
-            self.game_state,
-            self.event_manager,
-            max_wait_cycles=action_executor_config.get("max_wait_cycles", 100),
-            wait_cycle_interval=action_executor_config.get("wait_cycle_interval", 0.1),
-            config=config,  # 传递完整配置
-        )
-        self.message_builder = MinecraftMessageBuilder(
-            platform=self.core.platform,
-            user_id=config.get("user_id", "minecraft_bot"),
-            nickname=config.get("nickname", "Minecraft Observer"),
-            group_id=config.get("group_id"),
-            config=config.get("prompt", {}),
-        )
+    async def _websocket_message_handler(self, message: MessageBase):
+        """处理传入的WebSocket消息并委派给当前模式的处理器。"""
+        asyncio.create_task(self.handler.handle_message(message))
 
     async def setup(self):
-        """初始化插件"""
+        """初始化插件、环境和当前模式"""
         await super().setup()
-        self.core.register_websocket_handler("*", self.handle_maicore_response)
+        await self.context.initialize_mineland()
+        agent_config = {
+            "default_agent_type": self.plugin_config.get("agent_manager", {}).get("default_agent_type", "simple"),
+            "agents": self.plugin_config.get("agents", {}),
+        }
+        await self.context.agent_manager.initialize(agent_config)
 
-        self.logger.info("Minecraft 插件已加载，正在初始化 MineLand 环境...")
-        try:
-            # 初始化MineLand环境
-            self.mland = mineland.MineLand(
-                server_host=self.server_host,
-                server_port=self.server_port,
-                agents_count=self.agents_count,
-                agents_config=self.agents_config,
-                headless=self.headless,
-                image_size=self.image_size,
-                enable_low_level_action=False,
-                ticks_per_step=self.ticks_per_step,
-            )
-            self.logger.info(f"MineLand 环境 (Task ID: {self.task_id}) 初始化成功。")
-
-            # 将 mland 实例注入到 action_executor 中
-            self.action_executor.set_mland(self.mland)
-
-            # 重置环境并初始化状态
-            initial_obs = self.mland.reset()
-            self.game_state.reset_state(initial_obs)
-            self.game_state.add_initial_goal_record()
-
-            self.logger.info(f"MineLand 环境已重置，收到初始观察: {len(initial_obs)} 个智能体。")
-            self.logger.info(f"已记录初始目标: {self.game_state.goal}")
-
-            # 发送初始状态
-            if self.game_state.current_obs:
-                await self._send_state_to_maicore()
-            else:
-                self.logger.warning("初始化时没有观察数据，将在自动发送循环中重试")
-
-            # 启动自动发送任务
-            self._auto_send_task = asyncio.create_task(self._auto_send_loop(), name="MinecraftAutoSend")
-            self.logger.info(f"已启动自动发送状态任务，间隔: {self.auto_send_interval}秒")
-
-        except Exception as e:
-            self.logger.exception(f"初始化 MineLand 环境失败: {e}")
-            return
-
-    async def _auto_send_loop(self):
-        """定期发送状态的循环任务"""
-        while True:
-            try:
-                await asyncio.sleep(self.auto_send_interval)
-
-                current_time = time.time()
-                if current_time - self._last_response_time > self.auto_send_interval:
-                    # 超时时间内未收到响应，刷新状态并重新发送
-                    await self.action_executor.execute_no_op()
-                    self.logger.info("超时时间内未收到响应，刷新状态并重新发送")
-                    if self.game_state.is_ready_for_next_action():
-                        # 如果智能体准备好，则发送状态
-                        await self._send_state_to_maicore()
-            except asyncio.CancelledError:
-                self.logger.info("自动发送状态任务被取消")
-                break
-            except Exception as e:
-                self.logger.error(f"自动发送状态时出错: {e}")
-                await asyncio.sleep(1)
-
-    async def _send_state_to_maicore(self):
-        """构建并发送当前Mineland状态给AmaidesuCore"""
-        try:
-            msg_to_maicore = self.message_builder.build_state_message(
-                self.game_state, self.event_manager, self.agents_config
-            )
-
-            # 如果消息为空，则执行no_op
-            if not msg_to_maicore:
-                await self.action_executor.execute_no_op()
-                return
-
-            await self.core.send_to_maicore(msg_to_maicore)
-            self.logger.info(
-                f"已将 Mineland 事件状态 (step {self.game_state.current_step_num}, done: {self.game_state.current_done}) 发送给 MaiCore。"
-            )
-        except Exception as e:
-            self.logger.error(f"构建或发送状态消息时出错: {e}")
-            raise
-
-    async def handle_maicore_response(self, message: MessageBase):
-        """处理从 MaiCore 返回的动作指令"""
-        self.logger.info(f"收到来自 MaiCore 的响应: {message.message_segment.data}")
-
-        # 更新最后响应时间
-        self._last_response_time = time.time()
-
-        if not self.mland:
-            self.logger.error("收到 MaiCore 响应，但 MineLand 环境未初始化。忽略消息。")
-            return
-
-        if message.message_segment.type not in ["text", "seglist"]:
-            self.logger.warning(
-                f"MaiCore 返回的消息不是文本消息: type='{message.message_segment.type}'. 期望是'text'或'seglist'。丢弃消息。"
-            )
-            return
-
-        if message.message_segment.type == "seglist":
-            # 取出其中的text类型消息
-            for seg in message.message_segment.data:
-                if seg.type == "text":
-                    message_json_str = seg.data.strip()
-                    self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
-                    break
-            else:
-                self.logger.warning("从 MaiCore 收到seglist消息，但其中没有text类型消息。丢弃消息。")
-                return
-        elif message.message_segment.type == "text":
-            message_json_str = message.message_segment.data.strip()
-            self.logger.debug(f"从 MaiCore 收到原始动作指令: {message_json_str}")
-
-        try:
-            # 执行动作（包括等待完成、状态更新等）
-            await self.action_executor.execute_maicore_action(message_json_str)
-
-            # 发送新的状态给 MaiCore
-            await self._send_state_to_maicore()
-
-        except Exception as e:
-            self.logger.exception(f"执行 Mineland step 或处理后续状态时出错: {e}")
+        self.core.register_websocket_handler(
+            "*",
+            self._websocket_message_handler,  # type: ignore
+        )
+        await self.handler.start()
+        self.logger.info(f"Minecraft插件初始化完成，模式: {self.mode}")
 
     async def cleanup(self):
         """清理插件资源"""
         self.logger.info("正在清理 Minecraft 插件...")
+        await self.context.agent_manager.cleanup()
 
-        # 停止自动发送任务
-        if self._auto_send_task:
-            self.logger.info("正在停止自动发送状态任务...")
-            self._auto_send_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._auto_send_task
-            self._auto_send_task = None
-
-        # 关闭MineLand环境
-        if self.mland:
+        if self.context.mland:
             try:
                 self.logger.info("正在关闭 MineLand 环境...")
-                self.mland.close()
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self.context.mland.close)
                 self.logger.info("MineLand 环境已关闭。")
             except Exception as e:
-                self.logger.exception(f"关闭 MineLand 环境时发生错误: {e}")
+                self.logger.error(f"关闭 MineLand 环境时出错: {e}", exc_info=True)
 
         self.logger.info("Minecraft 插件清理完毕。")
 

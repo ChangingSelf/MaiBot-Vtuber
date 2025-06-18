@@ -114,34 +114,51 @@ def update_config_template():
     else:
         print(f"发现 {len(missing_plugins)} 个缺失的插件条目: {', '.join(missing_plugins)}")
 
-        # 在清理后的行列表中找到插入点。
-        # 注意：我们选择直接操作文本行而不是重新序列化TOML对象，是为了
-        # 最大限度地保留原始文件中的注释和格式。这种方法的缺点是比
-        # 使用专业的TOML库（如 tomlkit）更脆弱，但在当前场景下是可接受的。
         try:
             plugins_section_index = next(i for i, line in enumerate(lines) if line.strip() == "[plugins]")
         except StopIteration:
             print("错误: 在配置文件中未找到 '[plugins]' 区域。无法添加新条目。")
             return
 
-        # 从 [plugins] 标题后开始，寻找插入新条目的最佳位置
-        # 目标是该区域的末尾，即下一个区域的开头或文件末尾
-        insert_index = plugins_section_index + 1
-        while insert_index < len(lines) and not lines[insert_index].strip().startswith("["):
-            insert_index += 1
+        # --- 新的、更智能的插入逻辑 ---
 
-        # 准备要插入的新行，并排序以保证每次运行结果一致
-        lines_to_insert = [f"enable_{name} = true\n" for name in sorted(missing_plugins)]
+        # 1. 在 [plugins] 区域内找到所有可用的空行"插槽"以及区域的结束位置
+        available_slots = []
+        section_end_index = plugins_section_index + 1
+        while section_end_index < len(lines) and not lines[section_end_index].strip().startswith("["):
+            if not lines[section_end_index].strip():
+                available_slots.append(section_end_index)
+            section_end_index += 1
+        
+        # 准备要插入的新行
+        lines_to_add = [f"enable_{name} = true\n" for name in sorted(missing_plugins)]
+        plugins_to_insert_in_bulk = []
 
-        # 优雅地处理空行，以保持格式美观
-        # 如果插入点之前不是空行，则在前面加一个空行
-        if insert_index > 0 and lines[insert_index - 1].strip() != "":
-            lines_to_insert.insert(0, "\n")
-        # 如果插入点不是文件末尾，且其后不是空行，则在后面加一个空行
-        if insert_index < len(lines) and lines[insert_index].strip() != "":
-            lines_to_insert.append("\n")
-
-        lines[insert_index:insert_index] = lines_to_insert
+        # 2. 首先使用找到的空行"插槽"来添加新条目
+        for line_content in lines_to_add:
+            if available_slots:
+                slot_index = available_slots.pop(0)
+                print(f"  -> 正在使用第 {slot_index + 1} 行的空行添加: {line_content.strip()}")
+                lines[slot_index] = line_content
+            else:
+                # 如果没有可用的插槽，则将剩余的条目收集起来以便批量插入
+                plugins_to_insert_in_bulk.append(line_content)
+        
+        # 3. 如果有需要批量插入的条目，则在区域末尾插入它们
+        if plugins_to_insert_in_bulk:
+            print(f"  -> 正在区域末尾批量添加 {len(plugins_to_insert_in_bulk)} 个剩余插件。")
+            """
+            # 优雅地处理空行，确保格式美观
+            # 只有当 [plugins] 区域不为空，且其最后一行不是空行时，才在前面加一个空行
+            if section_end_index > plugins_section_index + 1 and lines[section_end_index - 1].strip():
+                plugins_to_insert_in_bulk.insert(0, '\n')
+            
+            # 如果插入点不是文件末尾，且其后不是空行，则在后面加一个空行
+            if section_end_index < len(lines) and lines[section_end_index].strip():
+                plugins_to_insert_in_bulk.append('\n')
+            """
+            # 在区域末尾（下一个section之前）插入剩余的插件条目
+            lines[section_end_index:section_end_index] = plugins_to_insert_in_bulk
 
     # --- Final Step: Write back to file ---
     try:

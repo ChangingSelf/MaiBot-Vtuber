@@ -18,22 +18,18 @@ class MinecraftActionExecutor:
         self,
         game_state: MinecraftGameState,
         event_manager: MinecraftEventManager,
-        mland: Optional[mineland.MineLand] = None,
+        config: Dict[str, Any],
         max_wait_cycles: int = 100,
         wait_cycle_interval: float = 0.1,
-        config: Dict[str, Any] = None,
     ):
         self.game_state = game_state
         self.event_manager = event_manager
-        self.mland = mland
+        self.mland: Optional[mineland.MineLand] = None
         self.max_wait_cycles = max_wait_cycles
         self.wait_cycle_interval = wait_cycle_interval
+        self.config = config
 
-        # 从配置中读取参数
-        self.config = config or {}
         action_executor_config = self.config.get("action_executor", {})
-
-        # 配置化的参数
         self.agents_count = self.config.get("agents_count", 1)
         self.low_level_action_length = action_executor_config.get("low_level_action_length", 8)
 
@@ -74,7 +70,8 @@ class MinecraftActionExecutor:
             self.game_state.update_state(next_obs, next_code_info, next_event, next_done, next_task_info)
 
             # 更新事件历史
-            self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
+            if self.game_state.current_event:
+                self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
 
             logger.info(f"代码信息: {str(self.game_state.current_code_info)}")
             logger.info(f"事件信息: {str(self.game_state.current_event)}")
@@ -103,12 +100,58 @@ class MinecraftActionExecutor:
             self.game_state.update_state(next_obs, next_code_info, next_event, next_done, next_task_info)
 
             # 更新事件历史
-            self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
+            if self.game_state.current_event:
+                self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
 
             logger.debug(f"no_op执行完毕，当前步骤: {self.game_state.current_step_num}")
 
         except Exception as e:
             logger.error(f"执行no_op时出错: {e}")
+
+    async def execute_action(self, action: mineland.Action):
+        """执行智能体生成的动作
+
+        Args:
+            action: 智能体生成的mineland.Action对象
+        """
+        if not self.mland:
+            raise RuntimeError("MineLand 实例未设置，无法执行动作")
+
+        # 首先检查是否准备好执行新动作
+        if not self.game_state.is_ready_for_next_action():
+            logger.info("上一个动作尚未完成，等待动作完成...")
+            await self._wait_for_action_completion()
+
+        try:
+            # 对于单智能体，将动作包装成列表
+            if self.agents_count == 1:
+                actions = [action]
+            else:
+                # 多智能体情况下需要特殊处理
+                actions = [action] * self.agents_count
+
+            # 执行动作
+            next_obs, next_code_info, next_event, next_done, next_task_info = self.mland.step(action=actions)
+
+            # 更新状态
+            self.game_state.update_state(next_obs, next_code_info, next_event, next_done, next_task_info)
+
+            # 更新事件历史
+            if self.game_state.current_event:
+                self.event_manager.update_event_history(self.game_state.current_event, self.game_state.current_step_num)
+
+            logger.debug(f"智能体动作执行完毕，当前步骤: {self.game_state.current_step_num}")
+            logger.debug(f"代码信息: {str(self.game_state.current_code_info)}")
+            logger.debug(f"事件信息: {str(self.game_state.current_event)}")
+
+            # 检查是否完成任务
+            if self.game_state.get_effective_done():
+                logger.info(f"任务在步骤 {self.game_state.current_step_num - 1} 完成。将重置环境。")
+                self._reset_environment()
+
+        except Exception as e:
+            logger.error(f"执行智能体动作时出错: {e}")
+            raise
 
     async def _wait_for_action_completion(self):
         """等待当前动作完成，在动作未完成时执行no_op操作"""
