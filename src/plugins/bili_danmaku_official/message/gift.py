@@ -109,7 +109,7 @@ class GiftMessage(BiliBaseMessage):
         """构建礼物消息的MessageBase对象"""
 
         # 创建基础消息信息
-        message_info = await self._create_base_message_info(core, config, context_tags, template_items)
+        message_info = await self._create_base_message_info(core, config, context_tags, template_items, 0.7)
 
         # 创建消息段 - 礼物消息
         gift_name = self.gift_name or "礼物"

@@ -60,7 +60,7 @@ class SuperChatMessage(BiliBaseMessage):
         """构建醒目留言消息的MessageBase对象"""
 
         # 创建基础消息信息
-        message_info = await self._create_base_message_info(core, config, context_tags, template_items)
+        message_info = await self._create_base_message_info(core, config, context_tags, template_items, 1)
 
         # 创建消息段 - 醒目留言消息
         if self.message.strip():

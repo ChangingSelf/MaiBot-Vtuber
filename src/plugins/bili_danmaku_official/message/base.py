@@ -70,6 +70,7 @@ class BiliBaseMessage:
         config: Dict[str, Any],
         context_tags: Optional[list] = None,
         template_items: Optional[Dict[str, Any]] = None,
+        maimcore_reply_probability_gain: float = 0,
     ) -> BaseMessageInfo:
         """创建基础消息信息对象"""
 
@@ -95,6 +96,8 @@ class BiliBaseMessage:
 
         # 附加配置
         additional_config = config.get("additional_config", {}).copy()
+        if maimcore_reply_probability_gain > 0 and maimcore_reply_probability_gain <= 1:
+            additional_config["maimcore_reply_probability_gain"] = maimcore_reply_probability_gain
 
         # 模板信息（可选）
         template_info = await self._create_template_info(core, config, context_tags, template_items, room_id)
