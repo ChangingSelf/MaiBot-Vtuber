@@ -335,6 +335,9 @@ class TTSPlugin(BasePlugin):
             chunk_duration = 0.1  # 100ms
             chunk_samples = int(samplerate * chunk_duration)
 
+            # 获取当前事件循环，用于在回调函数中安全调度协程
+            loop = asyncio.get_running_loop()
+
             # 使用回调函数进行流式播放和口型同步
             chunk_index = 0
 
@@ -362,10 +365,15 @@ class TTSPlugin(BasePlugin):
                             if len(analysis_chunk) > 0:
                                 # 将音频数据转换为字节格式
                                 chunk_bytes = analysis_chunk.tobytes()
-                                # 创建异步任务进行口型同步分析
-                                asyncio.create_task(
-                                    vts_lip_sync_service.process_tts_audio(chunk_bytes, sample_rate=samplerate)
-                                )
+                                # 安全地在主事件循环中调度口型同步分析协程
+                                try:
+                                    asyncio.run_coroutine_threadsafe(
+                                        vts_lip_sync_service.process_tts_audio(chunk_bytes, sample_rate=samplerate),
+                                        loop
+                                    )
+                                except Exception:
+                                    # 避免在回调中记录太多日志，可能影响音频性能
+                                    pass
                     else:
                         # 音频播放完成，输出静音
                         outdata.fill(0)
@@ -384,7 +392,7 @@ class TTSPlugin(BasePlugin):
                 callback=audio_callback,
                 device=self.output_device_index,
                 blocksize=chunk_samples,
-            ) as stream:
+            ) as _stream:  # 使用下划线前缀表示有意忽略此变量
                 # 计算播放时长并等待播放完成
                 play_duration = len(audio_data) / samplerate
                 await asyncio.sleep(play_duration + 0.5)  # 额外等待0.5秒确保播放完成
