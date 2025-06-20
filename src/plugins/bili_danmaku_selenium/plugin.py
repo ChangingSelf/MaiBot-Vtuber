@@ -178,6 +178,9 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         # --- 注册信号处理器 ---
         self._setup_signal_handlers()
 
+        # --- 真实送礼验证 ---
+        self.gift_verify=self.plugin_config.get("gift_verify","")
+
     def _setup_signal_handlers(self):
         """设置信号处理器以实现优雅退出"""
         def signal_handler(signum, frame):
@@ -419,7 +422,8 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
                         
                     await self._fetch_and_process_messages()
                     consecutive_errors = 0  # 重置错误计数
-
+                    await self._fetch_and_process_gift() #处理礼物消息
+                    
                     # 定期清理已处理消息记录
                     current_time = time.time()
                     if current_time - self.last_cleanup_time > 300:  # 5分钟清理一次
@@ -623,6 +627,160 @@ class BiliDanmakuSeleniumPlugin(BasePlugin):
         fetch_end_time = time.time()
         self.logger.debug(f"[计时] 整个获取弹幕流程耗时: {(fetch_end_time - fetch_start_time) * 1000:.1f}ms")
 
+    async def _fetch_and_process_gift(self):
+        """获取并处理礼物消息"""
+        fetch_start_time = time.time()
+        self.logger.debug(f"[计时] 开始获取礼物消息 - {fetch_start_time:.3f}")
+
+        if not self.driver:
+            self.logger.warning("WebDriver 未初始化，跳过本次检查。")
+            return
+
+        def _get_gifts():
+            get_msg_start_time = time.time()
+            self.logger.debug(f"[计时] 开始执行 _get_gifts - {get_msg_start_time:.3f}")
+
+            gifts = []
+            try:
+                # 计时：获取礼物元素
+                danmaku_search_start = time.time()
+                danmaku_elements = self.driver.find_elements(By.CSS_SELECTOR, self.gift_selector)
+                danmaku_search_end = time.time()
+                self.logger.debug(
+                    f"[计时] 查找礼物元素耗时: {(danmaku_search_end - danmaku_search_start) * 1000:.1f}ms, 找到 {len(danmaku_elements)} 个元素"
+                )
+
+                # 第一次加载时，标记所有已存在的礼物为已处理
+                if not self.initial_danmaku_loaded_gift:
+                    for element in danmaku_elements:
+                        element_id = self._generate_element_id_gift(element)
+                        self.processed_gifts.add(element_id)
+                    self.initial_danmaku_loaded_gift = True
+                    self.logger.info("初始化完成，已标记现有礼物为已处理状态")
+                    return []
+
+                pre_max = (
+                    self.max_messages_per_check
+                    if len(danmaku_elements) > self.max_messages_per_check
+                    else len(danmaku_elements)
+                )
+                self.logger.debug(f"[计时] 准备处理最新的 {pre_max} 条礼物")
+
+                # 计时：处理礼物元素
+                process_danmaku_start = time.time()
+                processed_count = 0
+                for element in danmaku_elements[-pre_max:]:  # 只处理最新的几条
+                    try:
+                        # 生成元素ID
+                        element_id = self._generate_element_id_gift(element)
+                        if element_id in self.processed_gifts:
+                            # self.logger.debug(f"[计时] 跳过已处理的元素: {element_id}")
+                            continue
+
+                        # 提取礼物数据（从 data 属性获取）
+                        username_search_start = time.time()
+                        try:
+                            # 从 data-* 属性中提取信息
+                            username = element.get_attribute("data-uname") or "未知用户"
+                            user_id = element.get_attribute("data-uid") or ""
+                            send_time=element.get_attribute("data-timestamp") or 0
+                            gift_name = element.find_element(By.CSS_SELECTOR,".gift-name.v-bottom").text or ""
+                            gift_count = element.find_element(By.CSS_SELECTOR,".gift-count.v-bottom").text or 0
+                            self.logger.debug(f"提取到礼物信息: 用户={username}, ID={user_id}, 内容={gift_name}")
+                            if(time.time()-int(send_time)>15):
+                                self.logger.warning(f"是15秒之前的消息，跳过处理: {element_id}")
+                                continue
+                            if not gift_name:
+                                self.logger.warning(f"礼物名称为空，跳过处理: {element_id}")
+                                continue
+                            if not gift_count:
+                                gift_count=1
+                        # text=time.strftime("%Y年%m月%d日 %H:%M:%S", time.localtime()) 
+                        except Exception as e:
+                            self.logger.warning(f"提取礼物属性失败: {e}")
+                            continue
+
+                        username_search_end = time.time()
+                        self.logger.debug(
+                            f"[计时] 提取用户信息耗时: {(username_search_end - username_search_start) * 1000:.1f}ms"
+                        )
+
+                        gift = DanmakuMessage(
+                            username=username,
+                            text=f"{self.gift_verify}你收到{gift_count}个名称为“{gift_name}”的礼物，请说一段不超过20字祝福语来感谢ta，感谢语以“谢谢{username}送的{gift_name}，祝你”为开头",
+                            timestamp=float(send_time),
+                            user_id=user_id,
+                            element_id=element_id,
+                            message_type="gift",
+                            gift_name=gift_name,
+                            gift_count=gift_count
+                        )
+                        gifts.append(gift)
+                        self.processed_gifts.add(element_id)
+                        processed_count += 1
+
+                    except NoSuchElementException:
+                        self.logger.debug("[计时] 礼物元素结构变化，跳过")
+                        continue  # 元素结构可能变化，跳过
+                    except Exception as e:
+                        self.logger.warning(f"[计时] 处理单个礼物元素时出错: {e}")
+                        continue
+
+                process_danmaku_end = time.time()
+                self.logger.debug(
+                    f"[计时] 处理 {processed_count} 条礼物耗时: {(process_danmaku_end - process_danmaku_start) * 1000:.1f}ms"
+                )
+
+            except Exception as e:
+                self.logger.warning(f"[计时] 获取页面元素时出错: {e}")
+
+            get_msg_end_time = time.time()
+            self.logger.debug(
+                f"[计时] _get_gifts 总耗时: {(get_msg_end_time - get_msg_start_time) * 1000:.1f}ms, 获得 {len(gifts)} 条礼物消息"
+            )
+            return gifts
+        try:
+            # 计时：线程池执行
+            executor_start_time = time.time()
+            gifts = await asyncio.get_event_loop().run_in_executor(None, _get_gifts)
+            executor_end_time = time.time()
+            self.logger.debug(f"[计时] 线程池执行耗时: {(executor_end_time - executor_start_time) * 1000:.1f}ms")
+            if gifts:
+                # 计时：消息处理
+                msg_process_start = time.time()
+                self.logger.info(f"收到 {len(gifts)} 条新消息")
+                for gift in gifts:
+                    try:
+                        msg_create_start = time.time()
+                        message_base = await self._create_message_base(gift)
+                        msg_create_end = time.time()
+                        self.logger.debug(
+                            f"[计时] 创建 MessageBase 耗时: {(msg_create_end - msg_create_start) * 1000:.1f}ms"
+                        )
+                        if message_base:
+                            self.logger.debug(f"成功创建消息: {gift.username}: {gift.text}")
+                            
+                            # 将消息缓存到消息缓存服务中
+                            self.message_cache_service.cache_message(message_base)
+                            self.logger.debug(f"消息已缓存: {message_base.message_info.message_id}")
+                            
+                            await self.core.send_to_maicore(message_base)
+                    except Exception as e:
+                        self.logger.error(f"处理消息时出错: {gift} - {e}", exc_info=True)
+
+                msg_process_end = time.time()
+                self.logger.debug(
+                    f"[计时] 处理 {len(gifts)} 条消息耗时: {(msg_process_end - msg_process_start) * 1000:.1f}ms"
+                )
+            else:
+                self.logger.debug("[计时] 没有新的消息")
+
+        except Exception as e:
+            self.logger.warning(f"获取礼物时发生错误: {e}")
+        
+        fetch_end_time = time.time()
+        self.logger.debug(f"[计时] 整个获取礼物流程耗时: {(fetch_end_time - fetch_start_time) * 1000:.1f}ms")
+    
     def _generate_element_id(self, element) -> str:
         """为元素生成唯一ID"""
         try:  # 使用元素的位置和文本内容生成ID
