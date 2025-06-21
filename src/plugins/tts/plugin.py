@@ -17,13 +17,18 @@ dependencies_ok = True
 try:
     import edge_tts
 except ImportError:
-    print("依赖缺失: 请运行 'pip install edge-tts' 来使用 TTS 功能。", file=sys.stderr)
+    print("依赖缺失: 请运行 'pip install edge-tts' 来使用 Edge TTS 功能。", file=sys.stderr)
     dependencies_ok = False
 try:
     import sounddevice as sd
     import soundfile as sf
 except ImportError:
     print("依赖缺失: 请运行 'pip install sounddevice soundfile' 来使用音频播放功能。", file=sys.stderr)
+    dependencies_ok = False
+try:
+    import aiohttp
+except ImportError:
+    print("依赖缺失: 请运行 'pip install aiohttp' 来使用 Qwen TTS 功能。", file=sys.stderr)
     dependencies_ok = False
 # try:
 #     from openai import AsyncOpenAI, APIConnectionError, RateLimitError, APIStatusError
@@ -45,6 +50,14 @@ except ModuleNotFoundError:
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase  # Import MessageBase for type hint
+
+# --- TTS Engines ---
+try:
+    from .omni_tts import OmniTTS
+    OMNI_TTS_AVAILABLE = True
+except ImportError as e:
+    print(f"警告: 无法导入 OmniTTS: {e}", file=sys.stderr)
+    OMNI_TTS_AVAILABLE = False
 
 # --- Plugin Configuration Loading ---
 # 移除旧的配置加载相关变量和函数
@@ -80,13 +93,46 @@ class TTSPlugin(BasePlugin):
         super().__init__(core, plugin_config)
         self.tts_config = self.plugin_config  # 直接使用注入的 plugin_config
 
-        # --- TTS Service Initialization (from tts_service.py) ---
-        tts_settings = self.tts_config.get("tts", {})
-        self.voice = tts_settings.get("voice", "zh-CN-XiaoxiaoNeural")
-        self.output_device_name = tts_settings.get("output_device_name") or None  # Explicit None if empty string
+        # --- Edge TTS Service Initialization ---
+        self.voice = self.tts_config.get("voice", "zh-CN-XiaoxiaoNeural")
+        self.output_device_name = self.tts_config.get("output_device_name") or None  # Explicit None if empty string
         self.output_device_index = self._find_device_index(self.output_device_name, kind="output")
         self.tts_lock = asyncio.Lock()
-        self.logger.info(f"TTS 服务组件初始化。语音: {self.voice}, 输出设备: {self.output_device_name or '默认设备'}")
+        
+        # --- Omni TTS Initialization ---
+        self.omni_tts = None
+        omni_config = self.tts_config.get("omni_tts", {})
+        self.omni_enabled = omni_config.get("enabled", False)
+        
+        if self.omni_enabled:
+            if not OMNI_TTS_AVAILABLE:
+                self.logger.error("Omni TTS 不可用，但在配置中被启用。请检查依赖。")
+                raise ImportError("Omni TTS 不可用")
+            
+            api_key = omni_config.get("api_key") or os.environ.get("DASHSCOPE_API_KEY")
+            
+            if not api_key:
+                self.logger.error("Omni TTS API 密钥未配置。请在配置文件中设置 api_key 或设置环境变量 DASHSCOPE_API_KEY")
+                raise ValueError("Omni TTS API 密钥未配置")
+            
+            # 获取后处理配置
+            post_processing = omni_config.get("post_processing", {})
+            
+            self.omni_tts = OmniTTS(
+                api_key=api_key,
+                model_name=omni_config.get("model_name", "qwen2.5-omni-7b"),
+                voice=omni_config.get("voice", "Chelsie"),
+                format=omni_config.get("format", "wav"),
+                base_url=omni_config.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                enable_post_processing=post_processing.get("enabled", False),
+                volume_reduction_db=post_processing.get("volume_reduction", 0.0),
+                noise_level=post_processing.get("noise_level", 0.0),
+                blow_up_probability=omni_config.get("blow_up_probability", 0.0),
+                blow_up_texts=omni_config.get("blow_up_texts", [])
+            )
+            self.logger.info(f"Omni TTS 初始化完成: {omni_config.get('model_name', 'qwen2.5-omni-7b')}")
+        
+        self.logger.info(f"TTS 服务组件初始化。Omni TTS: {'启用' if self.omni_enabled else '禁用'}, Edge语音: {self.voice}, 输出设备: {self.output_device_name or '默认设备'}")
 
         # --- UDP Broadcast Initialization (from tts_monitor.py / mmc_client.py) ---
         udp_config = self.tts_config.get("udp_broadcast", {})
@@ -221,9 +267,9 @@ class TTSPlugin(BasePlugin):
                 self.logger.warning(f"发送 TTS 内容到 UDP 监听器失败: {e}")
 
     async def _speak(self, text: str):
-        """执行 Edge TTS 合成和播放，并通知 Subtitle Service。"""
-        if "edge_tts" not in globals() or "sf" not in globals() or "sd" not in globals():
-            self.logger.error("缺少必要的 TTS 或音频库 (edge_tts, soundfile, sounddevice)，无法播放。")
+        """执行 TTS 合成和播放，并通知 Subtitle Service。支持多种 TTS 引擎。"""
+        if "sf" not in globals() or "sd" not in globals():
+            self.logger.error("缺少必要的音频库 (soundfile, sounddevice)，无法播放。")
             return
 
         self.logger.debug(f"请求播放: '{text[:30]}...'")
@@ -232,20 +278,42 @@ class TTSPlugin(BasePlugin):
             tmp_filename = None
             duration_seconds: Optional[float] = None  # 初始化时长变量
             try:
-                # --- TTS 合成 ---
-                self.logger.info(f"TTS 正在合成: {text[:30]}...")
-                communicate = edge_tts.Communicate(text, self.voice)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=tempfile.gettempdir()) as tmp_file:
-                    tmp_filename = tmp_file.name
-                self.logger.debug(f"创建临时文件: {tmp_filename}")
-                await asyncio.to_thread(communicate.save_sync, tmp_filename)
-                self.logger.debug(f"音频已保存到临时文件: {tmp_filename}")
+                # --- 选择 TTS 引擎进行合成 ---
+                if self.omni_enabled and self.omni_tts:
+                    # --- Omni TTS 合成 ---
+                    self.logger.info(f"使用 Omni TTS 引擎合成: {text[:30]}...")
+                    audio_data = await self.omni_tts.generate_audio(text)
+                    
+                    # 创建临时文件以计算时长
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav", dir=tempfile.gettempdir()) as tmp_file:
+                        tmp_filename = tmp_file.name
+                        tmp_file.write(audio_data)
+                    self.logger.debug(f"Omni TTS 音频已保存到临时文件: {tmp_filename}")
+                    
+                    # 读取音频并计算时长
+                    audio_array, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype="float32")
+                    
+                else:
+                    # --- Edge TTS 合成 ---
+                    self.logger.info(f"使用 Edge TTS 引擎合成: {text[:30]}...")
+                    if "edge_tts" not in globals():
+                        self.logger.error("Edge TTS 库不可用，无法使用 Edge TTS 引擎。")
+                        return
+                    
+                    communicate = edge_tts.Communicate(text, self.voice)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", dir=tempfile.gettempdir()) as tmp_file:
+                        tmp_filename = tmp_file.name
+                    self.logger.debug(f"创建临时文件: {tmp_filename}")
+                    await asyncio.to_thread(communicate.save_sync, tmp_filename)
+                    self.logger.debug(f"Edge TTS 音频已保存到临时文件: {tmp_filename}")
 
-                # --- 读取音频并计算时长 ---
-                audio_data, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype="float32")
+                    # 读取音频并计算时长
+                    audio_array, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype="float32")
+
+                # --- 计算音频时长 ---
                 self.logger.info(f"读取音频完成，采样率: {samplerate} Hz")
-                if samplerate > 0 and isinstance(audio_data, np.ndarray):
-                    duration_seconds = len(audio_data) / samplerate
+                if samplerate > 0 and isinstance(audio_array, np.ndarray):
+                    duration_seconds = len(audio_array) / samplerate
                     self.logger.info(f"计算得到音频时长: {duration_seconds:.3f} 秒")
                 else:
                     self.logger.warning("无法计算音频时长 (采样率或数据无效)")
@@ -268,7 +336,7 @@ class TTSPlugin(BasePlugin):
                 # --- 播放音频 ---
                 self.logger.info(f"开始播放音频 (设备索引: {self.output_device_index})...")
                 await asyncio.to_thread(
-                    sd.play, audio_data, samplerate=samplerate, device=self.output_device_index, blocking=True
+                    sd.play, audio_array, samplerate=samplerate, device=self.output_device_index, blocking=True
                 )
                 self.logger.info("TTS 播放完成。")
 

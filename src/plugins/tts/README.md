@@ -1,30 +1,54 @@
 # Amaidesu TTS 插件
 
-TTS（语音合成）插件是 Amaidesu VTuber 项目的核心组件，负责将文本消息转换为语音并播放给用户。插件使用 Microsoft Edge TTS 引擎实现高质量语音合成，并支持与其他插件如文本清理服务和字幕服务的集成。
+TTS（语音合成）插件是 Amaidesu VTuber 项目的核心组件，负责将文本消息转换为语音并播放给用户。插件支持多种 TTS 引擎：**Microsoft Edge TTS** 和 **阿里云 Qwen-Omni**，并支持与其他插件如文本清理服务和字幕服务的集成。
 
 ## 功能特点
 
 - 接收并处理 WebSocket 文本消息
-- 使用 Edge TTS 进行语音合成
+- **多引擎支持**: 
+  - Microsoft Edge TTS（免费，本地处理）
+  - 阿里云 Qwen-Omni（需要 API 密钥，更自然的语音合成）
 - 支持选择不同语音角色和输出音频设备
 - 支持通过 UDP 广播 TTS 内容（用于外部监听）
 - 集成文本清理服务（可选）
 - 发送播放信息到字幕服务（可选）
 - 智能错误处理和资源管理
+- **Qwen TTS 音频后处理**：支持音量调节、噪声添加等特效
 
 ## 依赖
 
 ### 必需依赖
 
-- `edge-tts`: Microsoft Edge TTS 引擎
+#### 通用依赖
 - `sounddevice`: 音频播放
 - `soundfile`: 音频文件处理
 - `numpy`: 用于音频数据处理
+
+#### Edge TTS 依赖
+- `edge-tts`: Microsoft Edge TTS 引擎
+
+#### Qwen TTS 依赖
+- `aiohttp`: HTTP 客户端（用于调用 Qwen API）
+- `pydub`: 音频后处理（可选，用于音频特效）
 
 ### 可选服务依赖
 
 - `text_cleanup`: 用于优化 TTS 的文本（由 LLM Text Processor 插件提供）
 - `subtitle_service`: 用于显示正在播放的文本（由 Subtitle 插件提供）
+
+### 安装依赖
+
+```bash
+# 基础依赖
+pip install sounddevice soundfile numpy
+
+# Edge TTS（如果使用 Edge TTS 引擎）
+pip install edge-tts
+
+# Qwen TTS（如果使用 Qwen TTS 引擎）
+pip install aiohttp
+pip install pydub  # 可选，用于音频后处理
+```
 
 ## 消息处理流程
 
@@ -189,12 +213,29 @@ def _broadcast_text(self, text: str):
 
 插件通过 `config.toml` 文件进行配置，主要配置项包括：
 
+### 基本配置
+
 ```toml
 [tts]
 # 使用的 Edge TTS 语音模型
 voice = "zh-CN-XiaoxiaoNeural"
 # 指定输出音频设备名称 (留空或注释掉以使用系统默认设备)
 output_device_name = ""
+
+# 大模型TTS配置
+[omni_tts]
+enabled = false          # 是否启用大模型TTS
+api_key = ""             # 阿里云百炼API Key，留空则使用环境变量DASHSCOPE_API_KEY
+model_name = "qwen2.5-omni-7b"  # 模型名称
+voice = "Chelsie"         # 语音音色
+format = "wav"           # 音频格式
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # API基础URL
+
+# 音频后处理配置
+[omni_tts.post_processing]
+enabled = false          # 是否启用音频后处理
+volume_reduction = 0.0  # 音量降低程度(dB)
+noise_level = 0.0      # 杂音强度，0-1之间的浮点数
 
 [udp_broadcast]
 # 是否将最终要播报的文本通过 UDP 广播出去
@@ -205,6 +246,30 @@ host = "127.0.0.1"
 port = 9998
 ```
 
+### 引擎选择说明
+
+默认情况下，插件使用 Edge TTS 引擎。当 `omni_tts.enabled = true` 时，会优先使用 Omni TTS 引擎。
+
+#### Edge TTS 引擎
+- **优点**: 免费、无需网络、响应快速
+- **缺点**: 语音相对机械，选择有限
+- **适用**: 测试开发、网络受限环境
+
+#### Omni TTS 引擎  
+- **优点**: 语音自然、支持多种音色、可后处理
+- **缺点**: 需要 API 密钥、依赖网络、有成本
+- **适用**: 生产环境、追求高质量语音
+
+### API 密钥配置
+
+获取阿里云百炼 API 密钥：
+1. 访问 [阿里云百炼控制台](https://bailian.console.aliyun.com/)
+2. 创建应用并获取 API 密钥
+3. 在配置文件中设置 `api_key` 或设置环境变量：
+   ```bash
+   export DASHSCOPE_API_KEY="your-api-key-here"
+   ```
+
 ## 优化与扩展
 
 1. **多语言支持**：可通过配置不同的 `voice` 值支持多种语言
@@ -213,10 +278,56 @@ port = 9998
 4. **缓存机制**：对常用语句进行缓存以减少 TTS 调用
 5. **情感分析**：集成情感分析插件以自动选择合适的语音风格
 
+## 使用示例
+
+### 启用 Omni TTS
+
+1. 修改配置文件：
+   ```toml
+   [omni_tts]
+   enabled = true
+   api_key = "your-api-key-here"
+   model_name = "qwen2.5-omni-7b"
+   voice = "Chelsie"
+   ```
+
+2. 重启 Amaidesu 服务
+
+### 启用音频后处理
+
+```toml
+[omni_tts.post_processing]
+enabled = true
+volume_reduction = 2.0  # 降低 2dB 音量
+noise_level = 0.1       # 添加 10% 强度的背景噪声
+```
+
 ## 开发注意事项
 
 1. 确保正确安装所有依赖项
 2. 注意音频设备兼容性，特别是在跨平台场景
-3. 优先处理 `edge-tts` 和音频播放库的异常，确保程序稳定
-4. 考虑长文本的分段处理以提高响应速度
-5. 确保临时文件的正确清理，避免磁盘空间占用 
+3. **Qwen TTS 需要网络连接**，确保网络稳定
+4. **API 密钥安全**：不要将密钥提交到版本控制系统
+5. 考虑长文本的分段处理以提高响应速度
+6. 确保临时文件的正确清理，避免磁盘空间占用
+7. **成本控制**：Qwen TTS 按调用收费，注意使用频率
+
+## 故障排除
+
+### Omni TTS 相关问题
+
+- **API 密钥错误**: 检查密钥是否正确设置
+- **网络连接问题**: 确保可以访问阿里云服务
+- **音频后处理失败**: 检查是否安装了 `pydub` 库
+- **依赖缺失**: 运行 `pip install aiohttp pydub` 安装必要依赖
+- **未启用**: 确保配置文件中 `omni_tts.enabled = true`
+
+### Edge TTS 相关问题
+
+- **语音模型不支持**: 检查语音模型名称是否正确
+- **网络问题**: Edge TTS 首次使用时需要下载模型
+
+### 通用问题
+
+- **音频设备问题**: 检查 `output_device_name` 配置
+- **权限问题**: 确保有音频设备访问权限 
