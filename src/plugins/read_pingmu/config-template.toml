@@ -1,5 +1,5 @@
 # 插件配置
-[screen_monitor]
+[read_pingmu]
 enabled = true
 
 # 截图频率（秒）
@@ -26,3 +26,48 @@ request_timeout = 15
 # --- Prompt 上下文配置 ---
 context_provider_name = "screen_content_latest"
 context_priority = 20
+
+# --- 消息发送配置 ---
+send_messages = true  # 是否发送屏幕描述消息到MaiCore
+context_tags = ["screen", "vision", "context"]  # 获取上下文时的标签过滤
+
+# --- 消息配置 ---
+[read_pingmu.message_config]
+# 用户信息
+user_id = "screen_monitor"
+user_nickname = "屏幕监控助手"
+user_cardname = "Screen Assistant"
+
+# 是否启用群组信息
+enable_group_info = true
+group_id = "screen_monitor"
+group_name = "屏幕监控系统"
+
+# 格式信息
+content_format = ["text"]
+accept_format = ["text", "emoji", "reply"]
+
+# 是否启用模板信息
+enable_template_info = false
+template_name = "screen_monitor"
+
+# 附加配置
+[read_pingmu.message_config.additional_config]
+source = "screen_monitor"
+priority = "normal"
+
+# --- 模板项（如果启用模板信息） ---
+[read_pingmu.template_items]
+reasoning_prompt_main = '''
+# 屏幕内容分析
+
+你正在接收来自屏幕监控系统的实时描述。请基于这些信息：
+
+1. 理解当前屏幕上显示的内容
+2. 分析用户可能在进行的活动
+3. 提供相关的帮助或建议
+
+当前屏幕状态：{screen_description}
+
+请保持简洁、有用的回应。
+'''
