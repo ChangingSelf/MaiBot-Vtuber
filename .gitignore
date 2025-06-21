@@ -183,3 +183,6 @@ logs/
 src/plugins/mock_danmaku/data/
 *.jsonl
 *.sqlite3
+MineLand/
+gtk-installer.exe
+gtk-installer.exe
