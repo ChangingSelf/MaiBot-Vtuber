@@ -48,7 +48,8 @@ gift_text_selector = ".gift-item-text"
 
 # 模板信息配置
 enable_template_info = false
-
+[bili_danmaku_selenium]
+gift_verify="【重要提示，验证码:】"
 # 模板项目配置（当 enable_template_info = true 时使用）
 [template_items]
 # 示例模板项目
