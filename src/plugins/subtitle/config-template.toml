@@ -1,16 +1,29 @@
-
-[subtitle_display] 
+[subtitle]
 enabled = true
 
 # --- 窗口样式 ---
-window_width = 800      # 窗口宽度 (像素)
-window_height = 100     # 窗口高度 (像素)
-window_offset_y = 100   # 窗口底部距离屏幕底部的距离 (像素)
+window_width = 800                 # 窗口宽度 (像素)
+window_height = 100                # 窗口高度 (像素)
+window_offset_y = 100              # 窗口底部距离屏幕底部的距离 (像素)
 font_family = "Microsoft YaHei UI" # 字体 (确保系统支持)
-font_size = 28          # 字号
-font_weight = "bold"    # 字重 (normal, bold)
-text_color = "white"    # 文字颜色 (CSS 颜色名或 #RRGGBB)
-bg_color = "black"      # 背景色 (用于透明效果，通常设为黑色或一个不常用的颜色)
+font_size = 28                     # 字号
+font_weight = "bold"               # 字重 (normal, bold)
+text_color = "white"               # 文字颜色 (CSS 颜色名或 #RRGGBB)
+
+# --- 文字描边设置 ---
+outline_enabled = true  # 是否启用文字描边
+outline_color = "black" # 描边颜色
+outline_width = 2       # 描边粗细 (像素)
+
+# --- 背景设置 ---
+background_enabled = true    # 是否显示半透明背景
+background_color = "#000000" # 背景颜色
+background_opacity = 0.5     # 背景透明度 (0.0-1.0, 0完全透明, 1完全不透明)
+corner_radius = 15           # 背景圆角半径
 
 # --- 行为 ---
-fade_delay_seconds = 5  # 语音停止后多少秒开始清除文字 (设置为 0 永不清除) 
+fade_delay_seconds = 3 # 语音停止后多少秒开始隐藏字幕 (设置为 0 立即隐藏)
+auto_hide = true       # 是否自动隐藏字幕（话说完就隐藏）
+
+# --- 窗口透明度 ---
+window_alpha = 0.5 # 整体窗口透明度 (0.0-1.0)

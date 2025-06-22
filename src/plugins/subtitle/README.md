@@ -1,21 +1,24 @@
 # Amaidesu 字幕插件 (Subtitle Plugin)
 
-字幕插件是 Amaidesu VTuber 项目的一个核心组件，用于在屏幕上以字幕形式显示 AI 语音内容。本插件创建一个可拖动、始终置顶的透明窗口，用于实时显示 AI 说话的内容。
+字幕插件是 Amaidesu VTuber 项目的一个核心组件，用于在屏幕上以字幕形式显示 AI 语音内容。本插件使用 CustomTkinter 创建一个现代化的、可拖动、始终置顶的字幕窗口，支持文字描边、半透明背景等高级功能。
 
 ## 功能特点
 
-- 创建透明、置顶的字幕窗口
-- 支持拖动位置（左键拖动）
-- 支持自定义字体、颜色、尺寸
-- 自动淡出（可配置延迟时间）
-- 跨平台支持（Windows、macOS 适配）
-- 低资源占用（独立线程运行，不阻塞主进程）
+- **现代化界面**: 使用 CustomTkinter 构建，外观更加现代美观
+- **文字描边**: 支持可配置的文字描边效果，提高文字可读性
+- **半透明背景**: 可选的半透明圆角背景，更好地凸显文字内容
+- **智能显示**: 只在有内容时显示，说完话自动隐藏
+- **可拖动窗口**: 支持拖动位置（左键拖动）
+- **高度可配置**: 字体、颜色、尺寸、行为均可自定义
+- **跨平台支持**: Windows、macOS 适配
+- **低资源占用**: 独立线程运行，不阻塞主进程
 
 ## 依赖服务
 
-本插件不依赖其他核心服务，但需要以下系统库：
+本插件需要以下依赖：
 
-- `tkinter`: 用于GUI界面显示（Python标准库）
+- `customtkinter`: 现代化的 Tkinter 替代品
+- `tkinter`: Python 标准库（用于 Canvas 绘制）
 
 ## 注册服务
 
@@ -23,31 +26,61 @@
 
 - `subtitle_service`: 提供字幕显示服务
 
+## 配置选项
+
+### 窗口样式
+- `window_width`: 窗口宽度 (像素)
+- `window_height`: 窗口高度 (像素)
+- `window_offset_y`: 窗口底部距离屏幕底部的距离 (像素)
+- `font_family`: 字体名称
+- `font_size`: 字号大小
+- `font_weight`: 字重 (normal, bold)
+- `text_color`: 文字颜色
+
+### 文字描边设置
+- `outline_enabled`: 是否启用文字描边
+- `outline_color`: 描边颜色
+- `outline_width`: 描边粗细 (像素)
+
+### 背景设置
+- `background_enabled`: 是否显示半透明背景
+- `background_color`: 背景颜色
+- `background_opacity`: 背景透明度 (0.0-1.0)
+- `corner_radius`: 背景圆角半径
+
+### 行为控制
+- `fade_delay_seconds`: 语音停止后多少秒开始隐藏字幕
+- `auto_hide`: 是否自动隐藏字幕（话说完就隐藏）
+- `window_alpha`: 整体窗口透明度 (0.0-1.0)
+
 ## 消息处理流程
 
-1. 初始化插件时：
+1. **初始化阶段**：
    - 加载配置文件
-   - 检查 tkinter 是否可用
-   - 启动独立 GUI 线程
+   - 检查 CustomTkinter 可用性
+   - 初始化窗口参数
 
-2. 在 `setup()` 阶段：
+2. **设置阶段** (`setup()`)：
    - 注册 `subtitle_service` 服务
-   - 启动 GUI 线程，创建置顶窗口
+   - 启动独立 GUI 线程
+   - 创建 CustomTkinter 窗口（初始隐藏）
 
-3. 其他插件调用字幕服务：
-   - 调用 `record_speech(text, duration)` 接口
+3. **字幕显示流程**：
+   - 其他插件调用 `record_speech(text, duration)`
    - 文本被放入线程安全队列
+   - GUI 线程检测到新文本，显示窗口并更新内容
+   - 启动自动隐藏计时器
 
-4. GUI 线程处理：
-   - 定期检查队列（每100ms）
-   - 更新字幕内容
-   - 管理淡出效果
+4. **自动隐藏机制**：
+   - 监控最后一次语音时间
+   - 超过配置的延迟时间后自动隐藏窗口
+   - 清空显示内容
 
-5. 用户交互：
+5. **用户交互**：
    - 支持拖动窗口（鼠标左键）
    - 支持关闭窗口（鼠标右键）
 
-6. 清理阶段：
+6. **清理阶段**：
    - 安全关闭窗口
    - 等待线程结束
 
@@ -63,12 +96,13 @@ sequenceDiagram
     Note over Sub: 插件初始化
     Sub->>Core: 注册 subtitle_service
     Sub->>GUI: 启动GUI线程
-    GUI->>GUI: 创建Tkinter窗口
+    GUI->>GUI: 创建CustomTkinter窗口
     GUI->>GUI: 设置样式和事件监听
+    GUI->>GUI: 初始隐藏窗口
     
     loop 每100ms
         GUI->>GUI: 检查消息队列
-        GUI->>GUI: 检查淡出计时
+        GUI->>GUI: 检查自动隐藏计时
     end
     
     TTS->>Core: 获取 subtitle_service
@@ -77,11 +111,13 @@ sequenceDiagram
     Sub->>Sub: 将文本放入队列
     
     GUI->>GUI: 从队列获取文本
-    GUI->>GUI: 更新显示内容
-    GUI->>GUI: 重置淡出计时器
+    GUI->>GUI: 显示窗口
+    GUI->>GUI: 更新字幕内容（含描边效果）
+    GUI->>GUI: 重置自动隐藏计时器
     
-    Note over GUI: 淡出延迟后
-    GUI->>GUI: 清除字幕文本
+    Note over GUI: 延迟时间后
+    GUI->>GUI: 自动隐藏窗口
+    GUI->>GUI: 清空字幕内容
     
     Note over Sub: 插件清理
     Sub->>GUI: 请求关闭窗口
@@ -97,96 +133,116 @@ sequenceDiagram
 # 在 TTS 或其他插件中获取和使用字幕服务
 subtitle_service = self.core.get_service("subtitle_service")
 if subtitle_service:
-    # 文本: 要显示的文本
-    # duration: 语音持续时间（秒），当前版本未使用此参数
+    # 显示字幕文本
     await subtitle_service.record_speech("这是要显示的文字", 3.0)
-```
-
-## 核心代码解析
-
-### 1. 服务注册与线程启动
-
-插件初始化时启动独立线程运行GUI，避免阻塞主线程：
-
-```python
-async def setup(self):
-    await super().setup()
-    if not self.enabled:
-        return
-
-    # 注册自己为服务，供 TTS 插件调用
-    self.core.register_service("subtitle_service", self)
     
-    # 启动 GUI 线程
-    self.is_running = True
-    self.gui_thread = threading.Thread(target=self._run_gui, daemon=True)
-    self.gui_thread.start()
+    # 发送空文本可以立即隐藏字幕（如果启用了自动隐藏）
+    await subtitle_service.record_speech("", 0.0)
 ```
 
-### 2. 字幕显示接口
+## 技术实现细节
 
-提供给其他插件调用的主要接口：
+### 1. 文字描边实现
+
+使用 Tkinter Canvas 实现文字描边效果：
 
 ```python
-async def record_speech(self, text: str, duration: float):
-    """
-    接收文本和时长，将其放入队列供 GUI 线程显示。
-    """
-    if not self.enabled or not self.is_running:
-        return
+# 绘制描边 - 在主文字周围绘制多个偏移的文字
+for dx in range(-outline_width, outline_width + 1):
+    for dy in range(-outline_width, outline_width + 1):
+        if dx == 0 and dy == 0:
+            continue
+        if dx*dx + dy*dy <= outline_width*outline_width:
+            canvas.create_text(x + dx, y + dy, text=text, fill=outline_color)
 
-    if not text:
-        return
-
-    # 清理文本 (移除换行符)
-    cleaned_text = text.replace("\n", " ").replace("\r", "")
-
-    try:
-        # 将文本放入队列
-        self.text_queue.put(cleaned_text)
-    except Exception as e:
-        self.logger.error(f"放入字幕队列时出错: {e}", exc_info=True)
+# 绘制主文字
+canvas.create_text(x, y, text=text, fill=text_color)
 ```
 
-### 3. 线程间通信机制
+### 2. 智能显示机制
 
-使用队列实现线程安全的数据传递：
+- **按需显示**: 窗口初始隐藏，只在有内容时显示
+- **自动隐藏**: 根据配置的延迟时间自动隐藏
+- **状态跟踪**: 使用 `is_visible` 标志跟踪窗口状态
 
-```python
-# 在初始化函数中
-self.text_queue = queue.Queue()  # 用于从 record_speech 发送文本到 GUI 线程
+### 3. 线程安全设计
 
-# 在GUI线程中定期检查
-def _check_queue(self):
-    try:
-        while not self.text_queue.empty():
-            text = self.text_queue.get_nowait()
-            self._update_subtitle_display(text)
-    except queue.Empty:
-        pass
+- **队列通信**: 使用 `queue.Queue` 实现线程间安全通信
+- **GUI 线程隔离**: 所有 GUI 操作在专用线程中执行
+- **异常处理**: 完善的异常捕获和恢复机制
+
+## 配置示例
+
+```toml
+[subtitle_display]
+enabled = true
+
+# 窗口样式
+window_width = 800
+window_height = 100
+window_offset_y = 100
+font_family = "Microsoft YaHei UI"
+font_size = 28
+font_weight = "bold"
+text_color = "white"
+
+# 文字描边设置
+outline_enabled = true
+outline_color = "black"
+outline_width = 2
+
+# 背景设置
+background_enabled = true
+background_color = "#000000"
+background_opacity = 0.7
+corner_radius = 15
+
+# 行为设置
+fade_delay_seconds = 3
+auto_hide = true
+window_alpha = 0.95
 ```
 
 ## 开发注意事项
 
-1. **跨平台兼容性**：
-   - 不同操作系统对Tkinter透明窗口的支持不同
-   - macOS需要特殊处理透明效果
+1. **依赖检查**: 
+   - 启动时检查 CustomTkinter 可用性
+   - 优雅降级处理依赖缺失情况
 
-2. **线程安全**：
-   - 所有Tkinter操作必须在GUI线程中执行
-   - 使用队列进行线程间通信
-   - 避免直接从其他线程修改GUI元素
+2. **线程安全**:
+   - 所有 GUI 操作必须在 GUI 线程中执行
+   - 使用队列进行跨线程通信
+   - 避免直接从其他线程修改 GUI 元素
 
-3. **资源管理**：
+3. **资源管理**:
    - 确保插件清理时正确终止线程
    - 妥善处理窗口关闭事件
+   - 防止内存泄漏
 
-4. **错误处理**：
-   - 捕获并记录所有可能的异常
-   - 即使在错误情况下也能继续运行
+4. **用户体验**:
+   - 合理的默认配置
+   - 流畅的显示和隐藏动画效果
+   - 直观的交互方式
 
 ## 性能优化
 
-1. 使用守护线程保证主程序退出时GUI线程自动退出
-2. 采用事件驱动模型而非轮询
-3. 最小化跨线程操作，减少锁竞争 
+1. **低延迟显示**: 队列检查间隔设为 100ms，保证响应速度
+2. **内存优化**: 及时清理不需要的对象和引用
+3. **CPU 友好**: 使用事件驱动而非高频轮询
+4. **守护线程**: GUI 线程设为守护线程，确保主程序退出时自动清理
+
+## 故障排除
+
+### 常见问题
+
+1. **字幕不显示**: 检查 CustomTkinter 是否正确安装
+2. **字体显示异常**: 确认系统是否支持配置的字体
+3. **窗口位置异常**: 检查屏幕分辨率和偏移量配置
+4. **描边效果不明显**: 调整描边颜色对比度和宽度
+
+### 调试方法
+
+1. 查看插件日志输出
+2. 检查配置文件格式
+3. 验证依赖库版本兼容性
+4. 测试不同操作系统的兼容性 
