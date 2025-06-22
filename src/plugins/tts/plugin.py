@@ -168,8 +168,11 @@ class TTSPlugin(BasePlugin):
             if device_name:
                 for i, device in enumerate(devices):
                     # Case-insensitive partial match
-                    if device_name.lower() in device["name"].lower() and device[f"{kind}_channels"] > 0:
-                        self.logger.info(f"找到 {kind} 设备 '{device['name']}' (匹配 '{device_name}')，索引: {i}")
+                    # 正确访问设备属性
+                    device_name_attr = getattr(device, "name", "")
+                    channels_attr = getattr(device, f"max_{kind}_channels", 0)
+                    if device_name.lower() in device_name_attr.lower() and channels_attr > 0:
+                        self.logger.info(f"找到 {kind} 设备 '{device_name_attr}' (匹配 '{device_name}')，索引: {i}")
                         return i
                 self.logger.warning(f"未找到名称包含 '{device_name}' 的 {kind} 设备，将使用默认设备。")
 
@@ -180,7 +183,9 @@ class TTSPlugin(BasePlugin):
                 self.logger.warning(f"未找到默认 {kind} 设备，将使用 None (由 sounddevice 选择)。")
                 return None
 
-            self.logger.info(f"使用默认 {kind} 设备索引: {default_index} ({sd.query_devices(default_index)['name']})")
+            default_device = sd.query_devices(default_index)
+            default_device_name = getattr(default_device, "name", "Unknown")
+            self.logger.info(f"使用默认 {kind} 设备索引: {default_index} ({default_device_name})")
             return default_index
         except Exception as e:
             self.logger.error(f"查找音频设备时出错: {e}，将使用 None (由 sounddevice 选择)", exc_info=True)
@@ -191,7 +196,12 @@ class TTSPlugin(BasePlugin):
         await super().setup()
         # 注册处理函数，监听所有 WebSocket 消息
         # 我们将在处理函数内部检查消息类型是否为 'text'
-        self.core.register_websocket_handler("*", self.handle_maicore_message)
+
+        # 创建包装函数来返回 Task 而不是 Coroutine
+        def websocket_handler_wrapper(message):
+            return asyncio.create_task(self.handle_maicore_message(message))
+
+        self.core.register_websocket_handler("*", websocket_handler_wrapper)
         self.logger.info("TTS 插件已设置，监听所有 MaiCore WebSocket 消息。")
 
     async def cleanup(self):
@@ -291,19 +301,21 @@ class TTSPlugin(BasePlugin):
             self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
             tmp_filename = None
             duration_seconds: Optional[float] = None  # 初始化时长变量
+            audio_array = None  # 初始化音频数组
+            samplerate = None  # 初始化采样率
             try:
                 # --- 选择 TTS 引擎进行合成 ---
                 if self.omni_enabled and self.omni_tts:
                     # --- Omni TTS 合成 ---
                     self.logger.info(f"使用 Omni TTS 引擎合成: {text[:30]}...")
-                    audio_data = await self.omni_tts.generate_audio(text)
+                    audio_data_bytes = await self.omni_tts.generate_audio(text)
 
                     # 创建临时文件以计算时长
                     with tempfile.NamedTemporaryFile(
                         delete=False, suffix=".wav", dir=tempfile.gettempdir()
                     ) as tmp_file:
                         tmp_filename = tmp_file.name
-                        tmp_file.write(audio_data)
+                        tmp_file.write(audio_data_bytes)
                     self.logger.debug(f"Omni TTS 音频已保存到临时文件: {tmp_filename}")
 
                     # 读取音频并计算时长
@@ -327,6 +339,11 @@ class TTSPlugin(BasePlugin):
 
                     # 读取音频并计算时长
                     audio_array, samplerate = await asyncio.to_thread(sf.read, tmp_filename, dtype="float32")
+
+                # 检查音频数据是否成功加载
+                if audio_array is None or samplerate is None:
+                    self.logger.error("音频数据加载失败，无法播放。")
+                    return
 
                 # --- 计算音频时长 ---
                 self.logger.info(f"读取音频完成，采样率: {samplerate} Hz")
@@ -356,11 +373,11 @@ class TTSPlugin(BasePlugin):
 
                 # 如果有VTube Studio口型同步服务，使用流式播放进行实时口型同步
                 if vts_lip_sync_service:
-                    await self._play_with_lip_sync(audio_data, samplerate, vts_lip_sync_service)
+                    await self._play_with_lip_sync(audio_array, samplerate, vts_lip_sync_service)
                 else:
                     # 没有口型同步服务时，使用原来的播放方式
                     await asyncio.to_thread(
-                        sd.play, audio_data, samplerate=samplerate, device=self.output_device_index, blocking=True
+                        sd.play, audio_array, samplerate=samplerate, device=self.output_device_index, blocking=True
                     )
 
                 self.logger.info("TTS 播放完成。")
