@@ -786,9 +786,6 @@ class STTPlugin(BasePlugin):
                             full_text += self.full_text
 
                             # self.logger.debug(f"Intermediate text: '{text_segment}' (Total: '{full_text}')") # Optional: verbose
-                            print(result, "===============fulltxt===========\n", full_text)
-
-                        if status == STATUS_LAST_FRAME:
                             self.logger.info(f"讯飞收到最终结果: '{full_text}'")
                             if full_text.strip() and not utterance_failed:  # Only send non-empty, non-failed results
                                 try:
@@ -821,7 +818,7 @@ class STTPlugin(BasePlugin):
                                         else:
                                             self.logger.warning("配置启用了 STT 修正，但未找到 'stt_correction' 服务。")
                                     # --- 使用 (可能) 修正后的文本发送消息到 Core ---
-                                    if 'none' in final_text_to_send.lower():
+                                    if "none" in final_text_to_send.lower():
                                         self.logger.warning("识别结果为空，不发送。")
                                         break
                                     message_to_send = await self._create_stt_message(final_text_to_send)
