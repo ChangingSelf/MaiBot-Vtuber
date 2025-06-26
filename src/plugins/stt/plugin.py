@@ -11,9 +11,25 @@ import hmac
 import json
 import ssl
 import time
-import collections  # Keep collections for potential future use if needed
 import numpy as np
 from datetime import datetime
+from urllib.parse import urlencode
+from typing import Dict, Any, Optional, List
+from src.core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
+
+# --- 解决Windows中文用户名路径编码问题 ---
+# 设置环境变量确保PyTorch和其他库能正确处理路径
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if os.name == "nt":  # Windows系统
+    # 设置控制台代码页为UTF-8
+    try:
+        import subprocess
+
+        subprocess.run(["chcp", "65001"], shell=True, capture_output=True)
+    except Exception:
+        pass  # 忽略错误，继续执行
 from time import mktime
 from urllib.parse import urlencode, quote
 from typing import Dict, Any, Optional, List, Tuple
@@ -44,10 +60,9 @@ except ModuleNotFoundError:
         tomllib = None
 
 # --- Amaidesu Core Imports ---
-from src.core.plugin_manager import BasePlugin
-from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
+os.environ["http_proxy"] = "http://10.43.0.1:7890"
+os.environ["https_proxy"] = "http://10.43.0.1:7890"
 # --- Plugin Configuration Loading ---
 # _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 # _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
@@ -139,14 +154,29 @@ class STTPlugin(BasePlugin):
         if self.vad_enabled:
             try:
                 self.logger.info("加载 Silero VAD 模型... (trust_repo=True)")
-                # This loads the VAD model itself
-                self.vad_model, self.vad_utils = torch.hub.load(
-                    repo_or_dir="snakers4/silero-vad",
-                    model="silero_vad",
-                    force_reload=False,
-                    onnx=False,  # Assuming we want PyTorch version
-                    trust_repo=True,
-                )
+
+                # 解决中文用户名路径编码问题：设置自定义缓存目录
+                original_hub_dir = torch.hub.get_dir()
+                safe_cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".torch_cache")
+
+                # 确保缓存目录存在
+                os.makedirs(safe_cache_dir, exist_ok=True)
+
+                # 临时设置torch.hub缓存目录到安全路径
+                torch.hub.set_dir(safe_cache_dir)
+
+                try:
+                    # This loads the VAD model itself
+                    self.vad_model, self.vad_utils = torch.hub.load(
+                        repo_or_dir="snakers4/silero-vad",
+                        model="silero_vad",
+                        force_reload=False,
+                        onnx=False,  # Assuming we want PyTorch version
+                        trust_repo=True,
+                    )
+                finally:
+                    # 恢复原始缓存目录设置
+                    torch.hub.set_dir(original_hub_dir)
                 # Unpack utils if needed later, but might not be necessary for basic VAD
                 # (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = self.vad_utils
                 self.logger.info("Silero VAD 模型加载成功。")
@@ -156,7 +186,7 @@ class STTPlugin(BasePlugin):
                 self.vad_enabled = False
         else:
             self.logger.info("VAD 在配置中被禁用，无法运行真流式 STT，禁用插件。")
-            self.vad_enabled = False # Keep this to indicate VAD is off
+            self.vad_enabled = False  # Keep this to indicate VAD is off
 
         # --- Audio Config ---
         self.sample_rate = self.audio_config.get(
@@ -656,7 +686,7 @@ class STTPlugin(BasePlugin):
                     # --- Detected Silence --- (Logic mostly same)
                     if self._is_speaking:
                         # -- Transition: Speech -> Silence --
-                        self.logger.debug(f"VAD: Speech ended (Silence detected)")
+                        self.logger.debug("VAD: Speech ended (Silence detected)")
                         self._is_speaking = False
                         self._silence_started_time = now  # Start timing silence
 
@@ -723,7 +753,6 @@ class STTPlugin(BasePlugin):
         Receives messages from iFlytek WebSocket, processes results,
         and sends the final text back to Core via send_to_maicore.
         """
-        full_text = ""
         utterance_failed = False  # Track if the utterance had errors
         self.logger.debug("讯飞接收器任务启动。")
         try:
@@ -744,16 +773,20 @@ class STTPlugin(BasePlugin):
                         data = resp.get("data", {})
                         status = data.get("status", -1)
                         result = data.get("result", {})
-                        text_segment = ""
+                        if status == STATUS_LAST_FRAME:
+                            full_text = self.full_text.strip()  # Clean up whitespace
+                        self.full_text = ""
+
                         # Extract text segments correctly
                         if "ws" in result:
                             for w in result["ws"]:
                                 for cw in w.get("cw", []):
-                                    text_segment += cw.get("w", "")
+                                    self.full_text += cw.get("w", "")
+                        if status == STATUS_LAST_FRAME:
+                            full_text += self.full_text
 
-                        if text_segment:
-                            full_text += text_segment
                             # self.logger.debug(f"Intermediate text: '{text_segment}' (Total: '{full_text}')") # Optional: verbose
+                            print(result, "===============fulltxt===========\n", full_text)
 
                         if status == STATUS_LAST_FRAME:
                             self.logger.info(f"讯飞收到最终结果: '{full_text}'")
@@ -788,6 +821,9 @@ class STTPlugin(BasePlugin):
                                         else:
                                             self.logger.warning("配置启用了 STT 修正，但未找到 'stt_correction' 服务。")
                                     # --- 使用 (可能) 修正后的文本发送消息到 Core ---
+                                    if 'none' in final_text_to_send.lower():
+                                        self.logger.warning("识别结果为空，不发送。")
+                                        break
                                     message_to_send = await self._create_stt_message(final_text_to_send)
                                     self.logger.debug(f"准备发送 STT 消息对象到 Core: {repr(message_to_send)}")
                                     await self.core.send_to_maicore(message_to_send)

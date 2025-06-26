@@ -369,7 +369,7 @@ class TTSPlugin(BasePlugin):
                                 try:
                                     asyncio.run_coroutine_threadsafe(
                                         vts_lip_sync_service.process_tts_audio(chunk_bytes, sample_rate=samplerate),
-                                        loop
+                                        loop,
                                     )
                                 except Exception:
                                     # 避免在回调中记录太多日志，可能影响音频性能
