@@ -61,8 +61,8 @@ except ModuleNotFoundError:
 
 # --- Amaidesu Core Imports ---
 
-os.environ["http_proxy"] = "http://10.43.0.1:7890"
-os.environ["https_proxy"] = "http://10.43.0.1:7890"
+# os.environ["http_proxy"] = "http://10.43.0.1:7890"
+# os.environ["https_proxy"] = "http://10.43.0.1:7890"
 # --- Plugin Configuration Loading ---
 # _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 # _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
