@@ -170,9 +170,11 @@ class STTPlugin(BasePlugin):
                     self.vad_model, self.vad_utils = torch.hub.load(
                         repo_or_dir="snakers4/silero-vad",
                         model="silero_vad",
+                        source="github",  # Explicitly specify source to avoid confusion
                         force_reload=False,
                         onnx=False,  # Assuming we want PyTorch version
                         trust_repo=True,
+                        skip_validation=True,
                     )
                 finally:
                     # 恢复原始缓存目录设置
@@ -182,7 +184,19 @@ class STTPlugin(BasePlugin):
                 self.logger.info("Silero VAD 模型加载成功。")
             except Exception as e:
                 self.logger.error(f"加载 Silero VAD 模型失败: {e}", exc_info=True)
-                self.logger.warning("VAD 功能将不可用，禁用 STT 插件。")
+                try:
+                    self.vad_model, self.vad_utils = torch.hub.load(
+                        repo_or_dir="snakers4/silero-vad",
+                        model="silero_vad",
+                        source="local",  # Explicitly specify source to avoid confusion
+                        force_reload=False,
+                        onnx=False,  # Assuming we want PyTorch version
+                        trust_repo=True,
+                        skip_validation=True,
+                    )
+                    self.logger.info("Silero VAD 模型加载成功 (本地缓存)。")
+                except Exception as e2:
+                    self.logger.warning("VAD 功能将不可用，禁用 STT 插件。")
                 self.vad_enabled = False
         else:
             self.logger.info("VAD 在配置中被禁用，无法运行真流式 STT，禁用插件。")
@@ -755,6 +769,7 @@ class STTPlugin(BasePlugin):
         """
         utterance_failed = False  # Track if the utterance had errors
         self.logger.debug("讯飞接收器任务启动。")
+        self.full_text = ""
         try:
             async for msg in ws:
                 if self.stop_event.is_set():  # Check for plugin stop signal
@@ -773,7 +788,7 @@ class STTPlugin(BasePlugin):
                         data = resp.get("data", {})
                         status = data.get("status", -1)
                         result = data.get("result", {})
-                        if status == STATUS_LAST_FRAME:
+                        if hasattr(self, "full_text") and status == STATUS_LAST_FRAME:
                             full_text = self.full_text.strip()  # Clean up whitespace
                         self.full_text = ""
 
