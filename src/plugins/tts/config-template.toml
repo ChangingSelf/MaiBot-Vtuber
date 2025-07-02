@@ -1,31 +1,14 @@
-# VUP-NEXT TTS Plugin Configuration: src/plugins/tts/config.toml
+# Edge TTS Plugin Configuration: src/plugins/tts/config-template.toml
 
-[tts]
 # 使用的 Edge TTS 语音模型
 voice = "zh-CN-XiaoxiaoNeural"
 # 指定输出音频设备名称 (留空或注释掉以使用系统默认设备)
-# output_device_name = ""
 output_device_name = ""
 
-# 大模型TTS配置
-[omni_tts]
-enabled = false          # 是否启用大模型TTS
-api_key = ""             # 阿里云百炼API Key，留空则使用环境变量DASHSCOPE_API_KEY
-model_name = "qwen2.5-omni-7b"  # 模型名称
-voice = "Chelsie"         # 语音音色
-format = "wav"           # 音频格式
-base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # API基础URL
-
-# 音频后处理配置
-[omni_tts.post_processing]
-enabled = false          # 是否启用音频后处理
-volume_reduction = 0.0  # 音量降低程度(dB)
-noise_level = 0.0      # 杂音强度，0-1之间的浮点数
-
 [udp_broadcast]
-# 是否将最终要播报的文本通过 UDP 广播出去 (用于外部监听，如 tts_monitor.py)
+# 是否将最终要播报的文本通过 UDP 广播出去 (用于外部监听)
 enable = false
 # 广播的目标主机地址
 host = "127.0.0.1"
-# 广播的目标 UDP 端口（给监听脚本用，不过一般用不着就是）
+# 广播的目标 UDP 端口
 port = 9998 
