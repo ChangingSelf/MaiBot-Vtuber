@@ -19,6 +19,7 @@ Pillow
 pyvts
 sounddevice
 soundfile
+pygame  # Optional: For more reliable audio playback in TTS plugin
 toml # For Python < 3.11 compatibility with TOML files
 torch # For VAD in STT plugin 
 tomli

@@ -11,6 +11,8 @@ import io
 import numpy as np
 import soundfile as sf
 import random
+import time
+from datetime import datetime
 # 导入音频处理库
 try:
     from pydub import AudioSegment
@@ -37,6 +39,9 @@ class OmniTTS:
         noise_level: float = 0,
         blow_up_probability: float = 0.0,
         blow_up_texts: Optional[List[str]] = None,
+        # 调试参数
+        save_debug_audio: bool = True,
+        debug_audio_dir: str = "debug_audio",
     ):
         """
         初始化OmniTTS类
@@ -52,6 +57,8 @@ class OmniTTS:
             noise_level: 杂音强度，0-1之间的浮点数，0表示无杂音
             blow_up_probability: 触发"麦炸了"彩蛋的概率，0-1之间的浮点数
             blow_up_texts: 彩蛋触发时使用的文本列表
+            save_debug_audio: 是否保存调试音频文件
+            debug_audio_dir: 调试音频文件保存目录
         """
         self.api_key = api_key
         self.model_name = model_name
@@ -70,7 +77,17 @@ class OmniTTS:
         self.blow_up_probability = max(0, min(1, blow_up_probability)) # 确保在0-1之间
         self.blow_up_texts = blow_up_texts if blow_up_texts else ["我的麦真的很炸吗（大声急促）"]
         
+        # 调试相关参数
+        self.save_debug_audio = save_debug_audio
+        self.debug_audio_dir = debug_audio_dir
+        self.audio_counter = 0  # 音频文件计数器
+        
         self.blow_up = False
+        
+        # 创建调试音频目录
+        if self.save_debug_audio:
+            os.makedirs(self.debug_audio_dir, exist_ok=True)
+            print(f"调试音频将保存到目录: {self.debug_audio_dir}")
         
         # 检查pydub是否可用
         global PYDUB_AVAILABLE
@@ -92,6 +109,48 @@ class OmniTTS:
         except ImportError:
             self.openai_available = False
             print("OpenAI库未安装，将使用aiohttp直接调用API")
+    
+    def _save_debug_audio(self, audio_data: bytes, text: str, prefix: str = "") -> str:
+        """
+        保存调试音频文件
+        
+        Args:
+            audio_data: 音频字节数据
+            text: 生成音频的原始文本
+            prefix: 文件名前缀（如 "raw_" 或 "processed_"）
+            
+        Returns:
+            保存的文件路径
+        """
+        if not self.save_debug_audio or not audio_data:
+            return ""
+            
+        try:
+            # 增加计数器
+            self.audio_counter += 1
+            
+            # 生成时间戳
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 清理文本作为文件名的一部分（只取前20个字符，移除特殊字符）
+            safe_text = "".join(c for c in text if c.isalnum() or c in "._- ")[:20]
+            if not safe_text:
+                safe_text = "audio"
+            
+            # 生成文件名
+            filename = f"{prefix}{self.audio_counter:03d}_{timestamp}_{safe_text}.wav"
+            filepath = os.path.join(self.debug_audio_dir, filename)
+            
+            # 保存文件
+            with open(filepath, "wb") as f:
+                f.write(audio_data)
+            
+            print(f"调试音频已保存: {filepath} (大小: {len(audio_data)} 字节)")
+            return filepath
+            
+        except Exception as e:
+            print(f"保存调试音频失败: {str(e)}")
+            return ""
     
     async def generate_audio(self, text: str) -> bytes:
         """
@@ -120,6 +179,10 @@ class OmniTTS:
             
         # 合并所有音频块（通常只有一个）
         complete_audio = b"".join(audio_chunks)
+        
+        # 保存最终合并的音频
+        self._save_debug_audio(complete_audio, text, "final_")
+        
         return complete_audio
     
     async def generate_audio_stream(self, text: str) -> AsyncGenerator[bytes, None]:
@@ -222,10 +285,16 @@ class OmniTTS:
                         audio_buffer.seek(0)
                         audio_data = audio_buffer.read()
                         
+                        # 保存原始音频（后处理前）
+                        self._save_debug_audio(audio_data, text, "raw_")
+                        
                         # 应用音频后处理
                         if self.enable_post_processing:
                             print("正在应用音频后处理...")
-                            audio_data = self._process_audio(audio_data)
+                            processed_audio_data = self._process_audio(audio_data)
+                            # 保存处理后的音频
+                            self._save_debug_audio(processed_audio_data, text, "processed_")
+                            audio_data = processed_audio_data
                         
                         print(f"成功获取音频数据，总大小: {len(audio_data)} 字节")
                         yield audio_data
@@ -302,10 +371,16 @@ class OmniTTS:
                 
                 print(f"解码成功，原始音频大小: {len(audio_data)} 字节, 爆音状态: {self.blow_up}")
                 
+                # 保存原始音频（后处理前）
+                self._save_debug_audio(audio_data, text, "raw_openai_")
+                
                 # 应用音频后处理 - 无论后处理设置如何，在blow_up模式下都强制应用
                 if self.enable_post_processing or self.blow_up:
                     print("[OpenAI客户端] 正在应用音频后处理...")
-                    audio_data = self._process_audio(audio_data)
+                    processed_audio_data = self._process_audio(audio_data)
+                    # 保存处理后的音频
+                    self._save_debug_audio(processed_audio_data, text, "processed_openai_")
+                    audio_data = processed_audio_data
                 
                 print(f"[OpenAI客户端] 成功获取音频数据，总大小: {len(audio_data)} 字节")
                 yield audio_data
@@ -356,6 +431,12 @@ class OmniTTS:
             if self.volume_reduction_db > 0:
                 audio_segment = audio_segment - self.volume_reduction_db
                 print(f"已降低音量 {self.volume_reduction_db}dB")
+            
+            # 爆音模式下额外降低主音频音量，避免太响
+            if self.blow_up:
+                additional_reduction = 3.0  # 额外降低3dB
+                audio_segment = audio_segment - additional_reduction
+                print(f"爆音模式：额外降低主音频音量 {additional_reduction}dB")
                 
             # 柔化声音 - 使用低通滤波实现声音钝化和柔化
             # 使用低通滤波器保留低频，降低高频尖锐感
@@ -367,16 +448,68 @@ class OmniTTS:
             except Exception as e:
                 print(f"应用低通滤波失败: {str(e)}")
                 
-            # 添加杂音 - 使用更加温和、自然的噪声
+
+            
+            # 轻微混响效果 - 通过制作一个非常轻微的延迟副本并叠加实现
+            try:
+                if original_duration > 100 and not self.blow_up:  # 爆音模式下不添加混响
+                    # 修复：确保混响不会截断原音频
+                    delay_ms = min(10, original_duration // 10)  # 动态调整延迟时间
+                    reverb_segment = audio_segment[delay_ms:] - 12  # 使用略延迟的副本，降低12dB
+                    
+                    # 确保混响不会超出原音频长度
+                    if len(reverb_segment) > 0:
+                        # 在原音频长度内叠加混响，避免截断
+                        audio_segment = audio_segment.overlay(reverb_segment, position=delay_ms)
+                        print(f"已添加轻微混响效果 (延迟{delay_ms}ms)")
+                    else:
+                        print("音频太短，跳过混响效果")
+                elif self.blow_up and original_duration > 50:
+                    # 爆音模式下添加更强烈的混响
+                    delay_ms = min(5, original_duration // 20)  # 动态调整延迟时间
+                    reverb_segment = audio_segment[delay_ms:] - 6  # 更短的延迟，更高的音量
+                    
+                    if len(reverb_segment) > 0:
+                        audio_segment = audio_segment.overlay(reverb_segment, position=delay_ms)
+                        print(f"已添加适度混响效果 (延迟{delay_ms}ms, -10dB)")
+                    else:
+                        print("音频太短，跳过爆音混响效果")
+            except Exception as e:
+                print(f"添加混响效果失败: {str(e)}")
+            
+            # 确保处理后的音频长度不短于原始音频
+            final_duration = len(audio_segment)
+            if final_duration < original_duration:
+                print(f"警告: 处理后音频长度变短 ({final_duration}ms < {original_duration}ms)")
+                # 可选：用静音填充到原始长度
+                if original_duration - final_duration > 10:  # 如果差异超过10ms才填充
+                    silence = AudioSegment.silent(duration=original_duration - final_duration)
+                    audio_segment = audio_segment + silence
+                    print(f"已用静音填充到原始长度 {original_duration}ms")
+            
+            # 为所有音频添加0.1-0.3秒的结尾静音，让音频听起来更自然
+            ending_silence_duration = random.randint(100, 300)  # 0.1-0.3秒的随机静音
+            ending_silence = AudioSegment.silent(duration=ending_silence_duration)
+            audio_segment = audio_segment + ending_silence
+            print(f"已添加 {ending_silence_duration}ms 的结尾静音")
+            
+            # 为短音频（<3秒）添加额外的缓冲静音，防止播放截断
+            if original_duration < 3000:  # 少于3秒的短音频
+                buffer_duration = min(200, original_duration * 0.1)  # 添加200ms或10%长度的缓冲，取较小值
+                buffer_silence = AudioSegment.silent(duration=buffer_duration)
+                audio_segment = audio_segment + buffer_silence
+                print(f"为短音频添加 {buffer_duration}ms 的缓冲静音，防止播放截断")
+
+            # 现在在完整的音频（包括新增的静音）上添加杂音 - 使用更加温和、自然的噪声
             if self.noise_level > 0 or self.blow_up:
                 try:
                     # 使用WhiteNoise并应用低通滤波使其接近粉红噪声效果
                     from pydub.generators import WhiteNoise
                     
-                    # 生成噪声
-                    noise_duration = original_duration
-                    noise = WhiteNoise().to_audio_segment(duration=noise_duration)
-                    print("已生成基础噪声")
+                    # 使用当前音频段的长度生成噪声（包括新增的静音）
+                    current_duration = len(audio_segment)
+                    noise = WhiteNoise().to_audio_segment(duration=current_duration)
+                    print(f"已生成覆盖完整音频的基础噪声 (时长: {current_duration}ms)")
                     
                     # 应用强烈的低通滤波使白噪声听起来更接近自然环境噪声
                     if not self.blow_up:  # 只在非爆炸模式下应用滤波
@@ -387,39 +520,27 @@ class OmniTTS:
                             print(f"滤波白噪声失败: {str(e)}")
                     else:
                         noise = noise.low_pass_filter(1200)  # 更强的滤波，只保留非常低的频率
-                        print("爆炸模式：不对噪声应用滤波，保留原始白噪声的刺耳特性")
+                        print("爆炸模式：对噪声应用适度滤波")
                     
                     # 调整噪声音量
                     if self.blow_up:
-                        # 噪音拉满 - 使用最大噪声强度
-                        actual_noise_level = random.uniform(0.3, 1)
-                        # 提高噪声基准，使其接近原音频音量
-                        noise = noise - 10 *(actual_noise_level)
+                        # 爆音模式 - 使用适中的噪声强度，避免太刺耳
+                        actual_noise_level = random.uniform(0.2, 0.6)  # 降低最大噪声强度
+                        # 适度增加噪声音量，但不要太大
+                        volume_reduction_db = 15 + (10 * actual_noise_level)  # 15-25dB的降低范围
+                        noise = noise - volume_reduction_db
                         audio_segment = audio_segment.overlay(noise)
-                        print(f"爆音模式！噪声强度设置为{actual_noise_level*100:.1f}%")
+                        print(f"爆音模式！噪声强度设置为{actual_noise_level*100:.1f}%，覆盖整个音频包括静音")
                     else:
-                        # 正常噪声处理，噪声强度为self.noise_level的三次方根
-                        noise_level = 0.9 + self.noise_level * 0.1
-                        noise = noise * noise_level  # 噪声基准比原音频低较多
+                        # 正常噪声处理，降低噪声音量
+                        # 计算噪声音量降低值（dB）
+                        noise_reduction_db = 80 - (self.noise_level * 80)  # noise_level=0时降低80dB, =1时降低0dB
+                        noise = noise - noise_reduction_db
                         audio_segment = audio_segment.overlay(noise)
-                        print(f"已添加{noise_level*100:.1f}%（三次方根）强度的背景噪声")
+                        print(f"已添加背景噪声覆盖整个音频包括静音 (降低{noise_reduction_db:.1f}dB)")
                 except Exception as e:
                     print(f"添加噪声失败: {str(e)}")
-            
-            # 轻微混响效果 - 通过制作一个非常轻微的延迟副本并叠加实现
-            try:
-                if original_duration > 100 and not self.blow_up:  # 爆音模式下不添加混响
-                    reverb_segment = audio_segment[10:] - 12  # 使用略延迟的副本，降低12dB
-                    audio_segment = audio_segment.overlay(reverb_segment, position=10)
-                    print("已添加轻微混响效果")
-                elif self.blow_up and original_duration > 50:
-                    # 爆音模式下添加更强烈的混响
-                    reverb_segment = audio_segment[5:] - 6  # 更短的延迟，更高的音量
-                    audio_segment = audio_segment.overlay(reverb_segment, position=5)
-                    print("已添加强烈混响效果")
-            except Exception as e:
-                print(f"添加混响效果失败: {str(e)}")
-            
+
             # 转换回字节数据
             output = io.BytesIO()
             audio_segment.export(output, format="wav")
@@ -434,138 +555,3 @@ class OmniTTS:
             # 出错时返回原始音频
             return audio_data
 
-
-async def test_omni_tts():
-    """测试函数"""
-    # 设置API Key
-    api_key = ""
-    if not api_key:
-        print("请设置有效的API密钥")
-        return
-    
-    # 测试带后处理的TTS
-    if PYDUB_AVAILABLE:
-        print("\n===== 测试音频后处理功能 =====")
-        tts = OmniTTS(
-            api_key=api_key,
-            model_name="qwen2.5-omni-7b",
-            voice="Chelsie",
-            enable_post_processing=True,
-            volume_reduction_db=3.0,  # 降低3dB的音量
-            noise_level=0.05          # 添加15%强度的背景杂音
-        )
-        
-        test_text = "复述这句话，不要输出其他内容，只输出'挺厉害的'就好，不要输出其他内容，不要输出前后缀，不要输出'挺厉害的'以外的内容，不要说：如果还有类似的需求或者想聊聊别的"
-        audio_data = await tts.generate_audio(test_text)
-        
-        if audio_data:
-            # 保存音频文件
-            filename = "test_post_processed.wav"
-            with open(filename, "wb") as f:
-                f.write(audio_data)
-            print(f"已保存后处理音频至 {filename}")
-    
-    # 只测试qwen2.5-omni-7b开源模型，并输出完整返回数据
-    print("\n===== 测试qwen2.5-omni-7b模型 =====")
-    # 使用OpenAI客户端直接测试
-    try:
-        from openai import OpenAI
-        
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-        )
-        
-        print("发起API请求...")
-        test_text = "这是一条使用qwen2.5-omni-7b模型的测试消息。"
-        print(f"请求文本: {test_text}")
-        
-        completion = client.chat.completions.create(
-            model="qwen2.5-omni-7b",
-            messages=[
-                {"role": "user", "content": test_text}
-            ],
-            modalities=["text", "audio"],
-            audio={"voice": "Chelsie", "format": "wav"},
-            stream=True,
-            stream_options={"include_usage": True}
-        )
-        
-        print("开始接收响应...")
-        chunk_count = 0
-        text_parts = []
-        audio_string = ""
-        
-        for chunk in completion:
-            chunk_count += 1
-            # 完整打印每个响应块
-            # print(f"\n===== 响应块 #{chunk_count} =====")
-            # print(f"完整内容: {chunk}")
-            
-            # 提取文本内容
-            if hasattr(chunk, 'choices') and chunk.choices:
-                delta = chunk.choices[0].delta
-                # 提取音频数据
-                if hasattr(delta, 'audio'):
-                    try:
-                        if 'data' in delta.audio:
-                            audio_string += delta.audio['data']
-                        elif 'transcript' in delta.audio:
-                            print(f"音频转录文本: {delta.audio['transcript']}")
-                    except Exception as e:
-                        print(f"处理音频数据出错: {str(e)}")
-                
-                # 提取文本内容
-                if hasattr(delta, 'content'):
-                    if delta.content:  # 有内容
-                        print(f"内容类型: {type(delta.content)}")
-                        
-                        # 处理文本
-                        if isinstance(delta.content, str):
-                            text_parts.append(delta.content)
-                            print(f"文本内容: {delta.content}")
-                        # 处理列表内容
-                        elif isinstance(delta.content, list):
-                            for item in delta.content:
-                                print(f"列表项: {item}")
-                                if isinstance(item, dict):
-                                    if item.get("type") == "text" and "text" in item:
-                                        text_parts.append(item["text"])
-                                        print(f"文本内容: {item['text']}")
-            # 处理使用信息
-            elif hasattr(chunk, 'usage'):
-                print(f"使用信息: {chunk.usage}")
-                
-        # 汇总结果
-        print(f"\n===== 处理结果汇总 =====")
-        print(f"处理的响应块数量: {chunk_count}")
-        
-        if text_parts:
-            full_text = "".join(text_parts)
-            print(f"收集到的完整文本: {full_text}")
-        else:
-            print("未收集到文本内容")
-            
-        # 解码并保存音频
-        if audio_string:
-            # 解码base64数据
-            wav_bytes = base64.b64decode(audio_string)
-            # 转换为numpy数组
-            audio_np = np.frombuffer(wav_bytes, dtype=np.int16)
-            # 使用soundfile保存为正确格式的wav文件
-            filename = "test_qwen25_omni_7b.wav"
-            sf.write(filename, audio_np, samplerate=24000)
-            print(f"音频已保存至 {filename}，总大小: {len(audio_np)*2} 字节")
-        else:
-            print("未收到任何音频数据")
-    
-    except Exception as e:
-        import traceback
-        print(f"测试出错: {str(e)}")
-        print(traceback.format_exc())
-    
-    print("\n测试完成")
-
-
-if __name__ == "__main__":
-    asyncio.run(test_omni_tts()) 
