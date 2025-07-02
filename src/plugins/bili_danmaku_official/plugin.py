@@ -14,6 +14,7 @@ from src.core.amaidesu_core import AmaidesuCore
 from .client.websocket_client import BiliWebSocketClient
 from .service.message_cache import MessageCacheService
 from .service.message_handler import BiliMessageHandler
+import traceback
 
 
 class BiliDanmakuOfficialPlugin(BasePlugin):
@@ -262,8 +263,7 @@ class BiliDanmakuOfficialPlugin(BasePlugin):
                 # 将消息缓存到消息缓存服务中
                 self.message_cache_service.cache_message(message)
                 self.logger.debug(f"消息已缓存: {message.message_info.message_id}")
-
-                await self.core.send_to_maicore(message)
+                # print(f"处理消息: {message}")
         except Exception as e:
             self.logger.error(f"处理消息时出错: {message_data} - {e}", exc_info=True)
 

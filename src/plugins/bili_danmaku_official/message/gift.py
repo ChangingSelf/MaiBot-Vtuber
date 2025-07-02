@@ -114,7 +114,14 @@ class GiftMessage(BiliBaseMessage):
         # 创建消息段 - 礼物消息
         gift_name = self.gift_name or "礼物"
         text = f"{self.uname} 送出了 {self.gift_num} 个 {gift_name}"
-        message_segment = Seg(type="text", data=text)
+        # message_segment = Seg(type="text", data=text)
+        message_segment = Seg(
+            "seglist",
+            [
+                Seg(type="text", data=text),
+                Seg("priority_info", {"message_type": "vip", "priority": 1}),
+            ],
+        )
 
         # 记录消息日志
         self.logger.info(f"[礼物] {self.uname}: {text}")
