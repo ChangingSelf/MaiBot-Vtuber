@@ -1014,8 +1014,11 @@ class STTPlugin(BasePlugin):
 
         # --- Message Segment ---
         message_segment = Seg(
-            type="text",  # STT result is text
-            data=text,
+            "seglist",
+            [
+                Seg(type="text", data=text),
+                Seg("priority_info", {"message_type": "normal", "priority": 0}),
+            ],
         )
 
         # --- Final MessageBase ---

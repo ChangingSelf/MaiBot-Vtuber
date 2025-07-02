@@ -116,11 +116,11 @@ class VTubeStudioPlugin(BasePlugin):
         self.buffer_size = lip_sync_config.get("buffer_size", 1024)
 
         # 音频累积和时间同步配置
-        self.min_accumulation_duration = lip_sync_config.get("min_accumulation_duration", 0.1)
+        self.min_accumulation_duration = lip_sync_config.get("min_accumulation_duration", 0.4)
         self.playback_sync_enabled = lip_sync_config.get("playback_sync_enabled", True)
 
         # 口型同步状态变量
-        self.audio_buffer = deque(maxlen=self.sample_rate * 2)  # 2秒音频缓存
+        self.audio_buffer = deque(maxlen=self.sample_rate * 20)  # 2秒音频缓存
         self.current_vowel_values = {"A": 0.0, "I": 0.0, "U": 0.0, "E": 0.0, "O": 0.0}
         self.current_volume = 0.0
         self.is_speaking = False
