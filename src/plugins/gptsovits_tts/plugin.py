@@ -566,7 +566,8 @@ class TTSPlugin(BasePlugin):
         self.logger.info(f"TTS 服务组件初始化。输出设备: {self.output_device_name or '默认设备'}")
         self.tts_model = TTSModel(self.tts_config, self.tts_config.tts.host, self.tts_config.tts.port)
         self.input_pcm_queue = deque(b"")
-        self.audio_data_queue = deque()
+        # 为音频数据队列添加最大长度限制，防止内存占用过高
+        self.audio_data_queue = deque(maxlen=100)  # 限制缓冲区大小，防止内存占用过高
 
         # --- UDP Broadcast Initialization (from tts_monitor.py / mmc_client.py) ---
 
@@ -664,16 +665,6 @@ class TTSPlugin(BasePlugin):
             self.logger.error(f"处理WAV数据失败: {str(e)}")
             return
 
-        # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
-        if pcm_data and len(pcm_data) > 0:
-            vts_lip_sync_service = self.core.get_service("vts_lip_sync")
-            if vts_lip_sync_service:
-                try:
-                    # 异步发送音频数据进行口型同步分析
-                    await vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE)
-                except Exception as e:
-                    self.logger.debug(f"口型同步处理失败: {e}")
-
         # PCM数据缓冲处理
         async with self.input_pcm_queue_lock:
             self.input_pcm_queue.extend(pcm_data)
@@ -681,9 +672,32 @@ class TTSPlugin(BasePlugin):
 
         # 按需切割音频块
         while await self.get_available_pcm_bytes() >= BUFFER_REQUIRED_BYTES:
+            # 检查音频队列长度，防止队列过长
+            if len(self.audio_data_queue) >= self.audio_data_queue.maxlen * 0.9:  # 接近队列上限的90%
+                self.logger.warning("音频队列接近满，暂停处理")
+                # 短暂等待，让音频播放追赶队列
+                await asyncio.sleep(0.1)
+                continue
+
             raw_block = await self.read_from_pcm_buffer(BUFFER_REQUIRED_BYTES)
             self.audio_data_queue.append(raw_block)
             # self.logger.debug(f"成功添加 {BUFFER_REQUIRED_BYTES} 字节到音频播放队列")
+
+        # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
+        if pcm_data and len(pcm_data) > 0:
+            vts_lip_sync_service = self.core.get_service("vts_lip_sync")
+            if vts_lip_sync_service:
+                try:
+                    # 异步发送音频数据进行口型同步分析，添加超时控制
+                    await asyncio.wait_for(
+                        vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE),
+                        timeout=0.1,  # 最多等待0.1秒
+                    )
+                except asyncio.TimeoutError:
+                    # 如果处理时间过长，记录日志但不阻塞音频处理
+                    self.logger.debug("口型同步处理超时")
+                except Exception as e:
+                    self.logger.debug(f"口型同步处理失败: {e}")
 
     def start_pcm_stream(self, samplerate=44100, channels=2, dtype=np.int16, blocksize=1024):
         """创建并启动音频流
@@ -897,35 +911,40 @@ class TTSPlugin(BasePlugin):
                 except Exception as e:
                     self.logger.error(f"调用 subtitle_service.record_speech 时出错: {e}", exc_info=True)
 
-        try:
-            # 获取音频流
-            audio_stream = self.tts_model.tts_stream(text)
-            self.logger.info("开始处理音频流...")
+            try:
+                # 获取音频流
+                audio_stream = self.tts_model.tts_stream(text)
+                self.logger.info("开始处理音频流...")
 
-            # 确保音频流已启动
-            if self.stream and not self.stream.active:
-                self.stream.start()
+                # 确保音频流已启动
+                if self.stream and not self.stream.active:
+                    self.stream.start()
 
-            # 异步处理音频数据块
-            for chunk in audio_stream:
-                if chunk:
-                    # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
-                    # 修改为异步调用
-                    await self.decode_and_buffer(chunk)
-                else:
-                    self.logger.warning("收到空音频块，跳过。")
-                    continue
+                # 异步处理音频数据块
+                for chunk in audio_stream:
+                    if chunk:
+                        # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
 
-            self.logger.info(f"音频流播放完成: '{text[:30]}...'")
-        except Exception as e:
-            self.logger.error(f"音频流处理出错: {e}", exc_info=True)
-        finally:
-            # --- 停止口型同步会话 ---
-            if vts_lip_sync_service:
-                try:
-                    await vts_lip_sync_service.stop_lip_sync_session()
-                except Exception as e:
-                    self.logger.debug(f"停止口型同步会话失败: {e}")
+                        # 检查音频队列长度，如果队列过长则等待
+                        while len(self.audio_data_queue) >= self.audio_data_queue.maxlen * 0.8:
+                            await asyncio.sleep(0.05)  # 短暂等待，让音频播放追赶队列
+
+                        # 修改为异步调用
+                        await self.decode_and_buffer(chunk)
+                    else:
+                        self.logger.warning("收到空音频块，跳过。")
+                        continue
+
+                self.logger.info(f"音频流播放完成: '{text[:30]}...'")
+            except Exception as e:
+                self.logger.error(f"音频流处理出错: {e}", exc_info=True)
+            finally:
+                # --- 停止口型同步会话 ---
+                if vts_lip_sync_service:
+                    try:
+                        await vts_lip_sync_service.stop_lip_sync_session()
+                    except Exception as e:
+                        self.logger.debug(f"停止口型同步会话失败: {e}")
 
 
 plugin_entrypoint = TTSPlugin

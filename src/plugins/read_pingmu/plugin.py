@@ -32,6 +32,12 @@ try:
 except ImportError:
     Image = None
 
+try:
+    import obsws_python as obswspy
+    from obsws_python import reqs as obsreq
+except ImportError:
+    obswspy = None
+
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
 from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
@@ -41,15 +47,15 @@ from src.utils.logger import get_logger
 @dataclass
 class ScreenMessage:
     """屏幕描述消息类"""
-    
+
     description: str
     timestamp: int
     raw_data: Dict[str, Any]
-    
+
     def __post_init__(self):
         """初始化后设置logger"""
         self.logger = get_logger(self.__class__.__name__)
-    
+
     def _create_user_info(self, core, config: Dict[str, Any]) -> UserInfo:
         """创建用户信息对象"""
         return UserInfo(
@@ -58,11 +64,11 @@ class ScreenMessage:
             user_nickname=config.get("user_nickname", "屏幕监控"),
             user_cardname=config.get("user_cardname", "Screen Monitor"),
         )
-    
+
     def _generate_message_id(self) -> str:
         """生成消息ID"""
         return f"screen_{self.timestamp}_{hash(self.description) % 10000}"
-    
+
     async def _create_base_message_info(
         self,
         core,
@@ -107,7 +113,7 @@ class ScreenMessage:
             format_info=format_info,
             additional_config=additional_config,
         )
-    
+
     async def _create_template_info(
         self,
         core,
@@ -140,7 +146,7 @@ class ScreenMessage:
             template_name=config.get("template_name", f"screen_monitor_{monitor_id}"),
             template_default=False,
         )
-    
+
     async def to_message_base(
         self,
         core,
@@ -149,10 +155,10 @@ class ScreenMessage:
         template_items: Optional[Dict[str, Any]] = None,
     ) -> MessageBase:
         """构建MessageBase对象"""
-        
+
         # 创建基础消息信息
         message_info = await self._create_base_message_info(core, config, context_tags, template_items)
-        
+
         # 添加屏幕监控特有的附加配置
         message_info.additional_config["source"] = "screen_monitor"
         message_info.additional_config["image_data"] = self.raw_data.get("image_base64", "")
@@ -203,7 +209,7 @@ class ScreenMonitorPlugin(BasePlugin):
 
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
-        
+
         # 初始化所有必要属性，防止属性不存在的错误
         self.openai_client: Optional[AsyncOpenAI] = None
         self._monitor_task: Optional[asyncio.Task] = None
@@ -211,14 +217,47 @@ class ScreenMonitorPlugin(BasePlugin):
         self.latest_description = "屏幕信息尚未获取。"
         self.description_lock = asyncio.Lock()
         self.initialization_successful = False  # 新增：跟踪初始化是否成功
+        self.obs_client = None  # 初始化OBS客户端为None
 
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
 
         # --- 检查核心依赖 ---
-        if mss is None or openai is None or Image is None:
-            missing = [lib for lib, name in [(mss, "mss"), (openai, "openai"), (Image, "Pillow")] if lib is None]
+        # 截图来源类型
+        self.capture_source = self.config.get("capture_source", "screen")  # 默认使用屏幕截图
+
+        # 根据截图来源检查依赖
+        if self.capture_source == "screen":
+            if mss is None or openai is None or Image is None:
+                missing = [lib for lib, name in [(mss, "mss"), (openai, "openai"), (Image, "Pillow")] if lib is None]
+                self.logger.error(
+                    f"缺少必要的库: {', '.join(missing)}。请运行 `pip install mss openai Pillow`。ScreenMonitorPlugin 已禁用。"
+                )
+                return
+        elif self.capture_source == "obs":
+            if obswspy is None or openai is None or Image is None:
+                missing = []
+                if obswspy is None:
+                    missing.append("obsws-python")
+                if openai is None:
+                    missing.append("openai")
+                if Image is None:
+                    missing.append("Pillow")
+                self.logger.error(
+                    f"缺少必要的库: {', '.join(missing)}。请运行 `pip install obsws-python openai Pillow`。ScreenMonitorPlugin 已禁用。"
+                )
+                return
+
+            # 初始化OBS配置
+            self.obs_config = self.config.get("obs_config", {})
+            self.obs_host = self.obs_config.get("host", "localhost")
+            self.obs_port = self.obs_config.get("port", 4455)
+            self.obs_password = self.obs_config.get("password", "")
+            self.obs_source_name = self.obs_config.get("source_name", "游戏捕获")
+            self.obs_auto_switch_scene = self.obs_config.get("auto_switch_scene", False)
+            self.obs_scene_name = self.obs_config.get("scene_name", "游戏")
+        else:
             self.logger.error(
-                f"缺少必要的库: {', '.join(missing)}。请运行 `pip install mss openai Pillow`。ScreenMonitorPlugin 已禁用。"
+                f"不支持的截图来源类型: {self.capture_source}。支持的类型: 'screen', 'obs'。ScreenMonitorPlugin 已禁用。"
             )
             return
 
@@ -240,9 +279,7 @@ class ScreenMonitorPlugin(BasePlugin):
 
         # --- 检查关键配置 ---
         if not self.api_key or "YOUR_API_KEY_HERE" in self.api_key:
-            self.logger.error(
-                "API Key 未在 config.toml 中配置！ScreenMonitorPlugin 已禁用。"
-            )
+            self.logger.error("API Key 未在 config.toml 中配置！ScreenMonitorPlugin 已禁用。")
             return
         if not self.base_url:
             self.logger.error(
@@ -258,14 +295,33 @@ class ScreenMonitorPlugin(BasePlugin):
                 timeout=self.timeout_seconds,
                 # 可以根据需要添加 max_retries 等参数
             )
-            self.logger.info(
-                f"AsyncOpenAI 客户端已为模型 '{self.model_name}' 初始化 (Base URL: {self.base_url})。"
-            )
-            # 只有在成功初始化 OpenAI 客户端后才标记为成功
+            self.logger.info(f"AsyncOpenAI 客户端已为模型 '{self.model_name}' 初始化 (Base URL: {self.base_url})。")
+            # 初始化成功的第一步
             self.initialization_successful = True
         except Exception as e:
             self.logger.error(f"初始化 AsyncOpenAI 客户端失败: {e}", exc_info=True)
             return
+
+        # --- 初始化 OBS WebSocket 客户端 (如果使用OBS) ---
+        if self.capture_source == "obs":
+            try:
+                # 创建OBS客户端
+                self.obs_client = obswspy.ReqClient(
+                    host=self.obs_host,
+                    port=self.obs_port,
+                    password=self.obs_password if self.obs_password else None,
+                    timeout=self.timeout_seconds,
+                )
+
+                # 测试连接
+                version = self.obs_client.get_version()
+                self.logger.info(
+                    f"已连接到 OBS Studio (版本: {version.obs_version}) 通过 WebSocket 协议 {version.obs_web_socket_version}"
+                )
+            except Exception as e:
+                self.logger.error(f"无法连接到 OBS WebSocket: {e}", exc_info=True)
+                self.initialization_successful = False  # 连接失败，标记初始化失败
+                return
 
         # self.logger.info(f"ScreenMonitorPlugin 初始化完成。截图间隔: {self.interval}s, 模型: {self.model_name}") # 此日志可移除，基类有通用初始化日志
 
@@ -281,6 +337,32 @@ class ScreenMonitorPlugin(BasePlugin):
         if not self.initialization_successful:
             self.logger.warning("ScreenMonitorPlugin 初始化失败，跳过后续设置。")
             return
+
+        # 如果使用OBS，检查OBS连接并设置
+        if self.capture_source == "obs" and self.obs_client:
+            try:
+                # 检查源是否存在
+                sources = self.obs_client.get_scene_item_list().scene_items
+                source_names = [s.source_name for s in sources]
+
+                if self.obs_source_name not in source_names:
+                    self.logger.warning(f"在OBS中找不到源 '{self.obs_source_name}'。可用源: {', '.join(source_names)}")
+
+                # 如果配置了自动切换场景
+                if self.obs_auto_switch_scene:
+                    scenes = self.obs_client.get_scene_list().scenes
+                    scene_names = [s.scene_name for s in scenes]
+
+                    if self.obs_scene_name in scene_names:
+                        self.obs_client.set_current_program_scene(self.obs_scene_name)
+                        self.logger.info(f"已自动切换到OBS场景: '{self.obs_scene_name}'")
+                    else:
+                        self.logger.warning(
+                            f"在OBS中找不到场景 '{self.obs_scene_name}'。可用场景: {', '.join(scene_names)}"
+                        )
+
+            except Exception as e:
+                self.logger.error(f"设置OBS时出错: {e}", exc_info=True)
 
         # 注册 Prompt 上下文提供者
         prompt_ctx_service = self.core.get_service("prompt_context")
@@ -328,6 +410,15 @@ class ScreenMonitorPlugin(BasePlugin):
             self.openai_client = None
             self.logger.info("OpenAI 客户端引用已清除。")
 
+        # --- 关闭 OBS WebSocket 客户端 ---
+        if self.obs_client:
+            try:
+                self.obs_client.disconnect()
+                self.logger.info("已断开OBS WebSocket连接。")
+            except Exception as e:
+                self.logger.warning(f"关闭OBS WebSocket客户端时出错: {e}")
+            self.obs_client = None
+
         # 取消注册 Prompt 上下文（只有在成功初始化的情况下才尝试取消注册）
         if self.initialization_successful:
             prompt_ctx_service = self.core.get_service("prompt_context")
@@ -346,9 +437,9 @@ class ScreenMonitorPlugin(BasePlugin):
         # 如果初始化失败，返回默认描述
         if not self.initialization_successful:
             return "屏幕监控插件初始化失败，无法获取屏幕信息。"
-        
+
         async with self.description_lock:
-            return self.latest_description
+            return "当前主播的屏幕捕获内容如下：%s\n" % self.latest_description
 
     async def _monitoring_loop(self):
         """后台任务：定期截图并调用 VL 模型更新描述。"""
@@ -381,21 +472,18 @@ class ScreenMonitorPlugin(BasePlugin):
             self.logger.debug("初始化未完成或 OpenAI 客户端不可用，跳过截图处理。")
             return
 
-        self.logger.debug("正在截取屏幕...")
         encoded_image: Optional[str] = None
-        try:
-            with mss.mss() as sct:
-                monitor = sct.monitors[1]
-                sct_img = sct.grab(monitor)
-                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                buffer = BytesIO()
-                img.save(buffer, format="PNG")
-                img_bytes = buffer.getvalue()
-                encoded_image = base64.b64encode(img_bytes).decode("utf-8")
-                self.logger.debug(f"截图成功并编码为 Base64 (大小: {len(encoded_image)} bytes)")
-        except Exception as e:
-            self.logger.error(f"截图或编码失败: {e}", exc_info=True)
-            return
+
+        # 根据不同的截图源获取图像
+        if self.capture_source == "screen":
+            # 使用屏幕截图方法
+            self.logger.debug("正在通过屏幕捕获截取屏幕...")
+            encoded_image = await self._get_screenshot_from_screen()
+
+        elif self.capture_source == "obs" and self.obs_client:
+            # 使用 OBS 截图方法
+            self.logger.debug(f"正在通过OBS获取源 '{self.obs_source_name}' 的截图...")
+            encoded_image = await self._get_screenshot_from_obs()
 
         if not encoded_image:
             return
@@ -408,8 +496,8 @@ class ScreenMonitorPlugin(BasePlugin):
             # 更新上下文描述
             async with self.description_lock:
                 self.latest_description = new_description
-            self.logger.info(f"屏幕描述已更新: {new_description[:100]}...")
-            
+            self.logger.info(f"屏幕描述已更新: {new_description}...")
+
             # 发送消息到MaiCore（如果启用）
             if self.send_messages:
                 await self._send_screen_message(new_description, encoded_image)
@@ -443,7 +531,7 @@ class ScreenMonitorPlugin(BasePlugin):
             completion = await self.openai_client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
-                max_tokens=300,  # 可以根据需要调整 max_tokens
+                max_tokens=3000,  # 可以根据需要调整 max_tokens
             )
             self.logger.debug(f"OpenAI 兼容 API 响应: {completion}")
 
@@ -486,9 +574,9 @@ class ScreenMonitorPlugin(BasePlugin):
                     "image_base64": image_base64,
                     "model_name": self.model_name,
                     "vl_prompt": self.vl_prompt,
-                }
+                },
             )
-            
+
             # 构造MessageBase
             message = await screen_message.to_message_base(
                 core=self.core,
@@ -496,13 +584,73 @@ class ScreenMonitorPlugin(BasePlugin):
                 context_tags=self.context_tags,
                 template_items=self.template_items,
             )
-            
+
             # 发送到MaiCore
             await self.core.send_to_maicore(message)
             self.logger.info(f"屏幕描述消息已发送到MaiCore: {description[:50]}...")
-            
+
         except Exception as e:
             self.logger.error(f"发送屏幕描述消息时出错: {e}", exc_info=True)
+
+    async def _get_screenshot_from_obs(self) -> Optional[str]:
+        """从OBS源获取截图，返回Base64编码的图像"""
+        if not self.obs_client:
+            self.logger.error("OBS客户端未初始化或连接失败")
+            return None
+
+        try:
+            # 从OBS获取源截图
+            screenshot = self.obs_client.get_source_screenshot(
+                source_name=self.obs_source_name,
+                image_format="png",
+                image_width=1920,  # 可根据需要调整
+                image_height=1080,  # 可根据需要调整
+                image_compression_quality=90,  # 图像质量
+            )
+
+            # 获取Base64图像数据
+            if screenshot and hasattr(screenshot, "image_data"):
+                # 从响应中获取Base64编码后的图像数据
+                encoded_image = (
+                    screenshot.image_data.split(",")[1] if "," in screenshot.image_data else screenshot.image_data
+                )
+                self.logger.debug(f"OBS截图成功并获取为 Base64 (大小: {len(encoded_image)} bytes)")
+                return encoded_image
+            else:
+                self.logger.error("从OBS获取截图失败：响应格式不符合预期")
+                return None
+        except Exception as e:
+            self.logger.error(f"从OBS获取截图失败: {e}", exc_info=True)
+            # 尝试重新连接
+            try:
+                self.logger.debug("尝试重新连接到OBS...")
+                self.obs_client = obswspy.ReqClient(
+                    host=self.obs_host,
+                    port=self.obs_port,
+                    password=self.obs_password if self.obs_password else None,
+                    timeout=self.timeout_seconds,
+                )
+                self.logger.info("已重新连接到OBS")
+            except Exception as reconnect_err:
+                self.logger.error(f"重新连接到OBS失败: {reconnect_err}")
+            return None
+
+    async def _get_screenshot_from_screen(self) -> Optional[str]:
+        """通过屏幕截图获取图像，返回Base64编码的图像"""
+        try:
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
+                sct_img = sct.grab(monitor)
+                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                buffer = BytesIO()
+                img.save(buffer, format="PNG")
+                img_bytes = buffer.getvalue()
+                encoded_image = base64.b64encode(img_bytes).decode("utf-8")
+                self.logger.debug(f"屏幕截图成功并编码为 Base64 (大小: {len(encoded_image)} bytes)")
+                return encoded_image
+        except Exception as e:
+            self.logger.error(f"屏幕截图或编码失败: {e}", exc_info=True)
+            return None
 
 
 # --- Plugin Entry Point ---
