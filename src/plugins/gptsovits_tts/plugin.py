@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 import numpy as np  # 确保导入 numpy
 from collections import deque
 import base64
+import re  # 添加正则表达式模块，用于检测英文字符
 
 # --- Dependencies Check (Inform User) ---
 # Try importing required libraries and inform the user if they are missing.
@@ -412,6 +413,15 @@ class TTSModel:
         if self.config:
             cfg = self.config.tts
             text_lang = text_lang or cfg.text_language
+
+            # 如果设置的text_lang是auto，检测文本是否包含英文字符
+            if text_lang == "auto":
+                # 检查是否包含英文字符
+                has_english = bool(re.search("[a-zA-Z]", text))
+                if not has_english:
+                    text_lang = "zh"  # 如果不含英文字符，则设为中文
+                # 含英文字符，保持auto不变
+
             prompt_lang = prompt_lang or cfg.prompt_language
             media_type = media_type or cfg.media_type
             streaming_mode = streaming_mode if streaming_mode is not None else cfg.streaming_mode
@@ -425,6 +435,13 @@ class TTSModel:
             repetition_penalty = repetition_penalty or cfg.repetition_penalty
             sample_steps = sample_steps or cfg.sample_steps
             super_sampling = super_sampling if super_sampling is not None else cfg.super_sampling
+
+        # 检测文本是否包含英文字符
+        contains_english = bool(re.search(r"[a-zA-Z]", text))
+
+        # 如果文本包含英文字符且未指定文本语言，则自动设置为英文
+        if contains_english and text_lang is None:
+            text_lang = "en"
 
         params = {
             "text": text,
@@ -490,6 +507,15 @@ class TTSModel:
         if self.config:
             cfg = self.config.tts
             text_lang = text_lang or cfg.text_language
+
+            # 如果设置的text_lang是auto，检测文本是否包含英文字符
+            if text_lang == "auto":
+                # 检查是否包含英文字符
+                has_english = bool(re.search("[a-zA-Z]", text))
+                if not has_english:
+                    text_lang = "zh"  # 如果不含英文字符，则设为中文
+                # 含英文字符，保持auto不变
+
             prompt_lang = prompt_lang or cfg.prompt_language
             media_type = media_type or cfg.media_type
             top_k = top_k or cfg.top_k

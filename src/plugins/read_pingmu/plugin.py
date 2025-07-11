@@ -601,11 +601,11 @@ class ScreenMonitorPlugin(BasePlugin):
         try:
             # 从OBS获取源截图
             screenshot = self.obs_client.get_source_screenshot(
-                source_name=self.obs_source_name,
-                image_format="png",
-                image_width=1920,  # 可根据需要调整
-                image_height=1080,  # 可根据需要调整
-                image_compression_quality=90,  # 图像质量
+                name=self.obs_source_name,
+                img_format="png",
+                width=1920,  # 可根据需要调整
+                height=1080,  # 可根据需要调整
+                quality=90,  # 图像质量
             )
 
             # 获取Base64图像数据

@@ -9,6 +9,23 @@ screenshot_interval_seconds = 5 # 建议不要设置太低
 # 截图来源类型: "screen"(直接截屏) 或 "obs"(从OBS获取)
 capture_source = "screen"
 
+# --- 调试配置 ---
+[read_pingmu.debug]
+# 是否启用调试模式
+enable_debug = false
+# 是否保存图片和描述到本地
+save_captures = false
+# 保存路径 (相对于插件目录或绝对路径)
+save_dir = "./debug_captures"
+# 文件名前缀
+filename_prefix = "capture_"
+# 是否保存原始图片
+save_image = true
+# 是否保存描述文本
+save_description = true
+# 是否在图片上添加时间戳水印
+add_timestamp = true
+
 # --- OpenAI 兼容 API 配置 ---
 # !!! 必须填入你的 API Key !!!
 api_key = ""
