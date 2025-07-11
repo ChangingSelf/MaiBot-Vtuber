@@ -1,15 +1,17 @@
 # Amaidesu 字幕插件 (Subtitle Plugin)
 
-字幕插件是 Amaidesu VTuber 项目的一个核心组件，用于在屏幕上以字幕形式显示 AI 语音内容。本插件使用 CustomTkinter 创建一个现代化的、可拖动、始终置顶的字幕窗口，支持文字描边、半透明背景等高级功能。
+字幕插件是 Amaidesu VTuber 项目的一个核心组件，用于在屏幕上以字幕形式显示 AI 语音内容。本插件使用 CustomTkinter 创建一个现代化的、可拖动、始终置顶的字幕窗口，支持文字描边、半透明背景等高级功能，并专门为 OBS Studio 录制和直播场景进行了优化。
 
 ## 功能特点
 
 - **现代化界面**: 使用 CustomTkinter 构建，外观更加现代美观
 - **文字描边**: 支持可配置的文字描边效果，提高文字可读性
-- **半透明背景**: 可选的半透明圆角背景，更好地凸显文字内容
+- **背景颜色**: 可配置的窗口背景颜色，支持透明和色度键模式
 - **智能显示**: 只在有内容时显示，说完话自动隐藏
-- **可拖动窗口**: 支持拖动位置（左键拖动）
+- **可拖动窗口**: 支持拖动位置（左键拖动）和右键菜单
 - **高度可配置**: 字体、颜色、尺寸、行为均可自定义
+- **OBS Studio 集成**: 专门优化的 OBS 友好模式，支持窗口捕获和色度键
+- **任务栏管理**: 可选择在任务栏显示，便于窗口切换和管理
 - **跨平台支持**: Windows、macOS 适配
 - **低资源占用**: 独立线程运行，不阻塞主进程
 
@@ -37,21 +39,30 @@
 - `font_weight`: 字重 (normal, bold)
 - `text_color`: 文字颜色
 
+### 窗口行为配置
+- `always_show_window`: 是否始终显示窗口（便于 OBS 窗口捕获）
+- `show_in_taskbar`: 是否在任务栏显示（便于点击切换）
+- `window_minimizable`: 是否允许最小化窗口
+- `show_waiting_text`: 是否显示等待文字（设为 false 在无内容时透明）
+
 ### 文字描边设置
 - `outline_enabled`: 是否启用文字描边
 - `outline_color`: 描边颜色
 - `outline_width`: 描边粗细 (像素)
 
 ### 背景设置
-- `background_enabled`: 是否显示半透明背景
-- `background_color`: 背景颜色
-- `background_opacity`: 背景透明度 (0.0-1.0)
-- `corner_radius`: 背景圆角半径
+- `background_color`: 背景颜色（支持颜色名称和 #RRGGBB 格式）
 
 ### 行为控制
 - `fade_delay_seconds`: 语音停止后多少秒开始隐藏字幕
 - `auto_hide`: 是否自动隐藏字幕（话说完就隐藏）
 - `window_alpha`: 整体窗口透明度 (0.0-1.0)
+
+### OBS Studio 集成配置
+- `obs_friendly_mode`: 是否启用 OBS 友好模式（优化窗口行为）
+- `window_title`: 窗口标题（便于 OBS 识别和选择）
+- `use_chroma_key`: 是否使用色度键背景（绿幕抠像）
+- `chroma_key_color`: 色度键颜色（绿幕: #00FF00, 蓝幕: #0000FF）
 
 ## 消息处理流程
 
@@ -78,7 +89,8 @@
 
 5. **用户交互**：
    - 支持拖动窗口（鼠标左键）
-   - 支持关闭窗口（鼠标右键）
+   - 支持右键菜单（最小化、置顶切换、透明度调整、测试显示、清空内容等）
+   - 窗口大小可调（如果启用了 `window_minimizable`）
 
 6. **清理阶段**：
    - 安全关闭窗口
@@ -161,9 +173,10 @@ canvas.create_text(x, y, text=text, fill=text_color)
 
 ### 2. 智能显示机制
 
-- **按需显示**: 窗口初始隐藏，只在有内容时显示
-- **自动隐藏**: 根据配置的延迟时间自动隐藏
+- **按需显示**: 窗口初始隐藏，只在有内容时显示（可配置为始终显示）
+- **自动隐藏**: 根据配置的延迟时间自动隐藏或清空内容
 - **状态跟踪**: 使用 `is_visible` 标志跟踪窗口状态
+- **背景颜色**: 直接使用配置的背景颜色，简化了UI层次
 
 ### 3. 线程安全设计
 
@@ -186,22 +199,61 @@ font_size = 28
 font_weight = "bold"
 text_color = "white"
 
+# 窗口行为配置
+always_show_window = true          # 便于 OBS 窗口捕获
+show_in_taskbar = true             # 便于点击切换
+window_minimizable = true          # 允许最小化
+show_waiting_text = false          # 无内容时透明
+
 # 文字描边设置
 outline_enabled = true
 outline_color = "black"
 outline_width = 2
 
 # 背景设置
-background_enabled = true
-background_color = "#000000"
-background_opacity = 0.7
-corner_radius = 15
+background_color = "white"         # 背景颜色
 
 # 行为设置
-fade_delay_seconds = 3
+fade_delay_seconds = 5
 auto_hide = true
 window_alpha = 0.95
+
+# OBS 集成配置
+obs_friendly_mode = true           # OBS 友好模式
+window_title = "Amaidesu-Subtitle-OBS" # 便于 OBS 识别
+use_chroma_key = false             # 是否使用绿幕
+chroma_key_color = "#00FF00"       # 绿幕颜色
 ```
+
+## OBS Studio 使用指南
+
+### 1. 窗口捕获设置
+1. 在 OBS 中添加"窗口捕获"源
+2. 选择窗口：`Amaidesu-Subtitle-OBS`
+3. 建议启用"捕获鼠标光标"选项（可选）
+
+### 2. 透明叠加设置
+- 设置合适的 `background_color` 实现所需的背景效果
+- 调整 `window_alpha` 控制整体透明度
+- 使用文字描边提高可读性
+
+### 3. 色度键抠像设置
+- 启用 `use_chroma_key = true`
+- 设置 `chroma_key_color = "#00FF00"` （绿幕）
+- 在 OBS 中添加"色度键"滤镜
+- 选择对应的绿幕颜色进行抠像
+
+### 4. 窗口管理
+- `always_show_window = true`: 窗口持续存在，便于 OBS 捕获
+- `show_in_taskbar = true`: 可在任务栏切换窗口
+- 支持拖动调整位置
+- 右键菜单功能：
+  - **最小化/显示窗口**: 快速控制窗口显示状态
+  - **置顶/取消置顶**: 切换窗口的置顶状态
+  - **调整透明度**: 循环调整窗口透明度（1.0 → 0.8 → 0.6 → 0.4 → 1.0）
+  - **测试显示**: 显示测试消息，用于检查 OBS 捕获效果
+  - **清空内容**: 立即清空字幕内容
+  - **关闭窗口**: 关闭字幕窗口
 
 ## 开发注意事项
 
@@ -224,6 +276,12 @@ window_alpha = 0.95
    - 流畅的显示和隐藏动画效果
    - 直观的交互方式
 
+5. **OBS 集成优化**:
+   - 窗口标题统一命名便于识别
+   - 支持透明背景和色度键两种方案
+   - 窗口状态持久化，避免频繁创建销毁
+   - 任务栏可见性配置，便于用户管理
+
 ## 性能优化
 
 1. **低延迟显示**: 队列检查间隔设为 100ms，保证响应速度
@@ -239,10 +297,30 @@ window_alpha = 0.95
 2. **字体显示异常**: 确认系统是否支持配置的字体
 3. **窗口位置异常**: 检查屏幕分辨率和偏移量配置
 4. **描边效果不明显**: 调整描边颜色对比度和宽度
+5. **OBS 无法捕获窗口**: 确认窗口标题设置和 `always_show_window` 配置
+6. **色度键抠像效果不佳**: 调整色度键颜色和 OBS 滤镜参数
 
 ### 调试方法
 
 1. 查看插件日志输出
 2. 检查配置文件格式
 3. 验证依赖库版本兼容性
-4. 测试不同操作系统的兼容性 
+4. 测试不同操作系统的兼容性
+5. 在 OBS 中测试不同的捕获模式
+
+### OBS 集成问题
+
+1. **窗口无法被 OBS 识别**:
+   - 确认 `obs_friendly_mode = true`
+   - 检查窗口标题是否正确设置
+   - 重启 OBS 并重新添加窗口捕获源
+
+2. **透明效果不理想**:
+   - 调整 `background_color` 参数，选择合适的背景色
+   - 调整 `window_alpha` 参数控制整体透明度
+   - 确保文字描边足够明显
+
+3. **色度键抠像问题**:
+   - 确认色度键颜色设置正确
+   - 在 OBS 中调整色度键滤镜的相似度和平滑度参数
+   - 避免文字颜色与色度键颜色过于接近 
