@@ -180,6 +180,7 @@ class ConsoleInputPlugin(BasePlugin):
         # --- User Info ---
         user_id_from_config = cfg.get("user_id", 0)  # Assume int from config, default to 0
         user_info = UserInfo(
+            # platform=cfg.get("platform", "qq"),
             platform=self.core.platform,
             user_id=user_id_from_config,
             user_nickname=cfg.get("user_nickname", "ConsoleUser"),
@@ -194,6 +195,8 @@ class ConsoleInputPlugin(BasePlugin):
                 group_id=cfg.get("group_id", 0),
                 group_name=cfg.get("group_name", "default"),
             )
+            
+            
 
         # --- Format Info ---
         format_info = FormatInfo(

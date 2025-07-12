@@ -51,7 +51,6 @@ _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
 
 
 # 音频流参数（根据实际播放器配置）
-SAMPLERATE = 32000  # 采样率
 CHANNELS = 1  # 声道数
 DTYPE = np.int16  # 样本类型
 BLOCKSIZE = 1024  # 每次播放的帧数
@@ -96,6 +95,7 @@ class TTSConfig:
     # api_url: str
     host: str
     port: int
+    sample_rate: int
     ref_audio_path: str
     prompt_text: str
     aux_ref_audio_paths: List[str]
@@ -128,12 +128,14 @@ class TTSConfig:
 class PluginConfig:
     output_device: str
     llm_clean: bool
+    lip_sync_service_name: str
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PluginConfig":
         return cls(
             output_device=data.get("output_device_name", ""),
             llm_clean=data.get("llm_clean", True),
+            lip_sync_service_name=data.get("lip_sync_service_name", "vts_lip_sync"),
         )
 
 
@@ -553,6 +555,9 @@ class TTSPlugin(BasePlugin):
         super().__init__(core, plugin_config)
         self.tts_config = get_default_config()
 
+        # --- 服务缓存 ---
+        self.vts_lip_sync_service = None
+
         # --- TTS Service Initialization (from tts_service.py) ---
         if not self.tts_config.plugin.output_device:
             self.output_device_name = ""
@@ -664,11 +669,10 @@ class TTSPlugin(BasePlugin):
 
         # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
         if pcm_data and len(pcm_data) > 0:
-            vts_lip_sync_service = self.core.get_service("vts_lip_sync")
-            if vts_lip_sync_service:
+            if self.vts_lip_sync_service:
                 try:
                     # 异步发送音频数据进行口型同步分析
-                    await vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE)
+                    await self.vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=self.tts_config.tts.sample_rate)
                 except Exception as e:
                     self.logger.debug(f"口型同步处理失败: {e}")
 
@@ -734,8 +738,11 @@ class TTSPlugin(BasePlugin):
         # 我们将在处理函数内部检查消息类型是否为 'text'
         self.core.register_websocket_handler("*", self.handle_maicore_message)
         self.logger.info("TTS 插件已设置，监听所有 MaiCore WebSocket 消息。")
+        
+        # 服务获取逻辑已移至首次使用时，以避免加载顺序问题
+
         self.stream = self.start_pcm_stream(
-            samplerate=SAMPLERATE,
+            samplerate=self.tts_config.tts.sample_rate,
             channels=CHANNELS,
             dtype=DTYPE,
             blocksize=BLOCKSIZE,
@@ -868,13 +875,26 @@ class TTSPlugin(BasePlugin):
     async def _speak(self, text: str):
         """执行 TTS 合成和播放，并通知 Subtitle Service。"""
 
+        # --- 惰性加载口型同步服务 ---
+        lip_sync_service = self.vts_lip_sync_service
+        # 如果服务未缓存，则在首次使用时尝试获取
+        if not lip_sync_service:
+            service_name = self.tts_config.plugin.lip_sync_service_name
+            # 确保配置了服务名且不为'none'
+            if service_name and service_name.lower() != 'none':
+                lip_sync_service = self.core.get_service(service_name)
+                if lip_sync_service:
+                    self.logger.info(f"首次使用时，成功获取并缓存 '{service_name}' 服务。")
+                    self.vts_lip_sync_service = lip_sync_service  # 缓存服务
+                else:
+                    self.logger.warning(f"口型同步功能不可用：未找到服务 '{service_name}'。")
+
         self.logger.info(f"请求播放: '{text[:30]}...'")
         
         # --- 启动口型同步会话 ---
-        vts_lip_sync_service = self.core.get_service("vts_lip_sync")
-        if vts_lip_sync_service:
+        if lip_sync_service:
             try:
-                await vts_lip_sync_service.start_lip_sync_session(text)
+                await lip_sync_service.start_lip_sync_session(text)
             except Exception as e:
                 self.logger.debug(f"启动口型同步会话失败: {e}")
         
@@ -901,24 +921,53 @@ class TTSPlugin(BasePlugin):
             if self.stream and not self.stream.active:
                 self.stream.start()
 
+            # --- for debugging: save audio to file ---
+            debug_audio_dir = os.path.join(_PLUGIN_DIR, "debug_audio")
+            os.makedirs(debug_audio_dir, exist_ok=True)
+
+            temp_path = None
+            try:
+                # We just want a unique name, so we create and close it immediately.
+                # The file will be written to later.
+                with tempfile.NamedTemporaryFile(
+                    delete=False, dir=debug_audio_dir, suffix=".wav", mode="wb"
+                ) as temp_f:
+                    temp_path = temp_f.name
+                self.logger.info(f"将为调试目的保存音频到: {temp_path}")
+            except Exception as e:
+                self.logger.error(f"创建临时调试音频文件失败: {e}")
+                temp_path = None
+
+            all_audio_data = bytearray()
             # 异步处理音频数据块
             for chunk in audio_stream:
                 if chunk:
+                    all_audio_data.extend(chunk)
                     # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
                     # 修改为异步调用
                     await self.decode_and_buffer(chunk)
                 else:
                     self.logger.warning("收到空音频块，跳过。")
                     continue
+            
+            # 将收集到的所有音频数据写入文件
+            if temp_path:
+                try:
+                    with open(temp_path, "wb") as f:
+                        f.write(all_audio_data)
+                    self.logger.info(f"成功保存调试音频文件: {temp_path}")
+                except Exception as e:
+                    self.logger.error(f"保存调试音频文件失败: {temp_path}, 错误: {e}")
+
 
             self.logger.info(f"音频流播放完成: '{text[:30]}...'")
         except Exception as e:
             self.logger.error(f"音频流处理出错: {e}", exc_info=True)
         finally:
             # --- 停止口型同步会话 ---
-            if vts_lip_sync_service:
+            if lip_sync_service:
                 try:
-                    await vts_lip_sync_service.stop_lip_sync_session()
+                    await lip_sync_service.stop_lip_sync_session()
                 except Exception as e:
                     self.logger.debug(f"停止口型同步会话失败: {e}")
 
