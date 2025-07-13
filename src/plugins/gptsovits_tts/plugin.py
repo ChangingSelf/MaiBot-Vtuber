@@ -674,6 +674,7 @@ class TTSPlugin(BasePlugin):
             if self.vts_lip_sync_service:
                 try:
                     # 异步发送音频数据进行口型同步分析
+                    self.logger.info(f"发送音频数据进行口型同步分析: {len(pcm_data)}")
                     await self.vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=self.tts_config.tts.sample_rate)
                 except Exception as e:
                     self.logger.debug(f"口型同步处理失败: {e}")
