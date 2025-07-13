@@ -745,6 +745,13 @@ class VTubeStudioPlugin(BasePlugin):
                 self.audio_playback_start_time = current_time
                 self.accumulated_audio = bytearray()
 
+            # 检查累积的音频数据大小，避免占用过多内存
+            max_audio_buffer = 5 * sample_rate * 2  # 5秒的音频数据（16位，2字节/样本）
+            if len(self.accumulated_audio) > max_audio_buffer:
+                self.logger.warning("口型同步缓冲区过大，重置缓冲区")
+                self.accumulated_audio = bytearray(self.accumulated_audio[-max_audio_buffer:])
+                self.accumulation_start_time = current_time
+
             # 累积音频数据
             self.accumulated_audio.extend(audio_data)
 

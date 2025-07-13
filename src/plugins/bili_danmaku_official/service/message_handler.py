@@ -84,8 +84,8 @@ class BiliMessageHandler:
 
         if cmd == BiliMessageType.DANMAKU.value:
             return DanmakuMessage.from_dict(data)
-        # elif cmd == BiliMessageType.ENTER.value:
-        #     return EnterMessage.from_dict(data)
+        elif cmd == BiliMessageType.ENTER.value:
+            return EnterMessage.from_dict(data)
         elif cmd == BiliMessageType.GIFT.value:
             return GiftMessage.from_dict(data)
         elif cmd == BiliMessageType.GUARD.value:

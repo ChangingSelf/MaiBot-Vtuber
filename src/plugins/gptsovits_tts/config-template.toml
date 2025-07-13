@@ -5,6 +5,7 @@ output_device_name = ""
 
 # 是否启用LLM文本清理服务（如果该服务可用）
 llm_clean = true
+use_remote_stream = false  # 是否启用远程音频输出（需安装remote_stream插件）
 
 # 指定要使用的口型同步服务名称。
 # 默认是 "vts_lip_sync" (VTube Studio 插件)。
