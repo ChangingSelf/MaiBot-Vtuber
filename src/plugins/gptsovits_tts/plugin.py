@@ -738,15 +738,12 @@ class TTSPlugin(BasePlugin):
         if pcm_data and len(pcm_data) > 0:
             if self.vts_lip_sync_service:
                 try:
-                    # 异步发送音频数据进行口型同步分析，添加超时控制
-                    await asyncio.wait_for(
+                    asyncio.create_task(
                         self.vts_lip_sync_service.process_tts_audio(
                             pcm_data, sample_rate=self.tts_config.tts.sample_rate
                         ),
-                        timeout=0.1,  # 最多等待0.1秒
                     )
                 except asyncio.TimeoutError:
-                    # 如果处理时间过长，记录日志但不阻塞音频处理
                     self.logger.debug("口型同步处理超时")
                 except Exception as e:
                     self.logger.debug(f"口型同步处理失败: {e}")

@@ -44,6 +44,7 @@ text_split_method = "cut5" # 文本分割方法
 repetition_penalty = 1.35 # 重复惩罚系数
 sample_steps = 32        # VITS采样步数
 super_sampling = false    # 是否启用超采样
+sample_rate = 32000
 
 [tts.models]
 # GPT模型配置
