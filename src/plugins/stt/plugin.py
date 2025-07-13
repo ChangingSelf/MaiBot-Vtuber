@@ -34,6 +34,16 @@ from time import mktime
 from urllib.parse import urlencode, quote
 from typing import Dict, Any, Optional, List, Tuple
 
+# --- Remote Stream 支持 ---
+# 检查是否安装了remote_stream依赖
+try:
+    from src.plugins.remote_stream.plugin import RemoteStreamService, StreamMessage, MessageType
+
+    REMOTE_STREAM_AVAILABLE = True
+except ImportError:
+    REMOTE_STREAM_AVAILABLE = False
+    print("提示: 未找到 remote_stream 插件，将使用本地音频输入。", file=sys.stderr)
+
 # --- Dependencies Check & TOML ---
 try:
     import torch
@@ -61,8 +71,8 @@ except ModuleNotFoundError:
 
 # --- Amaidesu Core Imports ---
 
-# os.environ["http_proxy"] = "http://10.43.0.1:7890"
-# os.environ["https_proxy"] = "http://10.43.0.1:7890"
+# os.environ["http_proxy"] = "http://127.0.0.1:7890"
+# os.environ["https_proxy"] = "http://127.0.0.1:7890"
 # --- Plugin Configuration Loading ---
 # _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 # _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
@@ -186,7 +196,7 @@ class STTPlugin(BasePlugin):
                 self.logger.error(f"加载 Silero VAD 模型失败: {e}", exc_info=True)
                 try:
                     self.vad_model, self.vad_utils = torch.hub.load(
-                        repo_or_dir="snakers4/silero-vad",
+                        repo_or_dir=os.path.join(safe_cache_dir, "snakers4_silero-vad_master"),
                         model="silero_vad",
                         source="local",  # Explicitly specify source to avoid confusion
                         force_reload=False,
@@ -247,16 +257,21 @@ class STTPlugin(BasePlugin):
         # --- Control Flow & State ---
         self._stt_task: Optional[asyncio.Task] = None
         self.stop_event = asyncio.Event()
-        self._internal_audio_queue = asyncio.Queue(maxsize=100)  # Internal queue for audio chunks
+        self._internal_audio_queue = asyncio.Queue()  # Internal queue for audio chunks
 
         # WebSocket and Session state variables
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._active_ws: Optional[aiohttp.ClientWebSocketResponse] = None
-        self._active_receiver_task: Optional[asyncio.Task] = None
+        self._session = None
+        self._active_ws = None
+        self._active_receiver_task = None
         self._is_speaking: bool = False
         self._silence_started_time: Optional[float] = None
 
-        self.logger.info(f"STT 插件初始化完成。VAD Enabled={self.vad_enabled}")
+        # --- Remote Stream 支持 ---
+        self.use_remote_stream = self.audio_config.get("use_remote_stream", False) and REMOTE_STREAM_AVAILABLE
+        self.remote_stream_service = None
+        self.remote_audio_received = False  # 标记是否已从远程接收到音频
+
+        self.logger.info(f"STT 插件初始化完成。VAD Enabled={self.vad_enabled}, Remote Stream={self.use_remote_stream}")
 
     def _find_device_index(self, device_name: Optional[str], kind: str = "input") -> Optional[int]:
         """根据设备名称查找设备索引。"""
@@ -300,6 +315,24 @@ class STTPlugin(BasePlugin):
             self.logger.warning("VAD is not enabled or failed to load. STT plugin will not run.")
             return
 
+        # 注册 Remote Stream 音频回调（如果启用）
+        print(self.use_remote_stream)
+        if self.use_remote_stream:
+            try:
+                # 获取 remote_stream 服务
+                remote_stream_service = self.core.get_service("remote_stream")
+                if remote_stream_service:
+                    self.remote_stream_service = remote_stream_service
+                    # 注册音频数据回调
+                    self.remote_stream_service.register_audio_callback("data", self._handle_remote_audio)
+                    self.logger.info("成功注册 Remote Stream 音频回调")
+                else:
+                    self.logger.warning("未找到 Remote Stream 服务，将使用本地麦克风")
+                    self.use_remote_stream = False
+            except Exception as e:
+                self.logger.error(f"注册 Remote Stream 回调失败: {e}")
+                self.use_remote_stream = False
+
         # 启动后台任务
         self._stt_task = asyncio.create_task(self._stt_worker())
 
@@ -307,6 +340,14 @@ class STTPlugin(BasePlugin):
         """停止 STT 任务并清理资源。"""
         self.logger.info("请求停止 STT 插件...")
         self.stop_event.set()
+
+        # 取消注册 Remote Stream 回调
+        if self.use_remote_stream and self.remote_stream_service:
+            try:
+                self.remote_stream_service.unregister_audio_callback("data", self._handle_remote_audio)
+                self.logger.info("已取消注册 Remote Stream 音频回调")
+            except Exception as e:
+                self.logger.warning(f"取消注册 Remote Stream 回调失败: {e}")
 
         stt_task_to_wait = self._stt_task
         self._stt_task = None
@@ -343,6 +384,54 @@ class STTPlugin(BasePlugin):
 
         self.logger.info("STT 插件清理完成。")
         await super().cleanup()
+
+    def _handle_remote_audio(self, audio_data: Dict[str, Any]):
+        """处理从 Remote Stream 接收到的音频数据
+
+        Args:
+            audio_data: 音频数据字典，包含 'binary' 键，值为音频二进制数据
+        """
+        if not audio_data or "binary" not in audio_data:
+            self.logger.warning("接收到的远程音频数据无效或不包含二进制数据")
+            return
+
+        try:
+            # 获取二进制音频数据
+            audio_bytes = audio_data["binary"]
+
+            # 检查音频格式（如果提供）并转换
+            format_info = audio_data.get("format", {})
+            sample_rate = format_info.get("sample_rate", self.sample_rate)
+
+            # 如果采样率不匹配，记录警告（未来可以添加重采样功能）
+            if sample_rate != self.sample_rate:
+                self.logger.warning(
+                    f"远程音频采样率 ({sample_rate}) 与本地设置 ({self.sample_rate}) 不匹配，可能影响识别质量"
+                )
+
+            # 标记已从远程接收到音频
+            self.remote_audio_received = True
+
+            # 将音频数据放入内部队列进行处理
+            # 使用 call_soon_threadsafe 确保线程安全，因为回调可能在不同的线程中执行
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(self._internal_audio_queue.put_nowait, audio_bytes)
+                # self.logger.debug(f"已将 {len(audio_bytes)} 字节远程音频数据加入处理队列")
+            except RuntimeError:
+                # 如果没有运行的事件循环，尝试直接放入队列（虽然不太安全）
+                try:
+                    self._internal_audio_queue.put_nowait(audio_bytes)
+                except asyncio.QueueFull:
+                    # 队列满，丢弃数据
+                    pass
+            except asyncio.QueueFull:
+                # 队列满，丢弃数据（这是正常的，处理速度可能慢于输入）
+                # self.logger.debug("内部音频队列已满，丢弃远程音频数据")
+                pass
+
+        except Exception as e:
+            self.logger.error(f"处理远程音频数据时出错: {e}", exc_info=True)
 
     # --- WebSocket Connection Management Helpers (New for True Streaming) ---
 
@@ -493,7 +582,7 @@ class STTPlugin(BasePlugin):
     # --- Main Worker (New for True Streaming) ---
     async def _stt_worker(self):
         """
-        Main worker loop: Captures audio via sounddevice, puts chunks into an internal queue,
+        Main worker loop: Captures audio via sounddevice or remote stream, puts chunks into an internal queue,
         processes chunks with VAD, manages WebSocket connection, sends audio stream,
         and the receiver sends final recognized text back to Core.
         """
@@ -503,59 +592,65 @@ class STTPlugin(BasePlugin):
 
         loop = asyncio.get_event_loop()
         stream = None
-        self._internal_audio_queue = asyncio.Queue(maxsize=100)  # Ensure queue is created
+        self._internal_audio_queue = asyncio.Queue()  # Ensure queue is created
 
-        def audio_callback(indata: np.ndarray, frame_count: int, time_info: Any, status: sd.CallbackFlags):
-            """Callback function for sounddevice stream. Puts raw bytes into queue."""
-            if status:
-                self.logger.warning(f"Audio input status: {status}")
-            try:
-                # Convert numpy array to bytes (int16 is expected by Iflytek)
-                if indata.dtype == np.float32:
-                    indata_int16 = (indata * 32767.0).astype(np.int16)
-                elif indata.dtype == np.int16:
-                    indata_int16 = indata
-                else:
-                    self.logger.warning(f"Unsupported input dtype {indata.dtype}, attempting cast to int16.")
-                    indata_int16 = indata.astype(np.int16)
+        # 只有在不使用远程流时才启动本地麦克风捕获
+        if not self.use_remote_stream:
 
-                # Ensure mono if necessary
-                if indata_int16.ndim > 1 and self.channels == 1:
-                    audio_bytes = indata_int16[:, 0].tobytes()
-                elif indata_int16.ndim == 1 and self.channels == 1:
-                    audio_bytes = indata_int16.tobytes()
-                else:
-                    self.logger.warning(
-                        f"Unexpected audio dimensions: {indata_int16.shape} for channels: {self.channels}"
-                    )
-                    # Attempt to take first channel if stereo but configured mono
-                    if indata_int16.ndim > 1:
-                        audio_bytes = indata_int16[:, 0].tobytes()
+            def audio_callback(indata, frame_count, time_info, status):
+                """Callback function for sounddevice stream. Puts raw bytes into queue."""
+                if status:
+                    self.logger.warning(f"Audio input status: {status}")
+                try:
+                    # Convert numpy array to bytes (int16 is expected by Iflytek)
+                    if indata.dtype == np.float32:
+                        indata_int16 = (indata * 32767.0).astype(np.int16)
+                    elif indata.dtype == np.int16:
+                        indata_int16 = indata
                     else:
-                        audio_bytes = indata_int16.tobytes()  # Fallback
+                        self.logger.warning(f"Unsupported input dtype {indata.dtype}, attempting cast to int16.")
+                        indata_int16 = indata.astype(np.int16)
 
-                # Put data into the internal queue
-                loop.call_soon_threadsafe(self._internal_audio_queue.put_nowait, audio_bytes)
-            except asyncio.QueueFull:
-                # This is okay, means processing is slower than input, VAD will handle segments
-                # self.logger.warning("Internal STT audio queue full! Discarding data.") # Too noisy
-                pass
-            except Exception as e:
-                self.logger.error(f"Error in audio callback: {e}", exc_info=True)
+                    # Ensure mono if necessary
+                    if indata_int16.ndim > 1 and self.channels == 1:
+                        audio_bytes = indata_int16[:, 0].tobytes()
+                    elif indata_int16.ndim == 1 and self.channels == 1:
+                        audio_bytes = indata_int16.tobytes()
+                    else:
+                        self.logger.warning(
+                            f"Unexpected audio dimensions: {indata_int16.shape} for channels: {self.channels}"
+                        )
+                        # Attempt to take first channel if stereo but configured mono
+                        if indata_int16.ndim > 1:
+                            audio_bytes = indata_int16[:, 0].tobytes()
+                        else:
+                            audio_bytes = indata_int16.tobytes()  # Fallback
+
+                    # Put data into the internal queue
+                    loop.call_soon_threadsafe(self._internal_audio_queue.put_nowait, audio_bytes)
+                except asyncio.QueueFull:
+                    # This is okay, means processing is slower than input, VAD will handle segments
+                    # self.logger.warning("Internal STT audio queue full! Discarding data.") # Too noisy
+                    pass
+                except Exception as e:
+                    self.logger.error(f"Error in audio callback: {e}", exc_info=True)
 
         try:
-            # --- Start Audio Stream --- (Moved inside worker)
-            self.logger.info("Starting sounddevice audio input stream...")
-            stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                blocksize=self.block_size_samples,
-                device=self.input_device_index,
-                channels=self.channels,
-                dtype=self.dtype_str,  # Use configured dtype for input
-                callback=audio_callback,
-            )
-            stream.start()
-            self.logger.info(f"Audio stream started. Listening for speech (VAD Threshold: {self.vad_threshold})...")
+            # --- Start Audio Stream (仅在不使用远程流时) ---
+            if not self.use_remote_stream:
+                self.logger.info("正在启动本地麦克风输入流...")
+                stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    blocksize=self.block_size_samples,
+                    device=self.input_device_index,
+                    channels=self.channels,
+                    dtype=self.dtype_str,  # Use configured dtype for input
+                    callback=audio_callback,
+                )
+                stream.start()
+                self.logger.info(f"本地音频流已启动。监听语音中 (VAD 阈值: {self.vad_threshold})...")
+            else:
+                self.logger.info(f"使用远程音频流模式，等待远程音频输入 (VAD 阈值: {self.vad_threshold})...")
 
             # --- Processing Loop --- (Reads from internal queue)
             speech_chunk_count = 0  # Track chunks sent in current utterance
@@ -571,6 +666,10 @@ class STTPlugin(BasePlugin):
                     self._internal_audio_queue.task_done()
 
                 except asyncio.TimeoutError:
+                    # 在远程流模式下，如果长时间没收到远程音频，记录一下日志
+                    if self.use_remote_stream and not self.remote_audio_received:
+                        self.logger.debug("正在等待远程音频数据...")
+
                     # Timeout: indicates potential end of speech due to lack of audio
                     if self._is_speaking:
                         # If we were speaking, timeout marks the *start* of silence
@@ -748,18 +847,18 @@ class STTPlugin(BasePlugin):
         except Exception as e:
             self.logger.exception(f"Fatal error in STT worker loop: {e}")
         finally:
-            self.logger.info("STT worker loop finishing. Cleaning up resources...")
-            # Stop audio stream
-            if stream is not None:
+            self.logger.info("STT worker循环结束。清理资源...")
+            # 停止音频流（如果启用了本地麦克风）
+            if not self.use_remote_stream and stream is not None:
                 try:
                     stream.stop()
                     stream.close()
-                    self.logger.debug("Sounddevice stream stopped and closed.")
+                    self.logger.debug("本地麦克风流已停止并关闭。")
                 except Exception as sd_err:
-                    self.logger.error(f"Error stopping sounddevice stream: {sd_err}", exc_info=True)
-            # Ensure connection is closed
+                    self.logger.error(f"停止本地麦克风流时出错: {sd_err}", exc_info=True)
+            # 确保连接已关闭
             await self._close_iflytek_connection(send_last_frame=False)
-            self.logger.info("STT worker finished.")
+            self.logger.info("STT worker已完成。")
 
     # --- Iflytek Receiver (Modified in previous step) ---
     async def _iflytek_receiver(self, ws: aiohttp.ClientWebSocketResponse):

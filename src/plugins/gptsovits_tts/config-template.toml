@@ -1,6 +1,7 @@
 [plugin]
 # output_device_name = ""
 llm_clean = true
+use_remote_stream = false  # 是否启用远程音频输出（需安装remote_stream插件）
 
 [pipeline]
 # pipeline预设配置

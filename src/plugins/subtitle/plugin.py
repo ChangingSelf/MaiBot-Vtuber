@@ -40,7 +40,7 @@ class OutlineLabel:
 
         # 保存 logger 引用
         self.logger = logger
-        
+
         # 移除描边相关参数，避免传递给父类
         kwargs.pop("outline_color", None)
         kwargs.pop("outline_width", None)
@@ -50,7 +50,7 @@ class OutlineLabel:
 
         # 过滤掉可能导致问题的参数
         safe_kwargs = {k: v for k, v in kwargs.items() if k not in ["bg_color", "text_color"]}
-        
+
         # 设置容器为透明
         safe_kwargs["fg_color"] = "transparent"
         safe_kwargs["bg_color"] = "transparent"
@@ -72,12 +72,12 @@ class OutlineLabel:
         # 创建 Canvas 来绘制带描边的文字
         # 重要：设置Canvas的初始背景和边框
         canvas_kwargs = {
-            "highlightthickness": 0, 
+            "highlightthickness": 0,
             "bd": 0,
             "relief": "flat",
-            "bg": background_color  # 直接使用配置的背景色
+            "bg": background_color,  # 直接使用配置的背景色
         }
-        
+
         self.canvas = tk.Canvas(self.container_frame, **canvas_kwargs)
         self.canvas.pack(fill="both", expand=True)
 
@@ -211,7 +211,7 @@ class SubtitlePlugin(BasePlugin):
         super().__init__(core, plugin_config)
         # 从正确的配置节点读取配置
         self.config = self.plugin_config.get("subtitle_display", {})
-        
+
         # 如果 subtitle_display 节点不存在，尝试使用顶级配置（向后兼容）
         if not self.config:
             self.config = self.plugin_config
@@ -244,13 +244,13 @@ class SubtitlePlugin(BasePlugin):
         self.auto_hide = self.config.get("auto_hide", True)
         self.window_alpha = self.config.get("window_alpha", 0.95)
         self.always_on_top = self.config.get("always_on_top", False)  # 修改默认值为 False
-        
+
         # --- OBS 集成配置 ---
         self.obs_friendly_mode = self.config.get("obs_friendly_mode", True)
         self.window_title = self.config.get("window_title", "Amaidesu-Subtitle-OBS")
         self.use_chroma_key = self.config.get("use_chroma_key", False)
         self.chroma_key_color = self.config.get("chroma_key_color", "#00FF00")
-        
+
         # --- 窗口显示配置 ---
         self.always_show_window = self.config.get("always_show_window", True)
         self.show_in_taskbar = self.config.get("show_in_taskbar", True)
@@ -301,12 +301,12 @@ class SubtitlePlugin(BasePlugin):
             # --- 窗口属性设置 ---
             self.root.attributes("-topmost", self.always_on_top)
             self.root.attributes("-alpha", self.window_alpha)
-            
+
             # 确保窗口在任务栏显示且可操作
             if self.always_show_window and self.show_in_taskbar:
                 # 正常窗口模式：在任务栏显示，可最小化/最大化
                 self.logger.info("正常窗口模式：窗口将在任务栏显示并可正常操作")
-                
+
                 # 设置窗口为可调整大小（便于任务栏操作）
                 if self.window_minimizable:
                     self.root.resizable(True, True)
@@ -379,16 +379,16 @@ class SubtitlePlugin(BasePlugin):
                 # 始终显示窗口模式：立即显示
                 self.root.deiconify()  # 确保窗口可见
                 self.is_visible = True
-                
+
                 # 设置初始显示内容
                 if self.show_waiting_text:
                     initial_text = "字幕窗口已就绪 - 等待语音/弹幕输入..."
                 else:
                     initial_text = ""  # 空内容（透明效果）
-                    
+
                 if initial_text:
                     self.root.after(500, lambda: self._update_subtitle_display(initial_text))
-                    
+
                 self.logger.info(f"窗口始终显示模式已启用 - 标题: '{window_title}'")
                 self.logger.info("窗口已在任务栏显示，OBS 可通过窗口捕获识别")
             else:
@@ -466,21 +466,20 @@ class SubtitlePlugin(BasePlugin):
                 and self.fade_delay_seconds > 0
                 and time.time() - self.last_voice_time > self.fade_delay_seconds
             ):
-                    if self.always_show_window:
-                        # 始终显示模式：只清空文本，不隐藏窗口
-                        self.logger.debug("自动清空字幕文本（保持窗口显示）")
-                        if self.text_label:
-                            if self.show_waiting_text:
-                                self.text_label.configure_text(text="等待语音/弹幕输入...")
-                            else:
-                                self.text_label.configure_text(text="")  # 完全清空，实现透明效果
-                    else:
-                        # 传统模式：隐藏窗口
-                        self.logger.debug("自动隐藏字幕窗口")
-                        self.root.withdraw()
-                        self.is_visible = False
-                        if self.text_label:
-                            self.text_label.configure_text(text="")
+                if self.always_show_window:
+                    # 始终显示模式：只清空文本，不隐藏窗口
+                    if self.text_label:
+                        if self.show_waiting_text:
+                            self.text_label.configure_text(text="等待语音/弹幕输入...")
+                        else:
+                            self.text_label.configure_text(text="")  # 完全清空，实现透明效果
+                else:
+                    # 传统模式：隐藏窗口
+                    self.logger.debug("自动隐藏字幕窗口")
+                    self.root.withdraw()
+                    self.is_visible = False
+                    if self.text_label:
+                        self.text_label.configure_text(text="")
 
             if self.is_running and self.root:
                 self.root.after(100, self._check_auto_hide)
@@ -509,18 +508,18 @@ class SubtitlePlugin(BasePlugin):
         """显示右键菜单"""
         if not self.root:
             return
-            
+
         try:
             # 创建右键菜单
             context_menu = tk.Menu(self.root, tearoff=0)
-            
+
             # 添加菜单项
             if self.always_show_window:
                 if self.is_visible:
                     context_menu.add_command(label="最小化窗口", command=self._minimize_window)
                 else:
                     context_menu.add_command(label="显示窗口", command=self._show_window)
-            
+
             context_menu.add_separator()
             context_menu.add_command(label="置顶/取消置顶", command=self._toggle_topmost)
             context_menu.add_command(label="调整透明度", command=self._adjust_opacity)
@@ -529,10 +528,10 @@ class SubtitlePlugin(BasePlugin):
             context_menu.add_command(label="清空内容", command=self._clear_content)
             context_menu.add_separator()
             context_menu.add_command(label="关闭窗口", command=self._on_closing)
-            
+
             # 显示菜单
             context_menu.post(event.x_root, event.y_root)
-            
+
         except Exception as e:
             self.logger.debug(f"显示右键菜单时出错: {e}")
 
@@ -568,7 +567,7 @@ class SubtitlePlugin(BasePlugin):
                 new_index = (current_index + 1) % len(alpha_values)
             except ValueError:
                 new_index = 0
-            
+
             new_alpha = alpha_values[new_index]
             self.root.attributes("-alpha", new_alpha)
             self.logger.info(f"窗口透明度已调整为: {new_alpha}")

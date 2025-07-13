@@ -3,6 +3,7 @@ import asyncio
 # import logging # 移除标准logging导入
 import tomllib
 import os
+import sys
 import time
 import base64
 from io import BytesIO
@@ -31,6 +32,15 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+
+# --- 远程流支持 ---
+try:
+    from src.plugins.remote_stream.plugin import RemoteStreamService
+
+    REMOTE_STREAM_AVAILABLE = True
+except ImportError:
+    REMOTE_STREAM_AVAILABLE = False
+    print("提示: 未找到 remote_stream 插件，将使用本地屏幕捕获。", file=sys.stderr)
 
 try:
     import obsws_python as obswspy
@@ -211,13 +221,20 @@ class ScreenMonitorPlugin(BasePlugin):
         super().__init__(core, plugin_config)
 
         # 初始化所有必要属性，防止属性不存在的错误
-        self.openai_client: Optional[AsyncOpenAI] = None
-        self._monitor_task: Optional[asyncio.Task] = None
+        self.openai_client = None
+        self._monitor_task = None
         self.is_running = False
         self.latest_description = "屏幕信息尚未获取。"
         self.description_lock = asyncio.Lock()
         self.initialization_successful = False  # 新增：跟踪初始化是否成功
         self.obs_client = None  # 初始化OBS客户端为None
+
+        # --- 远程流支持 ---
+        self.remote_stream_service = None
+        self.use_remote_stream = self.plugin_config.get("use_remote_stream", False) and REMOTE_STREAM_AVAILABLE
+        self.latest_remote_image = None
+        self.remote_image_lock = asyncio.Lock()
+        self.remote_image_received = False
 
         self.config = self.plugin_config  # 直接使用注入的 plugin_config
 
@@ -338,6 +355,23 @@ class ScreenMonitorPlugin(BasePlugin):
             self.logger.warning("ScreenMonitorPlugin 初始化失败，跳过后续设置。")
             return
 
+        # 注册 Remote Stream 图像回调（如果启用）
+        if self.use_remote_stream:
+            try:
+                # 获取 remote_stream 服务
+                remote_stream_service = self.core.get_service("remote_stream")
+                if remote_stream_service:
+                    self.remote_stream_service = remote_stream_service
+                    # 注册图像数据回调
+                    self.remote_stream_service.register_image_callback("data", self._handle_remote_image)
+                    self.logger.info("成功注册 Remote Stream 图像回调")
+                else:
+                    self.logger.warning("未找到 Remote Stream 服务，将使用本地屏幕捕获")
+                    self.use_remote_stream = False
+            except Exception as e:
+                self.logger.error(f"注册 Remote Stream 回调失败: {e}")
+                self.use_remote_stream = False
+
         # 如果使用OBS，检查OBS连接并设置
         if self.capture_source == "obs" and self.obs_client:
             try:
@@ -387,6 +421,14 @@ class ScreenMonitorPlugin(BasePlugin):
     async def cleanup(self):
         self.logger.info("正在清理 ScreenMonitorPlugin...")
         self.is_running = False  # 通知后台任务停止
+
+        # 取消注册 Remote Stream 回调
+        if self.use_remote_stream and self.remote_stream_service:
+            try:
+                self.remote_stream_service.unregister_image_callback("data", self._handle_remote_image)
+                self.logger.info("已取消注册 Remote Stream 图像回调")
+            except Exception as e:
+                self.logger.warning(f"取消注册 Remote Stream 回调失败: {e}")
 
         # 取消并等待后台任务
         if self._monitor_task and not self._monitor_task.done():
@@ -444,9 +486,25 @@ class ScreenMonitorPlugin(BasePlugin):
     async def _monitoring_loop(self):
         """后台任务：定期截图并调用 VL 模型更新描述。"""
         self.logger.info("屏幕监控循环启动。")
+        request_image_interval = min(5, max(1, self.interval / 2))  # 远程图像请求间隔为处理间隔的一半，最少1秒，最多5秒
+        last_image_request_time = 0
+
         while self.is_running:
             start_time = time.monotonic()
             try:
+                # 如果使用远程流且有一段时间未请求图像，主动请求一次
+                if (
+                    self.use_remote_stream
+                    and self.remote_stream_service
+                    and (start_time - last_image_request_time > request_image_interval)
+                ):
+                    try:
+                        await self.remote_stream_service.request_image()
+                        last_image_request_time = start_time
+                    except Exception as e:
+                        self.logger.error(f"请求远程图像失败: {e}")
+
+                # 处理屏幕截图并进行分析
                 await self._capture_and_process_screenshot()
             except Exception as e:
                 # 捕获截图或处理中的意外错误
@@ -475,15 +533,48 @@ class ScreenMonitorPlugin(BasePlugin):
         encoded_image: Optional[str] = None
 
         # 根据不同的截图源获取图像
-        if self.capture_source == "screen":
-            # 使用屏幕截图方法
-            self.logger.debug("正在通过屏幕捕获截取屏幕...")
-            encoded_image = await self._get_screenshot_from_screen()
+        if self.use_remote_stream:
+            # 尝试从远程流获取图像
+            self.logger.debug("正在尝试从远程流获取图像...")
+            # 如果启用了远程流，但尚未收到图像，尝试请求一次
+            if not self.remote_image_received and self.remote_stream_service:
+                try:
+                    self.logger.debug("向远程设备发送图像请求...")
+                    await self.remote_stream_service.request_image()
+                    # 等待短暂时间，看是否收到响应
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    self.logger.error(f"请求远程图像失败: {e}")
 
-        elif self.capture_source == "obs" and self.obs_client:
-            # 使用 OBS 截图方法
-            self.logger.debug(f"正在通过OBS获取源 '{self.obs_source_name}' 的截图...")
-            encoded_image = await self._get_screenshot_from_obs()
+            # 检查是否有可用的远程图像
+            async with self.remote_image_lock:
+                if self.remote_image_received and self.latest_remote_image:
+                    self.logger.debug("使用已接收的远程图像...")
+                    # 将二进制图像转换为base64编码
+                    encoded_image = base64.b64encode(self.latest_remote_image).decode("utf-8")
+                else:
+                    self.logger.debug("未收到远程图像，尝试使用本地捕获...")
+                    # 回退到配置的本地捕获方式
+                    self.use_remote_stream = False  # 临时禁用远程流
+
+        # 如果远程流不可用或未收到图像，使用本地捕获
+        if not self.use_remote_stream or not encoded_image:
+            if self.capture_source == "screen":
+                # 使用屏幕截图方法
+                self.logger.debug("正在通过屏幕捕获截取屏幕...")
+                encoded_image = await self._get_screenshot_from_screen()
+            elif self.capture_source == "obs" and self.obs_client:
+                # 使用 OBS 截图方法
+                self.logger.debug(f"正在通过OBS获取源 '{self.obs_source_name}' 的截图...")
+                encoded_image = await self._get_screenshot_from_obs()
+
+            # 恢复远程流设置
+            if (
+                not self.use_remote_stream
+                and REMOTE_STREAM_AVAILABLE
+                and self.plugin_config.get("use_remote_stream", False)
+            ):
+                self.use_remote_stream = True
 
         if not encoded_image:
             return
@@ -651,6 +742,61 @@ class ScreenMonitorPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"屏幕截图或编码失败: {e}", exc_info=True)
             return None
+
+    async def _get_screenshot_from_remote(self) -> Optional[str]:
+        """从远程设备获取截图，返回Base64编码的图像"""
+        if not REMOTE_STREAM_AVAILABLE:
+            self.logger.error("远程流插件未加载，无法从远程设备获取截图")
+            return None
+
+        try:
+            # 使用远程流服务获取截图
+            self.logger.debug("正在从远程设备获取屏幕截图...")
+            async with RemoteStreamService() as remote_stream:
+                # 这里假设远程流服务有一个类似的接口
+                screenshot = await remote_stream.get_screenshot(
+                    source_name=self.obs_source_name,  # 可能需要根据实际情况调整
+                    width=1920,
+                    height=1080,
+                )
+
+            if screenshot and "image_data" in screenshot:
+                # 获取Base64图像数据
+                encoded_image = screenshot["image_data"]
+                self.logger.debug(f"远程截图成功并获取为 Base64 (大小: {len(encoded_image)} bytes)")
+                return encoded_image
+            else:
+                self.logger.error("从远程设备获取截图失败：响应格式不符合预期")
+                return None
+        except Exception as e:
+            self.logger.error(f"从远程设备获取截图失败: {e}", exc_info=True)
+            return None
+
+    async def _handle_remote_image(self, data):
+        """处理从 Remote Stream 接收的图像数据
+
+        Args:
+            data: 包含图像数据的字典，格式为 {"binary": bytes, "width": int, "height": int}
+        """
+        try:
+            # 获取图像数据
+            binary_data = data.get("binary")
+            width = data.get("width", 0)
+            height = data.get("height", 0)
+
+            if not binary_data:
+                self.logger.warning("收到空的远程图像数据")
+                return
+
+            self.logger.debug(f"收到远程图像: {len(binary_data)} bytes, 分辨率: {width}x{height}")
+
+            # 将图像数据安全地保存到实例变量
+            async with self.remote_image_lock:
+                self.latest_remote_image = binary_data
+                self.remote_image_received = True
+
+        except Exception as e:
+            self.logger.error(f"处理远程图像数据失败: {e}", exc_info=True)
 
 
 # --- Plugin Entry Point ---

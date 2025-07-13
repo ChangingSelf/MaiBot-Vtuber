@@ -23,6 +23,16 @@ try:
 except ImportError:
     print("依赖缺失: 请运行 'pip install sounddevice soundfile' 来使用音频播放功能。", file=sys.stderr)
     dependencies_ok = False
+
+# --- 远程流支持 ---
+try:
+    from src.plugins.remote_stream.plugin import RemoteStreamService, StreamMessage, MessageType
+
+    REMOTE_STREAM_AVAILABLE = True
+except ImportError:
+    REMOTE_STREAM_AVAILABLE = False
+    print("提示: 未找到 remote_stream 插件，将使用本地音频输出。", file=sys.stderr)
+
 # try:
 #     from openai import AsyncOpenAI, APIConnectionError, RateLimitError, APIStatusError
 # except ImportError:
@@ -129,12 +139,14 @@ class TTSConfig:
 class PluginConfig:
     output_device: str
     llm_clean: bool
+    use_remote_stream: bool = False  # 是否使用远程流服务
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PluginConfig":
         return cls(
             output_device=data.get("output_device_name", ""),
             llm_clean=data.get("llm_clean", True),
+            use_remote_stream=data.get("use_remote_stream", False),
         )
 
 
@@ -579,6 +591,10 @@ class TTSPlugin(BasePlugin):
         super().__init__(core, plugin_config)
         self.tts_config = get_default_config()
 
+        # --- 远程流支持 ---
+        self.use_remote_stream = self.tts_config.plugin.use_remote_stream
+        self.remote_stream_service = None
+
         # --- TTS Service Initialization (from tts_service.py) ---
         if not self.tts_config.plugin.output_device:
             self.output_device_name = ""
@@ -586,6 +602,8 @@ class TTSPlugin(BasePlugin):
         self.tts_lock = asyncio.Lock()
         # 为消息处理添加专门的锁
         self.message_lock = asyncio.Lock()
+
+        self.vts_lip_sync_service = None
         # 使用threading.Lock而不是asyncio.Lock，因为decode_and_buffer是同步方法
         self.input_pcm_queue_lock = asyncio.Lock()
 
@@ -593,7 +611,9 @@ class TTSPlugin(BasePlugin):
         self.tts_model = TTSModel(self.tts_config, self.tts_config.tts.host, self.tts_config.tts.port)
         self.input_pcm_queue = deque(b"")
         # 为音频数据队列添加最大长度限制，防止内存占用过高
-        self.audio_data_queue = deque(maxlen=100)  # 限制缓冲区大小，防止内存占用过高
+        self.audio_data_queue = deque(maxlen=1000)  # 限制缓冲区大小，防止内存占用过高
+
+        self.stream = None
 
         # --- UDP Broadcast Initialization (from tts_monitor.py / mmc_client.py) ---
 
@@ -711,12 +731,11 @@ class TTSPlugin(BasePlugin):
 
         # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
         if pcm_data and len(pcm_data) > 0:
-            vts_lip_sync_service = self.core.get_service("vts_lip_sync")
-            if vts_lip_sync_service:
+            if self.vts_lip_sync_service:
                 try:
                     # 异步发送音频数据进行口型同步分析，添加超时控制
                     await asyncio.wait_for(
-                        vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE),
+                        self.vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE),
                         timeout=0.1,  # 最多等待0.1秒
                     )
                 except asyncio.TimeoutError:
@@ -776,13 +795,25 @@ class TTSPlugin(BasePlugin):
         # 我们将在处理函数内部检查消息类型是否为 'text'
         self.core.register_websocket_handler("*", self.handle_maicore_message)
         self.logger.info("TTS 插件已设置，监听所有 MaiCore WebSocket 消息。")
-        self.stream = self.start_pcm_stream(
-            samplerate=SAMPLERATE,
-            channels=CHANNELS,
-            dtype=DTYPE,
-            blocksize=BLOCKSIZE,
-        )
-        self.logger.info("音频流已启动。")
+
+        # 设置远程流（如果启用）
+        if self.use_remote_stream:
+            # 获取 remote_stream 服务
+            remote_stream_service = self.core.get_service("remote_stream")
+            if remote_stream_service:
+                self.remote_stream_service = remote_stream_service
+                self.logger.info("已获取 Remote Stream 服务，将使用远程音频输出")
+
+        # 只有在不使用远程流时才启动本地音频流
+        if not self.use_remote_stream:
+            self.stream = self.start_pcm_stream(
+                samplerate=SAMPLERATE,
+                channels=CHANNELS,
+                dtype=DTYPE,
+                blocksize=BLOCKSIZE,
+            )
+            self.logger.info("本地音频流已启动。")
+
         self.tts_model.load_preset(self.tts_config.pipeline.default_preset)
 
     async def cleanup(self):
@@ -916,15 +947,21 @@ class TTSPlugin(BasePlugin):
         self.logger.info(f"请求播放: '{text[:30]}...'")
 
         # --- 启动口型同步会话 ---
-        vts_lip_sync_service = self.core.get_service("vts_lip_sync")
-        if vts_lip_sync_service:
+        if not self.vts_lip_sync_service:
+            self.vts_lip_sync_service = self.core.get_service("vts_lip_sync")
+        if self.vts_lip_sync_service:
             try:
-                await vts_lip_sync_service.start_lip_sync_session(text)
+                await self.vts_lip_sync_service.start_lip_sync_session(text)
             except Exception as e:
                 self.logger.debug(f"启动口型同步会话失败: {e}")
 
         async with self.tts_lock:
             self.logger.debug(f"获取 TTS 锁，开始处理: '{text[:30]}...'")
+
+            # 每次新的TTS请求，重置WAV头标志，确保为每个新的语音添加WAV头
+            if hasattr(self, "_wav_header_sent"):
+                self._wav_header_sent = False
+
             duration_seconds: Optional[float] = 10.0  # 初始化时长变量
             subtitle_service = self.core.get_service("subtitle_service")
             if subtitle_service:
@@ -942,21 +979,77 @@ class TTSPlugin(BasePlugin):
                 audio_stream = self.tts_model.tts_stream(text)
                 self.logger.info("开始处理音频流...")
 
-                # 确保音频流已启动
-                if self.stream and not self.stream.active:
+                # 确保本地音频流已启动（仅在非远程模式下）
+                if not self.use_remote_stream and self.stream and not self.stream.active:
                     self.stream.start()
-
+                if self.use_remote_stream and not self.remote_stream_service:
+                    # 获取 remote_stream 服务
+                    remote_stream_service = self.core.get_service("remote_stream")
+                    if remote_stream_service:
+                        self.remote_stream_service = remote_stream_service
+                        self.logger.info("已获取 Remote Stream 服务，将使用远程音频输出")
                 # 异步处理音频数据块
                 for chunk in audio_stream:
                     if chunk:
                         # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
 
-                        # 检查音频队列长度，如果队列过长则等待
-                        while len(self.audio_data_queue) >= self.audio_data_queue.maxlen * 0.8:
-                            await asyncio.sleep(0.05)  # 短暂等待，让音频播放追赶队列
+                        # 如果启用了远程流，发送音频数据到远程设备
 
-                        # 修改为异步调用
-                        await self.decode_and_buffer(chunk)
+                        if self.use_remote_stream and self.remote_stream_service:
+                            try:
+                                # 发送音频数据到远程设备
+                                format_info = {
+                                    "sample_rate": SAMPLERATE,
+                                    "channels": CHANNELS,
+                                    "format": str(DTYPE.__name__),
+                                    "bits_per_sample": SAMPLE_SIZE * 8,  # 样本位数，如16位
+                                }
+
+                                # 检查第一块是否需要添加WAV头
+                                if not hasattr(self, "_wav_header_sent") or not self._wav_header_sent:
+                                    self.logger.info("首次发送TTS数据，添加WAV头信息")
+
+                                    # 标记已发送WAV头
+                                    self._wav_header_sent = True
+
+                                    # 生成WAV头
+                                    wav_header = self._generate_wav_header(
+                                        len(chunk), SAMPLERATE, CHANNELS, SAMPLE_SIZE * 8
+                                    )
+
+                                    # 将WAV头与音频数据结合发送
+                                    combined_data = wav_header + chunk
+                                    await self.remote_stream_service.send_tts_audio(combined_data, format_info)
+                                    self.logger.debug(
+                                        f"已发送WAV头({len(wav_header)}字节)和{len(chunk)}字节的TTS音频数据到远程设备"
+                                    )
+                                else:
+                                    # 发送普通音频块
+                                    await self.remote_stream_service.send_tts_audio(chunk, format_info)
+                                    self.logger.debug(f"已发送{len(chunk)}字节TTS音频数据到远程设备")
+                                self.logger.debug(f"已发送 {len(chunk)} 字节TTS音频数据到远程设备")
+                            except Exception as e:
+                                self.logger.error(f"发送TTS音频到远程设备失败: {e}")
+                                # 如果远程发送失败，回退到本地播放
+                                if not self.stream:
+                                    self.logger.info("创建本地音频流作为远程发送失败的回退...")
+                                    self.stream = self.start_pcm_stream(
+                                        samplerate=SAMPLERATE,
+                                        channels=CHANNELS,
+                                        dtype=DTYPE,
+                                        blocksize=BLOCKSIZE,
+                                    )
+                                    if not self.stream.active:
+                                        self.stream.start()
+                                await self.decode_and_buffer(chunk)
+                        else:
+                            # 本地播放模式
+                            # 检查音频队列长度，如果队列过长则等待
+                            while len(self.audio_data_queue) >= self.audio_data_queue.maxlen * 0.8:
+                                await asyncio.sleep(0.05)  # 短暂等待，让音频播放追赶队列
+
+                            # 修改为异步调用
+                            await self.decode_and_buffer(chunk)
                     else:
                         self.logger.warning("收到空音频块，跳过。")
                         continue
@@ -966,11 +1059,71 @@ class TTSPlugin(BasePlugin):
                 self.logger.error(f"音频流处理出错: {e}", exc_info=True)
             finally:
                 # --- 停止口型同步会话 ---
-                if vts_lip_sync_service:
+                if self.vts_lip_sync_service:
                     try:
-                        await vts_lip_sync_service.stop_lip_sync_session()
+                        await self.vts_lip_sync_service.stop_lip_sync_session()
                     except Exception as e:
                         self.logger.debug(f"停止口型同步会话失败: {e}")
+
+    def _generate_wav_header(self, data_size, sample_rate, channels, bits_per_sample):
+        """生成标准WAV文件头
+
+        Args:
+            data_size: PCM数据大小（字节）
+            sample_rate: 采样率（Hz）
+            channels: 通道数
+            bits_per_sample: 位深度（8, 16, 24, 32）
+
+        Returns:
+            WAV头的二进制数据
+        """
+        # WAV头部大小为44字节
+        header = bytearray(44)
+
+        # RIFF头 (4字节)
+        header[0:4] = b"RIFF"
+
+        # 文件总大小减去8字节 (4字节)
+        # 总大小 = 数据大小 + 36字节(头部大小 - 8)
+        file_size = data_size + 36
+        header[4:8] = file_size.to_bytes(4, byteorder="little")
+
+        # 文件类型 'WAVE' (4字节)
+        header[8:12] = b"WAVE"
+
+        # 格式块标识符 'fmt ' (4字节)
+        header[12:16] = b"fmt "
+
+        # 格式块大小 (4字节) - PCM格式为16
+        header[16:20] = (16).to_bytes(4, byteorder="little")
+
+        # 音频格式 (2字节) - PCM格式为1
+        header[20:22] = (1).to_bytes(2, byteorder="little")
+
+        # 通道数 (2字节)
+        header[22:24] = channels.to_bytes(2, byteorder="little")
+
+        # 采样率 (4字节)
+        header[24:28] = sample_rate.to_bytes(4, byteorder="little")
+
+        # 字节率 (4字节) = 采样率 × 每个样本的字节数 × 通道数
+        byte_rate = sample_rate * (bits_per_sample // 8) * channels
+        header[28:32] = byte_rate.to_bytes(4, byteorder="little")
+
+        # 块对齐 (2字节) = 每个样本的字节数 × 通道数
+        block_align = (bits_per_sample // 8) * channels
+        header[32:34] = block_align.to_bytes(2, byteorder="little")
+
+        # 位深度 (2字节)
+        header[34:36] = bits_per_sample.to_bytes(2, byteorder="little")
+
+        # 数据块标识 'data' (4字节)
+        header[36:40] = b"data"
+
+        # 数据大小 (4字节)
+        header[40:44] = data_size.to_bytes(4, byteorder="little")
+
+        return bytes(header)
 
 
 plugin_entrypoint = TTSPlugin
