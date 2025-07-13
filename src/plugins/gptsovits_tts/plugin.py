@@ -62,7 +62,6 @@ _CONFIG_FILE = os.path.join(_PLUGIN_DIR, "config.toml")
 
 
 # 音频流参数（根据实际播放器配置）
-SAMPLERATE = 32000  # 采样率
 CHANNELS = 1  # 声道数
 DTYPE = np.int16  # 样本类型
 BLOCKSIZE = 1024  # 每次播放的帧数
@@ -107,6 +106,7 @@ class TTSConfig:
     # api_url: str
     host: str
     port: int
+    sample_rate: int
     ref_audio_path: str
     prompt_text: str
     aux_ref_audio_paths: List[str]
@@ -139,6 +139,7 @@ class TTSConfig:
 class PluginConfig:
     output_device: str
     llm_clean: bool
+    lip_sync_service_name: str
     use_remote_stream: bool = False  # 是否使用远程流服务
 
     @classmethod
@@ -146,6 +147,7 @@ class PluginConfig:
         return cls(
             output_device=data.get("output_device_name", ""),
             llm_clean=data.get("llm_clean", True),
+            lip_sync_service_name=data.get("lip_sync_service_name", "vts_lip_sync"),
             use_remote_stream=data.get("use_remote_stream", False),
         )
 
@@ -591,6 +593,9 @@ class TTSPlugin(BasePlugin):
         super().__init__(core, plugin_config)
         self.tts_config = get_default_config()
 
+        # --- 服务缓存 ---
+        self.vts_lip_sync_service = None
+
         # --- 远程流支持 ---
         self.use_remote_stream = self.tts_config.plugin.use_remote_stream
         self.remote_stream_service = None
@@ -735,7 +740,9 @@ class TTSPlugin(BasePlugin):
                 try:
                     # 异步发送音频数据进行口型同步分析，添加超时控制
                     await asyncio.wait_for(
-                        self.vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=SAMPLERATE),
+                        self.vts_lip_sync_service.process_tts_audio(
+                            pcm_data, sample_rate=self.tts_config.tts.sample_rate
+                        ),
                         timeout=0.1,  # 最多等待0.1秒
                     )
                 except asyncio.TimeoutError:
@@ -807,7 +814,7 @@ class TTSPlugin(BasePlugin):
         # 只有在不使用远程流时才启动本地音频流
         if not self.use_remote_stream:
             self.stream = self.start_pcm_stream(
-                samplerate=SAMPLERATE,
+                samplerate=self.tts_config.tts.sample_rate,
                 channels=CHANNELS,
                 dtype=DTYPE,
                 blocksize=BLOCKSIZE,
@@ -944,14 +951,26 @@ class TTSPlugin(BasePlugin):
     async def _speak(self, text: str):
         """执行 TTS 合成和播放，并通知 Subtitle Service。"""
 
+        # --- 惰性加载口型同步服务 ---
+        lip_sync_service = self.vts_lip_sync_service
+        # 如果服务未缓存，则在首次使用时尝试获取
+        if not lip_sync_service:
+            service_name = self.tts_config.plugin.lip_sync_service_name
+            # 确保配置了服务名且不为'none'
+            if service_name and service_name.lower() != "none":
+                lip_sync_service = self.core.get_service(service_name)
+                if lip_sync_service:
+                    self.logger.info(f"首次使用时，成功获取并缓存 '{service_name}' 服务。")
+                    self.vts_lip_sync_service = lip_sync_service  # 缓存服务
+                else:
+                    self.logger.warning(f"口型同步功能不可用：未找到服务 '{service_name}'。")
+
         self.logger.info(f"请求播放: '{text[:30]}...'")
 
         # --- 启动口型同步会话 ---
-        if not self.vts_lip_sync_service:
-            self.vts_lip_sync_service = self.core.get_service("vts_lip_sync")
-        if self.vts_lip_sync_service:
+        if lip_sync_service:
             try:
-                await self.vts_lip_sync_service.start_lip_sync_session(text)
+                await lip_sync_service.start_lip_sync_session(text)
             except Exception as e:
                 self.logger.debug(f"启动口型同步会话失败: {e}")
 
@@ -988,9 +1007,28 @@ class TTSPlugin(BasePlugin):
                     if remote_stream_service:
                         self.remote_stream_service = remote_stream_service
                         self.logger.info("已获取 Remote Stream 服务，将使用远程音频输出")
+                # --- for debugging: save audio to file ---
+                debug_audio_dir = os.path.join(_PLUGIN_DIR, "debug_audio")
+                os.makedirs(debug_audio_dir, exist_ok=True)
+
+                temp_path = None
+                try:
+                    # We just want a unique name, so we create and close it immediately.
+                    # The file will be written to later.
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, dir=debug_audio_dir, suffix=".wav", mode="wb"
+                    ) as temp_f:
+                        temp_path = temp_f.name
+                    self.logger.info(f"将为调试目的保存音频到: {temp_path}")
+                except Exception as e:
+                    self.logger.error(f"创建临时调试音频文件失败: {e}")
+                    temp_path = None
+
+                all_audio_data = bytearray()
                 # 异步处理音频数据块
                 for chunk in audio_stream:
                     if chunk:
+                        all_audio_data.extend(chunk)
                         # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
 
                         # 如果启用了远程流，发送音频数据到远程设备
@@ -999,7 +1037,7 @@ class TTSPlugin(BasePlugin):
                             try:
                                 # 发送音频数据到远程设备
                                 format_info = {
-                                    "sample_rate": SAMPLERATE,
+                                    "sample_rate": self.tts_config.tts.sample_rate,
                                     "channels": CHANNELS,
                                     "format": str(DTYPE.__name__),
                                     "bits_per_sample": SAMPLE_SIZE * 8,  # 样本位数，如16位
@@ -1014,7 +1052,7 @@ class TTSPlugin(BasePlugin):
 
                                     # 生成WAV头
                                     wav_header = self._generate_wav_header(
-                                        len(chunk), SAMPLERATE, CHANNELS, SAMPLE_SIZE * 8
+                                        len(chunk), self.tts_config.tts.sample_rate, CHANNELS, SAMPLE_SIZE * 8
                                     )
 
                                     # 将WAV头与音频数据结合发送
@@ -1034,7 +1072,7 @@ class TTSPlugin(BasePlugin):
                                 if not self.stream:
                                     self.logger.info("创建本地音频流作为远程发送失败的回退...")
                                     self.stream = self.start_pcm_stream(
-                                        samplerate=SAMPLERATE,
+                                        samplerate=self.tts_config.tts.sample_rate,
                                         channels=CHANNELS,
                                         dtype=DTYPE,
                                         blocksize=BLOCKSIZE,
@@ -1054,14 +1092,23 @@ class TTSPlugin(BasePlugin):
                         self.logger.warning("收到空音频块，跳过。")
                         continue
 
+                # 将收集到的所有音频数据写入文件
+                if temp_path:
+                    try:
+                        with open(temp_path, "wb") as f:
+                            f.write(all_audio_data)
+                        self.logger.info(f"成功保存调试音频文件: {temp_path}")
+                    except Exception as e:
+                        self.logger.error(f"保存调试音频文件失败: {temp_path}, 错误: {e}")
+
                 self.logger.info(f"音频流播放完成: '{text[:30]}...'")
             except Exception as e:
                 self.logger.error(f"音频流处理出错: {e}", exc_info=True)
             finally:
                 # --- 停止口型同步会话 ---
-                if self.vts_lip_sync_service:
+                if lip_sync_service:
                     try:
-                        await self.vts_lip_sync_service.stop_lip_sync_session()
+                        await lip_sync_service.stop_lip_sync_session()
                     except Exception as e:
                         self.logger.debug(f"停止口型同步会话失败: {e}")
 
