@@ -716,6 +716,16 @@ class TTSPlugin(BasePlugin):
             self.logger.error(f"处理WAV数据失败: {str(e)}")
             return
 
+        # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
+        if pcm_data and len(pcm_data) > 0:
+            if self.vts_lip_sync_service:
+                try:
+                    # 异步发送音频数据进行口型同步分析
+                    self.logger.info(f"发送音频数据进行口型同步分析: {len(pcm_data)}")
+                    await self.vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=self.tts_config.tts.sample_rate)
+                except Exception as e:
+                    self.logger.debug(f"口型同步处理失败: {e}")
+
         # PCM数据缓冲处理
         async with self.input_pcm_queue_lock:
             self.input_pcm_queue.extend(pcm_data)
