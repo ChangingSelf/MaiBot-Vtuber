@@ -80,6 +80,13 @@ class WebsocketLipSyncPlugin(BasePlugin):
             
         # 初始化表情处理器
         self.emotion_handler = EmotionHandler(self.logger)
+        
+        # watching消息翻译表
+        self.watching_translation = {
+            "lens": "相机",
+            "danmu": "弹幕区", 
+            "wandering": None
+        }
             
     async def handle_maicore_message(self, message: MessageBase):
         """处理从 MaiCore 收到的消息，根据消息段类型进行不同的处理。"""
@@ -100,6 +107,28 @@ class WebsocketLipSyncPlugin(BasePlugin):
                 emotion_data, 
                 self.websocket if self._is_connected else None
             )
+            
+        if message.message_segment.type == "watching":
+            watching_data = message.message_segment.data
+            self.logger.info(f"收到watching消息: '{watching_data}'")
+            
+            # 使用翻译表转换data
+            translated_data = self.watching_translation.get(str(watching_data), str(watching_data))
+            self.logger.info(f"翻译后的watching数据: '{translated_data}'")
+            
+            # 发送watching动作到WebSocket
+            if self._is_connected and self.websocket:
+                try:
+                    payload = json.dumps({"action": "watching", "data": translated_data})
+                    self.logger.info(f"正在发送watching动作: {payload}")
+                    await self.websocket.send(payload)
+                except websockets.exceptions.ConnectionClosed:
+                    self.logger.warning("WebSocket connection closed while trying to send watching data.")
+                except Exception as e:
+                    self.logger.error(f"Failed to send watching data: {e}", exc_info=True)
+            else:
+                self.logger.warning("WebSocket not connected, unable to send watching data.")
+            
 
     async def setup(self):
         await super().setup()
