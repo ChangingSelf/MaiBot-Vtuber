@@ -4,7 +4,7 @@
 负责分析玩家周围的3x3x3方块环境，包括墙壁检测、洞穴分析、地面稳定性等
 """
 
-from typing import List, Dict
+from typing import List
 from .base_analyzer import BaseAnalyzer
 
 

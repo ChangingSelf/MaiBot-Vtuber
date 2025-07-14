@@ -1,7 +1,6 @@
 # src/plugins/bili_danmaku_official/client/proto.py
 
 import struct
-import zlib
 import logging
 
 

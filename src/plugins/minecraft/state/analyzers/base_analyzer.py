@@ -4,7 +4,7 @@
 所有具体分析器的父类，提供通用的配置管理和日志功能
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from abc import ABC, abstractmethod
 from src.utils.logger import get_logger
 

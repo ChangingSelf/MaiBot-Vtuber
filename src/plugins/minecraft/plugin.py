@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from maim_message import MessageBase
 

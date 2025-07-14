@@ -125,7 +125,7 @@ async def simple_server_test(host="127.0.0.1", port=8765):
 
     try:
         async with websockets.serve(handle_client, host, port):
-            logger.info(f"服务器已启动，等待连接...")
+            logger.info("服务器已启动，等待连接...")
 
             # 服务器运行10秒后自动停止（用于测试）
             await asyncio.sleep(10)

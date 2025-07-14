@@ -1,5 +1,4 @@
 import sys
-import inspect
 from loguru import logger
 
 # 移除默认的 handler

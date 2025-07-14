@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
-from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, Seg, TemplateInfo
+from maim_message import MessageBase, UserInfo, BaseMessageInfo, GroupInfo, FormatInfo, TemplateInfo
 from enum import Enum
 import time
 from src.utils.logger import get_logger

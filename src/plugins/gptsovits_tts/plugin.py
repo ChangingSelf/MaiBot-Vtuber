@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import sys
-import socket
 import tempfile
 import struct  # 添加struct模块导入，用于解析WAV数据
 from typing import Dict, Any, Optional
@@ -71,9 +70,8 @@ SAMPLE_SIZE = DTYPE().itemsize  # 单个样本大小（如 np.int16 → 2 bytes�
 BUFFER_REQUIRED_BYTES = BLOCKSIZE * CHANNELS * SAMPLE_SIZE
 
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional
+from typing import List
 import toml
-from pathlib import Path
 
 
 @dataclass
@@ -228,7 +226,7 @@ def get_default_config() -> Config:
 
 import requests
 import os
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 
 class TTSModel:
@@ -721,7 +719,7 @@ class TTSPlugin(BasePlugin):
             if self.vts_lip_sync_service:
                 try:
                     # 异步发送音频数据进行口型同步分析
-                    self.logger.info(f"发送音频数据进行口型同步分析: {len(pcm_data)}")
+                    self.logger.debug(f"发送音频数据进行口型同步分析: {len(pcm_data)}")
                     await self.vts_lip_sync_service.process_tts_audio(pcm_data, sample_rate=self.tts_config.tts.sample_rate)
                 except Exception as e:
                     self.logger.debug(f"口型同步处理失败: {e}")

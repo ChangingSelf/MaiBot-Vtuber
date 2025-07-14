@@ -1,6 +1,4 @@
 # src/plugins/vtube_studio/plugin.py
-import tomllib
-import os
 from typing import Any, Dict
 from maim_message.message_base import MessageBase
 

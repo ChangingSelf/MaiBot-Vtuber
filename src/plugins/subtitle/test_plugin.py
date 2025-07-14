@@ -6,7 +6,6 @@
 """
 
 import asyncio
-import time
 from unittest.mock import Mock, MagicMock
 
 

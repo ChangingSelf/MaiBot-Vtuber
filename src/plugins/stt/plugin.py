@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 from typing import Dict, Any, Optional, List
 from src.core.plugin_manager import BasePlugin
 from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo, TemplateInfo
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
 # --- 解决Windows中文用户名路径编码问题 ---
 # 设置环境变量确保PyTorch和其他库能正确处理路径
@@ -30,9 +30,6 @@ if os.name == "nt":  # Windows系统
         subprocess.run(["chcp", "65001"], shell=True, capture_output=True)
     except Exception:
         pass  # 忽略错误，继续执行
-from time import mktime
-from urllib.parse import urlencode, quote
-from typing import Dict, Any, Optional, List, Tuple
 
 # --- Remote Stream 支持 ---
 # 检查是否安装了remote_stream依赖
@@ -205,7 +202,7 @@ class STTPlugin(BasePlugin):
                         skip_validation=True,
                     )
                     self.logger.info("Silero VAD 模型加载成功 (本地缓存)。")
-                except Exception as e2:
+                except Exception:
                     self.logger.warning("VAD 功能将不可用，禁用 STT 插件。")
                 self.vad_enabled = False
         else:

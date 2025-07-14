@@ -14,7 +14,6 @@ from src.core.amaidesu_core import AmaidesuCore
 from .client.websocket_client import BiliWebSocketClient
 from .service.message_cache import MessageCacheService
 from .service.message_handler import BiliMessageHandler
-import traceback
 
 
 class BiliDanmakuOfficialPlugin(BasePlugin):

@@ -16,12 +16,11 @@ python test_client.py --host localhost --port 8765 --mode audio,image
 
 import asyncio
 import base64
-import io
 import json
 import sys
 import time
 import argparse
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 

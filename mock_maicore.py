@@ -24,7 +24,6 @@ import base64
 import sys
 import argparse  # 导入 argparse
 from typing import Set, Dict, Callable, List, Any, Optional
-from enum import Enum
 
 from maim_message.message_base import BaseMessageInfo, FormatInfo, Seg, UserInfo
 from maim_message import MessageBase
