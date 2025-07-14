@@ -742,20 +742,6 @@ class TTSPlugin(BasePlugin):
             self.audio_data_queue.append(raw_block)
             # self.logger.debug(f"成功添加 {BUFFER_REQUIRED_BYTES} 字节到音频播放队列")
 
-        # --- 向VTube Studio插件发送音频数据进行口型同步分析 ---
-        if pcm_data and len(pcm_data) > 0:
-            if self.vts_lip_sync_service:
-                try:
-                    asyncio.create_task(
-                        self.vts_lip_sync_service.process_tts_audio(
-                            pcm_data, sample_rate=self.tts_config.tts.sample_rate
-                        ),
-                    )
-                except asyncio.TimeoutError:
-                    self.logger.debug("口型同步处理超时")
-                except Exception as e:
-                    self.logger.debug(f"口型同步处理失败: {e}")
-
     def start_pcm_stream(self, samplerate=44100, channels=2, dtype=np.int16, blocksize=1024):
         """创建并启动音频流
 
@@ -1030,8 +1016,28 @@ class TTSPlugin(BasePlugin):
                     temp_path = None
 
                 all_audio_data = bytearray()
-                # 异步处理音频数据块
-                for chunk in audio_stream:
+                
+                # 创建音频流迭代器，在线程池中逐块处理，避免阻塞事件循环
+                async def get_next_chunk():
+                    """在线程池中获取下一个音频块"""
+                    def get_chunk():
+                        try:
+                            return next(audio_stream)
+                        except StopIteration:
+                            return None
+                        except Exception as e:
+                            self.logger.error(f"获取音频块时出错: {e}")
+                            return None
+                    
+                    # 在线程池中执行同步的next操作
+                    return await asyncio.to_thread(get_chunk)
+                
+                # 流式处理音频块
+                while True:
+                    chunk = await get_next_chunk()
+                    if chunk is None:
+                        # 流结束
+                        break
                     if chunk:
                         all_audio_data.extend(chunk)
                         # self.logger.debug(f"收到音频块，大小: {len(chunk)} 字节")
@@ -1093,9 +1099,6 @@ class TTSPlugin(BasePlugin):
 
                             # 修改为异步调用
                             await self.decode_and_buffer(chunk)
-                    else:
-                        self.logger.warning("收到空音频块，跳过。")
-                        continue
 
                 # 将收集到的所有音频数据写入文件
                 if temp_path:

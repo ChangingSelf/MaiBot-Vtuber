@@ -14,8 +14,10 @@ class BlinkTask:
         self.logger = logger
         
         # 眨眼间隔配置（秒）
-        self.min_interval = 3.0  # 最小间隔
+        self.min_interval = 4.0  # 最小间隔
         self.max_interval = 8.0  # 最大间隔
+        # self.max_interval = 0.4
+        # self.min_interval = 0.2
         
         # 眨眼持续时间（秒）
         self.blink_duration = 0.15  # 眨眼持续时间

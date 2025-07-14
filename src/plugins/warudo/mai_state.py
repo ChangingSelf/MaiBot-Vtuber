@@ -239,6 +239,7 @@ class WarudoStateManager:
     
     async def check_and_send_state(self):
         while True:
+            # self.logger.info("检查并发送状态")
             await asyncio.sleep(0.1)
             if self.mouth_state.changed:
                 await self.mouth_state.send_state()
@@ -394,6 +395,7 @@ class MoodStateManager:
             
             # 应用新表情配置
             for part, action in expression_config.items():
+                self.logger.info(f"应用表情 '{expression_name}' 的 {part} 状态: {action}")
                 if part == "eye":
                     # 找到对应的眼部状态枚举
                     self.state_manager.eye_state.set_first_layer(action)                    
