@@ -599,8 +599,7 @@ class TTSPlugin(BasePlugin):
         self.remote_stream_service = None
 
         # --- TTS Service Initialization (from tts_service.py) ---
-        if not self.tts_config.plugin.output_device:
-            self.output_device_name = ""
+        self.output_device_name = self.tts_config.plugin.output_device or ""
         self.output_device_index = self._find_device_index(self.output_device_name, kind="output")
         self.tts_lock = asyncio.Lock()
         # 为消息处理添加专门的锁
@@ -630,7 +629,8 @@ class TTSPlugin(BasePlugin):
             if device_name:
                 for i, device in enumerate(devices):
                     # Case-insensitive partial match
-                    if device_name.lower() in device["name"].lower() and device[f"{kind}_channels"] > 0:
+                    max_channels_key = f"max_{kind}_channels"
+                    if device_name.lower() in device["name"].lower() and device[max_channels_key] > 0:
                         self.logger.info(f"找到 {kind} 设备 '{device['name']}' (匹配 '{device_name}')，索引: {i}")
                         return i
                 self.logger.warning(f"未找到名称包含 '{device_name}' 的 {kind} 设备，将使用默认设备。")
