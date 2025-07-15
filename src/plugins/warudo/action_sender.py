@@ -2,6 +2,11 @@ import json
 from typing import Optional
 import websockets
 
+debug_log_actions = [
+    'eye_shift_left',
+    'eye_shift_right',
+    "eye_close",
+]
 
 class ActionSender():
     def __init__(self, websocket: Optional[websockets.WebSocketClientProtocol] = None):
@@ -14,6 +19,7 @@ class ActionSender():
     async def send_action(self, action: str, data: float):
         if not self.websocket:
             return
+        
         action_message = {
             "action": action,
             "data": data

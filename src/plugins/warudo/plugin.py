@@ -30,7 +30,8 @@ from .mai_state import WarudoStateManager, MoodStateManager
 from .blink_action import BlinkTask
 # 导入眼部移动任务
 from .shift_action import ShiftTask
-class WebsocketLipSyncPlugin(BasePlugin):
+
+class WarudoPlugin(BasePlugin):
     """
     Analyzes audio from TTS and sends lip-sync parameters to a specified WebSocket address.
     """
@@ -95,6 +96,23 @@ class WebsocketLipSyncPlugin(BasePlugin):
         # 初始化眼部移动任务
         self.shift_task = ShiftTask(self.state_manager, self.logger)
         
+        # --- 字幕相关配置 ---
+        subtitle_config = self.config.get("subtitle", {})
+        self.subtitle_enabled = subtitle_config.get("enabled", True)
+        self.subtitle_port = subtitle_config.get("port", 8766)
+        self.subtitle_show_status = subtitle_config.get("show_status", False)
+        
+        # 初始化字幕管理器
+        if self.subtitle_enabled:
+            from .talk_subtitle import ReplyGenerationManager
+            self.subtitle_manager = ReplyGenerationManager(
+                port=self.subtitle_port,
+                show_status=self.subtitle_show_status,
+                logger=self.logger
+            )
+        else:
+            self.subtitle_manager = None
+        
         # watching消息翻译表
         self.watching_translation = {
             "lens": "相机",
@@ -119,26 +137,41 @@ class WebsocketLipSyncPlugin(BasePlugin):
             self.logger.info(f"翻译后的watching数据: '{translated_data}'")
             
             await action_sender.send_action("watching", translated_data)
+            
+        if message.message_segment.type == "loading":
+            loading_data = message.message_segment.data
+            self.logger.info(f"收到loading消息: '{loading_data}'")
+            await action_sender.send_action("loading", str(loading_data))
+            
 
             
 
     async def setup(self):
         await super().setup()
-        self.logger.info("Initializing WebsocketLipSyncPlugin setup...")
+        self.logger.info("Initializing WarudoPlugin setup...")
         if not self.lip_sync_enabled:
-            self.logger.error("SETUP FAILED for WebsocketLipSyncPlugin: Lip-sync is disabled in config or dependencies (librosa, scipy) are missing.")
+            self.logger.error("SETUP FAILED for WarudoPlugin: Lip-sync is disabled in config or dependencies (librosa, scipy) are missing.")
             return
         
         self.core.register_websocket_handler("*", self.handle_maicore_message)
         self.logger.info("Warudo 插件已设置，监听所有 MaiCore WebSocket 消息。")
 
         # 启动连接的后台任务
-        self._connection_task = asyncio.create_task(self._connect_websocket(), name="WebSocketLipSync_Connect")
+        self._connection_task = asyncio.create_task(self._connect_websocket(), name="Warudo_Connect")
         self.logger.info("WebSocket connection task started.")
 
         # 注册为TTS音频数据处理器
-        self.core.register_service("websocket_lip_sync", self)
-        self.logger.info("Registered 'websocket_lip_sync' service for audio analysis.")
+        self.core.register_service("warudo", self)
+        self.logger.info("Registered 'warudo' service for audio analysis.")
+        
+        # 启动字幕管理器服务器
+        if self.subtitle_manager:
+            await self.subtitle_manager.start_server()
+            self.logger.info("字幕管理器服务器已启动")
+            
+            # 将回复页面管理器注册为核心服务，供其他插件使用
+            self.core.register_service("reply_generation_manager", self.subtitle_manager)
+            self.logger.info("回复页面管理器已注册为核心服务")
 
 
     async def _connect_websocket(self):
@@ -189,7 +222,7 @@ class WebsocketLipSyncPlugin(BasePlugin):
 
     async def cleanup(self):
         """Close the WebSocket connection and cancel tasks."""
-        self.logger.info("Cleaning up WebsocketLipSyncPlugin...")
+        self.logger.info("Cleaning up WarudoPlugin...")
         
         # 停止眨眼任务
         await self.blink_task.stop()
@@ -199,12 +232,38 @@ class WebsocketLipSyncPlugin(BasePlugin):
         await self.shift_task.stop()
         self.logger.info("眼部移动任务已停止")
         
+        # 停止字幕管理器服务器
+        if self.subtitle_manager:
+            try:
+                await self.subtitle_manager.stop_server()
+                self.logger.info("字幕管理器服务器已停止")
+            except Exception as e:
+                self.logger.error(f"停止字幕管理器服务器时出错: {e}")
+                # 强制清理
+                self.subtitle_manager = None
+        
+        # 取消WebSocket连接任务
         if self._connection_task:
             self._connection_task.cancel()
+            try:
+                await asyncio.wait_for(self._connection_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                self.logger.debug("WebSocket连接任务已取消")
+        
+        # 关闭WebSocket连接
         if self.websocket:
-            await self.websocket.close()
-            self.logger.info("WebSocket connection closed.")
-        await super().cleanup()
+            try:
+                await asyncio.wait_for(self.websocket.close(), timeout=2.0)
+                self.logger.info("WebSocket connection closed.")
+            except asyncio.TimeoutError:
+                self.logger.warning("WebSocket关闭超时")
+        
+        try:
+            await super().cleanup()
+        except Exception as e:
+            self.logger.error(f"父类清理时出错: {e}")
+        
+        self.logger.info("WarudoPlugin清理完成")
 
     async def analyze_audio_chunk(self, audio_data: bytes, sample_rate: int) -> Dict[str, float]:
         """Analyzes a chunk of audio data and returns lip-sync parameters."""
@@ -326,7 +385,7 @@ class WebsocketLipSyncPlugin(BasePlugin):
             # self.logger.info(f"chunk_to_analyze: {len(chunk_to_analyze)}")
             analysis_result = await self.analyze_audio_chunk(bytes(chunk_to_analyze), sample_rate)
             if analysis_result:
-                self.logger.info(f"analysis_result: {analysis_result}")
+                # self.logger.info(f"analysis_result: {analysis_result}")
                 await self._update_lip_sync_parameters(analysis_result)
                 audio_processed = True
 
@@ -400,13 +459,17 @@ class WebsocketLipSyncPlugin(BasePlugin):
 
     async def start_lip_sync_session(self, text: str = ""):
         """Called by TTS plugin to start a lip-sync session."""
-        self.logger.info("Lip-sync session started.")
+        self.logger.info(f"Lip-sync session started with text: {text}")
         
         # 激活会话，但不立即设置说话状态
         self.session_active = True
         self.accumulated_audio.clear()
         self.last_audio_time = 0
         self.reseted = False
+        
+        # 移除字幕管理器操作，避免与TTS插件的逐字显示功能冲突
+        # 字幕显示现在完全由TTS插件的回复页面管理器负责
+        self.logger.info(f"口型同步会话已启动，文本长度: {len(text)} 字符")
 
     async def stop_lip_sync_session(self):
         """Called by TTS plugin to stop a lip-sync session."""
@@ -418,6 +481,10 @@ class WebsocketLipSyncPlugin(BasePlugin):
         # 如果正在说话，停止说话状态（这会自动处理嘴部状态恢复）
         if self.is_speaking:
             await self._stop_speaking()
+        
+        # 移除清空字幕的逻辑，让回复内容保持显示直到下一次播放开始
+        # 字幕内容将由TTS插件的下一次start_generation调用时清空
+        self.logger.info("口型同步会话已停止，回复内容保持显示")
     
     
     # ==================== 心情状态处理方法 ====================
@@ -456,4 +523,4 @@ class WebsocketLipSyncPlugin(BasePlugin):
     
 
 # 必须有这个入口点
-plugin_entrypoint = WebsocketLipSyncPlugin 
+plugin_entrypoint = WarudoPlugin 

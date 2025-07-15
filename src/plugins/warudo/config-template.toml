@@ -26,3 +26,14 @@ sample_rate = 32000
 
 # 音频处理缓冲区大小
 buffer_size = 1024 
+
+# 字幕显示相关配置
+[subtitle]
+# 是否启用字幕功能
+enabled = true
+
+# 字幕Web服务器端口
+port = 8766
+
+# 是否显示连接状态
+show_status = false 

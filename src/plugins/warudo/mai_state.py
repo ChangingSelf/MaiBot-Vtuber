@@ -235,7 +235,8 @@ class WarudoStateManager:
         asyncio.create_task(self.check_and_send_state())
         self.logger.info("检测发送已启动")
         
-
+        
+        
     
     async def check_and_send_state(self):
         while True:
@@ -248,12 +249,12 @@ class WarudoStateManager:
                 
             if self.eye_state.changed:
                 await self.eye_state.send_state()
-                self.logger.info("发送眼睛状态")
+                self.logger.debug("发送眼睛状态")
                 self.eye_state.changed = False
                 
             if self.pupil_state.changed:
                 await self.pupil_state.send_state()
-                self.logger.info("发送瞳孔状态")
+                self.logger.debug("发送瞳孔状态")
                 self.pupil_state.changed = False
                 
             if self.eyebrow_state.changed:
