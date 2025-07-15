@@ -258,31 +258,76 @@ async def main():
 
     # --- 保持运行并处理退出信号 ---
     stop_event = asyncio.Event()
+    shutdown_initiated = False
 
-    def signal_handler():
+    def signal_handler(signum=None, frame=None):
+        nonlocal shutdown_initiated
+        if shutdown_initiated:
+            logger.warning("已经在关闭中，忽略重复信号")
+            return
+        shutdown_initiated = True
         logger.info("收到退出信号，开始关闭...")
         stop_event.set()
 
-    loop = asyncio.get_running_loop()
-    # 在 Windows 上，SIGINT (Ctrl+C) 通常可用
-    # 在 Unix/Linux 上，可以添加 SIGTERM
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, signal_handler)
-        except NotImplementedError:
-            # Windows 可能不支持 add_signal_handler
-            # 使用 signal.signal 作为备选方案
-            signal.signal(sig, lambda signum, frame: signal_handler())
+    # 优先使用系统信号处理
+    try:
+        loop = asyncio.get_running_loop()
+        # 在 Windows 上，SIGINT (Ctrl+C) 通常可用
+        # 在 Unix/Linux 上，可以添加 SIGTERM
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, signal_handler)
+            except (NotImplementedError, ValueError):
+                # Windows 可能不支持 add_signal_handler
+                pass
+    except Exception:
+        pass
+    
+    # 为Windows等不支持loop.add_signal_handler的系统设置信号处理
+    original_sigint = signal.signal(signal.SIGINT, signal_handler)
+    try:
+        original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+    except (ValueError, OSError):
+        # 某些系统可能不支持SIGTERM
+        original_sigterm = None
 
     logger.info("应用程序正在运行。按 Ctrl+C 退出。")
-    await stop_event.wait()
+    
+    try:
+        await stop_event.wait()
+        logger.info("收到关闭信号，开始执行清理...")
+    except KeyboardInterrupt:
+        logger.info("检测到 KeyboardInterrupt，开始清理...")
+        shutdown_initiated = True
+
+    # 立即移除信号处理器，防止重复触发
+    try:
+        signal.signal(signal.SIGINT, original_sigint)
+        if original_sigterm is not None:
+            signal.signal(signal.SIGTERM, original_sigterm)
+        logger.debug("信号处理器已恢复")
+    except Exception as e:
+        logger.debug(f"恢复信号处理器时出错: {e}")
 
     # --- 执行清理 ---
     logger.info("正在卸载插件...")
-    await plugin_manager.unload_plugins()  # 在断开连接前卸载插件
+    try:
+        await asyncio.wait_for(plugin_manager.unload_plugins(), timeout=2.0)  # 减少到5秒
+        logger.info("插件卸载完成")
+    except asyncio.TimeoutError:
+        logger.warning("插件卸载超时，强制继续")
+    except Exception as e:
+        logger.error(f"插件卸载时出错: {e}")
 
     logger.info("正在关闭核心服务...")
-    await core.disconnect()
+    try:
+        await asyncio.wait_for(core.disconnect(), timeout=2.0)  # 减少到3秒
+        logger.info("核心服务关闭完成")
+    except asyncio.TimeoutError:
+        logger.warning("核心服务关闭超时，强制退出")
+    except Exception as e:
+        logger.error(f"核心服务关闭时出错: {e}")
+    
     logger.info("Amaidesu 应用程序已关闭。")
 
 
