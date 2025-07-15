@@ -84,7 +84,7 @@ class GuardMessage(BiliBaseMessage):
         message_segment = Seg(
             "seglist",
             [
-                Seg(type="text", data=text),
+                Seg(type="guard", data=text),
                 Seg("priority_info", {"message_type": "vip", "priority": guard_money_map.get(self.guard_level, 138)}),
             ],
         )
