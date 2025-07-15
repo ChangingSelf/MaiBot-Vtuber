@@ -280,6 +280,137 @@ async def cmd_mc_code(args: List[str]) -> Optional[MessageBase]:
     return build_message(json.dumps(action))
 
 
+@command("gift", "发送虚假礼物消息", "/gift [用户名] [礼物名] [数量]")
+async def cmd_gift(args: List[str]) -> Optional[MessageBase]:
+    """发送虚假礼物消息"""
+    # 默认参数
+    username = args[0] if len(args) > 0 else "测试用户"
+    gift_name = args[1] if len(args) > 1 else "辣条"
+    gift_count = args[2] if len(args) > 2 else "1"
+    
+    try:
+        count = int(gift_count)
+    except ValueError:
+        count = 1
+        
+    user_id = f"test_gift_{hash(username) % 10000}"
+    message_id = f"test_gift_{int(time.time())}"
+    
+    message_base = MessageBase(
+        message_info=BaseMessageInfo(
+            platform="bilibili",
+            message_id=message_id,
+            time=int(time.time()),
+            user_info=UserInfo(
+                platform="bilibili",
+                user_id=user_id,
+                user_nickname=username,
+                user_cardname=username
+            ),
+            format_info=FormatInfo(
+                content_format=["text"],
+                accept_format=["text", "gift"]
+            )
+        ),
+        message_segment=Seg(
+            "seglist",
+            [
+                Seg(type="gift", data=f"{gift_name}:{count}"),
+                Seg("priority_info", {"message_type": "vip", "priority": 1})
+            ]
+        ),
+        raw_message=f"{username} 送出了 {count} 个 {gift_name}"
+    )
+    
+    print(f"{COLOR_GREEN}💝 发送礼物: {username} -> {count}个{gift_name}{COLOR_RESET}")
+    return message_base
+
+
+@command("sc", "发送虚假醒目留言", "/sc [用户名] [内容]")
+async def cmd_sc(args: List[str]) -> Optional[MessageBase]:
+    """发送虚假醒目留言（SuperChat）"""
+    # 默认参数
+    username = args[0] if len(args) > 0 else "SC大佬"
+    content = " ".join(args[1:]) if len(args) > 1 else "这是一条测试醒目留言！"
+    
+    user_id = f"test_sc_{hash(username) % 10000}"
+    message_id = f"test_sc_{int(time.time())}"
+    
+    message_base = MessageBase(
+        message_info=BaseMessageInfo(
+            platform="bilibili",
+            message_id=message_id,
+            time=int(time.time()),
+            user_info=UserInfo(
+                platform="bilibili",
+                user_id=user_id,
+                user_nickname=username,
+                user_cardname=username
+            ),
+            format_info=FormatInfo(
+                content_format=["text"],
+                accept_format=["text"]
+            )
+        ),
+        message_segment=Seg(
+            "seglist",
+            [
+                Seg(type="text", data=content),
+                Seg("priority_info", {"message_type": "super_vip", "priority": 2})
+            ]
+        ),
+        raw_message=f"{username} 发送了醒目留言：{content}"
+    )
+    
+    print(f"{COLOR_YELLOW}⭐ 发送醒目留言: {username} -> {content}{COLOR_RESET}")
+    return message_base
+
+
+@command("guard", "发送虚假大航海开通消息", "/guard [用户名] [等级]")
+async def cmd_guard(args: List[str]) -> Optional[MessageBase]:
+    """发送虚假大航海开通消息"""
+    # 默认参数
+    username = args[0] if len(args) > 0 else "大航海"
+    guard_level = args[1] if len(args) > 1 else "舰长"
+    
+    # 验证大航海等级
+    valid_levels = ["舰长", "提督", "总督"]
+    if guard_level not in valid_levels:
+        guard_level = "舰长"
+    
+    user_id = f"test_guard_{hash(username) % 10000}"
+    message_id = f"test_guard_{int(time.time())}"
+    
+    message_base = MessageBase(
+        message_info=BaseMessageInfo(
+            platform="bilibili",
+            message_id=message_id,
+            time=int(time.time()),
+            user_info=UserInfo(
+                platform="bilibili",
+                user_id=user_id,
+                user_nickname=username,
+                user_cardname=username
+            ),
+            format_info=FormatInfo(
+                content_format=["text"],
+                accept_format=["text"]
+            )
+        ),
+        message_segment=Seg(
+            "seglist",
+            [
+                Seg(type="text", data=f"开通了{guard_level}"),
+                Seg("priority_info", {"message_type": "super_vip", "priority": 3})
+            ]
+        ),
+        raw_message=f"{username} 开通了{guard_level}"
+    )
+    
+    print(f"{COLOR_MAGENTA}⚓ 发送大航海: {username} -> {guard_level}{COLOR_RESET}")
+    return message_base
+
+
 async def handle_command(cmd_line: str):
     """处理命令行输入，解析命令和参数"""
     if not cmd_line.startswith("/"):
