@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 import numpy as np  # 确保导入 numpy
 from collections import deque
 import base64
+import time
 import re  # 添加正则表达式模块，用于检测英文字符
 
 # --- Dependencies Check (Inform User) ---
@@ -614,6 +615,12 @@ class TTSPlugin(BasePlugin):
         self.input_pcm_queue = deque(b"")
         # 为音频数据队列添加最大长度限制，防止内存占用过高
         self.audio_data_queue = deque(maxlen=1000)  # 限制缓冲区大小，防止内存占用过高
+        
+        
+        # 当前处理消息数据
+        self.msg_id = ""
+        self.message = None
+        
 
         self.stream = None
 
@@ -834,8 +841,11 @@ class TTSPlugin(BasePlugin):
                 if seg.type == "seglist":
                     for s in seg.data:
                         text += process_seg(s)
-                elif seg.type == "text":
-                    text = seg.data
+                elif seg.type == "tts_text":
+                    # 用冒号分割，取第一个和后面的所有
+                    msg_id, text = seg.data.split(':', 1)
+                    self.msg_id = msg_id
+                    self.logger.info(f"收到TTS文本消息，msg_id: {msg_id}, text: {text}")
                 elif seg.type == "reply":
                     # 处理回复类型的seg，通过消息缓存服务获取原始消息内容
                     message_cache_service = self.core.get_service("message_cache")
@@ -858,6 +868,8 @@ class TTSPlugin(BasePlugin):
                         text = ""
                 return text
 
+            self.message = message
+            
             if message.message_segment:
                 original_text = process_seg(message.message_segment)
                 if not isinstance(original_text, str) or not original_text.strip():
@@ -1176,7 +1188,8 @@ class TTSPlugin(BasePlugin):
                     self.logger.debug("回复生成页面已完成")
                 except Exception as e:
                     self.logger.error(f"完成回复生成页面失败: {e}")
-
+                
+                await self.send_done_message()
                 self.logger.info(f"音频流播放完成: '{text[:30]}...'")
             except Exception as e:
                 self.logger.error(f"音频流处理出错: {e}", exc_info=True)
@@ -1192,6 +1205,18 @@ class TTSPlugin(BasePlugin):
                         await lip_sync_service.stop_lip_sync_session()
                     except Exception as e:
                         self.logger.debug(f"停止口型同步会话失败: {e}")
+                        
+    async def send_done_message(self):
+        if not self.message:
+            return
+        
+        message_info = self.message.message_info
+        message_info.time = time.time()
+        message_segment = Seg(type="voice_done", data=f"{self.msg_id}")
+        
+        message = MessageBase(message_info=message_info, message_segment=message_segment, raw_message=f"{self.msg_id}")
+        await self.core.send_to_maicore(message)
+    
 
     def _generate_wav_header(self, data_size, sample_rate, channels, bits_per_sample):
         """生成标准WAV文件头
