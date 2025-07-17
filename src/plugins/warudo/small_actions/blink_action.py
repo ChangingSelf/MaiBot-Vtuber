@@ -4,7 +4,7 @@ import random
 import time
 from typing import Optional
 
-from .mai_state import WarudoStateManager
+from ..mai_state import WarudoStateManager
 
 class BlinkTask:
     """眨眼定时任务"""

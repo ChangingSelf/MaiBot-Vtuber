@@ -27,9 +27,11 @@ from maim_message.message_base import MessageBase
 # 导入状态管理模块
 from .mai_state import WarudoStateManager, MoodStateManager
 # 导入眨眼任务
-from .blink_action import BlinkTask
+from .small_actions.blink_action import BlinkTask
 # 导入眼部移动任务
-from .shift_action import ShiftTask
+from .small_actions.shift_action import ShiftTask
+# 导入回复状态管理器
+from .reply_state import reply_state
 
 class WarudoPlugin(BasePlugin):
     """
@@ -58,8 +60,6 @@ class WarudoPlugin(BasePlugin):
         # 音频超时配置：如果超过这个时间没有音频数据，就认为停止说话了
         self.audio_timeout = lip_sync_config.get("audio_timeout", 1.5)  # 0.5秒
 
-        # 状态管理：区分会话状态和说话状态
-        self.session_active = False  # 会话是否激活（start到stop之间）
         self.is_speaking = False     # 是否真正在处理音频数据
         self.reseted = False        # 是否重置了嘴部状态
         self.last_audio_time = 0     # 最后一次收到音频数据的时间
@@ -129,22 +129,21 @@ class WarudoPlugin(BasePlugin):
             # 处理心情数据，更新到mai_state
             await self._handle_emotion_data(emotion_data)
             
-        if message.message_segment.type == "watching":
-            watching_data = message.message_segment.data
-            self.logger.info(f"收到watching消息: '{watching_data}'")
-            # 使用翻译表转换data
-            translated_data = self.watching_translation.get(str(watching_data), str(watching_data))
-            self.logger.info(f"翻译后的watching数据: '{translated_data}'")
+        if message.message_segment.type == "state":
+            state_data = message.message_segment.data
+            self.logger.info(f"收到state消息: '{state_data}'")
+            await reply_state.deal_state(state_data)
             
-            await action_sender.send_action("watching", translated_data)
+        if message.message_segment.type == "body_action":
+            body_action_data = message.message_segment.data
+            self.logger.info(f"收到body_action消息: '{body_action_data}'")
+            await action_sender.send_action("body_action", str(body_action_data))
             
-        if message.message_segment.type == "loading":
-            loading_data = message.message_segment.data
-            self.logger.info(f"收到loading消息: '{loading_data}'")
-            await action_sender.send_action("loading", str(loading_data))
-            
+        if message.message_segment.type == "head_action":
+            head_action_data = message.message_segment.data
+            self.logger.info(f"收到head_action消息: '{head_action_data}'")
+            await action_sender.send_action("head_action", str(head_action_data))
 
-            
 
     async def setup(self):
         await super().setup()
@@ -339,7 +338,7 @@ class WarudoPlugin(BasePlugin):
         """停止说话状态"""
         if self.is_speaking:
             self.is_speaking = False
-            
+            await reply_state.stop_talking()
             # 无论连接状态如何，都尝试清理口型状态
             try:
                 # 发送最终的闭嘴指令（清零所有元音值和音量）
@@ -361,12 +360,13 @@ class WarudoPlugin(BasePlugin):
     async def process_tts_audio(self, audio_data: bytes, sample_rate: int):
         """Receives audio from TTS, analyzes it, and sends parameters via WebSocket."""
         # 只检查会话是否激活，移除连接状态检查
-        if not self.session_active:
-            return
+        # if not self.session_active:
+            # return
 
         # 开始说话状态（如果还没有的话）
         if not self.reseted:
             await self._start_speaking()
+            await reply_state.start_talking()
 
         with self.audio_analysis_lock:
             self.accumulated_audio.extend(audio_data)
@@ -385,7 +385,6 @@ class WarudoPlugin(BasePlugin):
             # self.logger.info(f"chunk_to_analyze: {len(chunk_to_analyze)}")
             analysis_result = await self.analyze_audio_chunk(bytes(chunk_to_analyze), sample_rate)
             if analysis_result:
-                # self.logger.info(f"analysis_result: {analysis_result}")
                 await self._update_lip_sync_parameters(analysis_result)
                 audio_processed = True
 
@@ -459,35 +458,21 @@ class WarudoPlugin(BasePlugin):
 
     async def start_lip_sync_session(self, text: str = ""):
         """Called by TTS plugin to start a lip-sync session."""
-        self.logger.info(f"Lip-sync session started with text: {text}")
+        self.logger.info(f"即将开始Lip-sync session，文本长度: {len(text)} 字符")
         
-        # 激活会话，但不立即设置说话状态
-        self.session_active = True
         self.accumulated_audio.clear()
         self.last_audio_time = 0
         self.reseted = False
-        
-        # 移除字幕管理器操作，避免与TTS插件的逐字显示功能冲突
-        # 字幕显示现在完全由TTS插件的回复页面管理器负责
-        self.logger.info(f"口型同步会话已启动，文本长度: {len(text)} 字符")
 
     async def stop_lip_sync_session(self):
         """Called by TTS plugin to stop a lip-sync session."""
-        self.logger.info("Lip-sync session stopped.")
-        
-        # 结束会话
-        self.session_active = False
-        
         # 如果正在说话，停止说话状态（这会自动处理嘴部状态恢复）
         if self.is_speaking:
             await self._stop_speaking()
-        
-        # 移除清空字幕的逻辑，让回复内容保持显示直到下一次播放开始
-        # 字幕内容将由TTS插件的下一次start_generation调用时清空
+
         self.logger.info("口型同步会话已停止，回复内容保持显示")
     
     
-    # ==================== 心情状态处理方法 ====================
     
     async def _handle_emotion_data(self, emotion_data: Any):
         """

@@ -12,6 +12,7 @@ from collections import deque
 import base64
 import time
 import re  # 添加正则表达式模块，用于检测英文字符
+from ..warudo.talk_subtitle import ReplyGenerationManager
 
 # --- Dependencies Check (Inform User) ---
 # Try importing required libraries and inform the user if they are missing.
@@ -974,7 +975,7 @@ class TTSPlugin(BasePlugin):
                         self.logger.warning(f"口型同步功能不可用：未找到服务 '{service_name}' 或 warudo。")
 
         # --- 获取回复页面管理器 ---
-        reply_manager = self.core.get_service("reply_generation_manager")
+        reply_manager : ReplyGenerationManager = self.core.get_service("reply_generation_manager")
         if not reply_manager:
             self.logger.warning("未找到回复页面管理器服务，回复页面功能将不可用")
             return
@@ -1095,10 +1096,10 @@ class TTSPlugin(BasePlugin):
                         
                         # 主要基于时间进度，辅以音频块进度验证
                         time_progress = min(elapsed_time / estimated_total_duration, 1.0)
-                        chunk_progress = min(chunk_count * 0.06, 1.0)  # 每个chunk代表约6%的进度
+                        chunk_progress = min(chunk_count * 0.03, 1.0)  # 每个chunk代表约6%的进度
                         
                         # 时间进度为主（80%），音频块进度为辅（20%）
-                        estimated_progress = (time_progress * 0.8 + chunk_progress * 0.2)  
+                        estimated_progress = (time_progress * 0.7 + chunk_progress * 0.3)  
                         
                         # 确保进度不会倒退，并为初始显示预留空间
                         estimated_progress = max(estimated_progress, displayed_length / text_length)

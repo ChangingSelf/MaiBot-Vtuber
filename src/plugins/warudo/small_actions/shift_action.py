@@ -4,8 +4,7 @@ import random
 import time
 from typing import Optional
 
-from .mai_state import EyeState
-from .mai_state import WarudoStateManager
+from ..mai_state import WarudoStateManager
 
 
 class ShiftTask:
@@ -16,8 +15,8 @@ class ShiftTask:
         self.logger = logger
         
         # 移动间隔配置（秒）
-        self.min_interval = 5  # 最小间隔
-        self.max_interval = 10  # 最大间隔
+        self.min_interval = 2  # 最小间隔
+        self.max_interval = 12  # 最大间隔
         
         # 任务状态
         self.task: Optional[asyncio.Task] = None
@@ -82,36 +81,29 @@ class ShiftTask:
             self.logger.debug("眼部移动任务循环被取消")
         except Exception as e:
             self.logger.error(f"眼部移动任务循环出错: {e}", exc_info=True)
-        finally:
-            self.logger.debug("眼部移动任务循环结束")
     
     async def _perform_shift(self):
         """执行一次眼部移动动作"""
         try:
             
-            # 不用记录，眼动是叠加动作
-            
             # 随机选择移动方向
             direction = random.choice(["left", "right"])
             direction_name = "左" if direction == "left" else "右"
             shape_key = "eye_shift_left" if direction == "left" else "eye_shift_right"
+
             
             # 开始移动
             self.state_manager.pupil_state.set_state(shape_key, 1.0)
             self.logger.debug(f"执行眼部移动: 向{direction_name}移动")
             
             # 等待移动持续时间
-            shift_duration = random.randint(1, 4) / 10
+            shift_duration = random.randint(1, 10) / 10
             await asyncio.sleep(shift_duration)
             
             # 停止移动（设置为0）
             self.state_manager.pupil_state.set_state(shape_key, 0.0)
             self.logger.debug(f"执行眼部移动: 停止向{direction_name}移动")
             
-            # 短暂等待后恢复原始状态
-            await asyncio.sleep(0.02)
-            # self._restore_eye_states(original_states)
-            self.logger.debug("执行眼部移动: 恢复原始眼部状态")
             
         except Exception as e:
             self.logger.error(f"执行眼部移动动作时出错: {e}", exc_info=True)
