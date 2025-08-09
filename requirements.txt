@@ -27,3 +27,4 @@ tomli
 torchaudio
 maim-message
 customtkinter
+fastmcp

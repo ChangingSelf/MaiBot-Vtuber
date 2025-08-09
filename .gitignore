@@ -187,3 +187,5 @@ src/plugins/mock_danmaku/data/
 *.sqlite3
 MineLand/
 *.exe
+*mcp_servers.json
+.kiro/

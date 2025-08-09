@@ -1,0 +1,50 @@
+# Maicraft Plugin Configuration Template
+
+# MCP配置（改为使用 [mcp] 根键）
+[mcp]
+# MCP 配置路径已硬编码为插件目录 mcp/mcp_servers.json，这里无需配置
+
+# 插件通用项（如 debug、重连等）不放在本插件的 TOML 中，由全局或代码管理
+
+# LLM Settings
+[llm]
+# OpenAI 模型名称（例如："gpt-4o-mini"、"gpt-4o" 等，或兼容 OpenAI 的模型名）
+model = "Pro/deepseek-ai/DeepSeek-V3"
+# OpenAI API Key（可留空，使用环境变量 OPENAI_API_KEY）
+api_key = ""
+# 兼容 OpenAI 的 API 基础地址（可选）。例如："https://api.xxx.com/v1"
+base_url = "https://api.siliconflow.cn/v1"
+# 采样温度
+temperature = 0.2
+# 自定义系统提示（可选）
+system_prompt = ""
+
+# 自主代理设置
+[agent]
+# 是否启用自主规划-执行循环
+enabled = true
+# 每次循环的等待秒数（当空闲或推断不到目标时）
+tick_seconds = 8.0
+# 是否在每次工具调用后向 MaiCore 上报一步进度
+report_each_step = true
+# 保存的聊天历史条数上限（用于从上下文推断目标）
+chat_history_limit = 50
+
+# 任务步数上限配置（支持覆盖）
+# 通用默认最大步数（若下方未设置则使用该值）
+max_steps = 50
+# MaiCore 消息来源的任务最大步数（可选，不设置则用 max_steps）
+max_steps_maicore = 100
+# 自主目标来源的任务最大步数（可选，不设置则用 max_steps）
+max_steps_auto = 50
+
+# 向 MaiCore 发送状态/汇报时的消息身份（可选）
+user_id = "minecraft_agent"
+user_nickname = "MinecraftAgent"
+user_cardname = "MinecraftAgent"
+
+# 群组信息（需要时启用）
+[group]
+enabled = false
+group_id = 0
+group_name = "default"
