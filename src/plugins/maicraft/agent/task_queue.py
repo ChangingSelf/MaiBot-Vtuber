@@ -9,7 +9,7 @@ import time
 import uuid
 import heapq
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Callable, Awaitable
 
 from src.utils.logger import get_logger
 
@@ -36,6 +36,8 @@ class TaskQueue:
         """
         self.agent_cfg = agent_cfg
         self.logger = get_logger("MaicraftTaskQueue")
+        # LLM 拆分器（异步），由外部注入
+        self._async_splitter: Optional[Callable[[str], Awaitable[List[str]]]] = None
 
         # 任务调度结构
         self._task_heap: List[Tuple[int, int, RunnerTask]] = []  # (priority, seq, task)
@@ -48,8 +50,14 @@ class TaskQueue:
         self.PRIORITY_NORMAL = int(agent_cfg.get("priority_normal", 10))
 
     async def enqueue_goal_with_split(self, goal: str, *, priority: int, source: str) -> None:
-        """将一个目标按句子切分为若干子任务并入队。"""
-        steps = self._simple_decompose(goal) or [goal]
+        """使用注入的 LLM 拆分器将目标拆分为子任务并入队。若未注入则不拆分。"""
+        steps: List[str] = [goal]
+        if self._async_splitter is not None:
+            try:
+                steps = await self._async_splitter(goal) or [goal]
+            except Exception as e:
+                self.logger.error(f"[拆分] 异常，回退为单一任务: {e}")
+                steps = [goal]
         for step in steps:
             await self.push_task(
                 RunnerTask(
@@ -91,21 +99,6 @@ class TaskQueue:
         """获取新任务事件，用于外部监听。"""
         return self._new_task_event
 
-    def _simple_decompose(self, text: str) -> List[str]:
-        """简单切分任务：按中文/英文常见分隔符拆分，过滤空白，限制步数。"""
-        if not text:
-            return []
-        seps = ["。", "；", ";", "，", ",", "then", "and", "->"]
-        tmp = [text]
-        for sep in seps:
-            new_tmp: List[str] = []
-            for part in tmp:
-                new_tmp.extend(part.split(sep))
-            tmp = new_tmp
-        steps = [s.strip() for s in tmp if s and s.strip()]
-        # 去除过短无意义片段
-        steps = [s for s in steps if any(c.isalnum() for c in s) or len(s) >= 2]
-        # 限制最多5步，避免淹没队列
-        if len(steps) > 5:
-            steps = steps[:5]
-        return steps
+    def set_splitter(self, splitter: Optional[Callable[[str], Awaitable[List[str]]]]) -> None:
+        """注入/替换基于 LLM 的任务拆分器。传入 None 可禁用拆分。"""
+        self._async_splitter = splitter

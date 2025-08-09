@@ -250,6 +250,83 @@ class LLMPlanner:
             "steps": steps,
         }
 
+    async def decompose_goal(
+        self,
+        *,
+        goal: str,
+        max_steps: int = 5,
+        tool_names: Optional[List[str]] = None,
+    ) -> List[str]:
+        """使用 LLM 将一个自然语言目标拆分为若干可执行的子任务列表。
+
+        - 仅返回中文短句子任务列表
+        - 控制步数最大值，过滤无效/重复项
+        - 若 LLM 失败或返回空，回退为 [goal]
+        """
+        import re
+
+        self.logger.info(f"[任务拆解] 开始拆解目标: {goal}")
+        try:
+            tool_hint = "\n可用工具列表：" + ", ".join(tool_names or []) if tool_names else ""
+            system = (
+                "你是一个专业的任务拆解器，领域为 Minecraft 代理。\n"
+                "请把给定的目标拆分为 1-" + str(max_steps) + " 个可以依次执行的简短中文步骤。\n"
+                "每一步应可由工具执行，明确且原子化，避免模糊表达。\n"
+                "偏向使用已知工具可实现的动作。" + tool_hint + "\n"
+                "只输出一个 JSON 数组字符串，数组元素是每个步骤的中文短句；不需要任何解释、编号或其他文本。"
+            )
+
+            messages: List[ChatCompletionMessageParam] = [
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": ("请拆解以下目标并仅以 JSON 数组输出：\n" + goal),
+                },
+            ]
+
+            resp = await self.client.chat.completions.create(
+                model=self.model,
+                temperature=min(self.temperature, 0.3),
+                messages=messages,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            self.logger.debug(f"[任务拆解] LLM原始响应: {content}")
+
+            # 解析 JSON 数组
+            steps: List[str] = []
+            try:
+                parsed = json.loads(content)
+                steps = [str(x).strip() for x in parsed] if isinstance(parsed, list) else []
+            except Exception:
+                if match := re.search(r"\[.*\]", content, re.S):
+                    try:
+                        parsed = json.loads(match.group(0))
+                        if isinstance(parsed, list):
+                            steps = [str(x).strip() for x in parsed]
+                    except Exception:
+                        steps = []
+
+            # 结果清洗
+            steps = [s for s in steps if s]
+            # 去重保持顺序
+            seen = set()
+            uniq_steps: List[str] = []
+            for s in steps:
+                if s not in seen:
+                    seen.add(s)
+                    uniq_steps.append(s)
+            steps = uniq_steps[: max(1, max_steps)]
+
+            if not steps:
+                self.logger.warning("[任务拆解] LLM返回为空，回退为原始目标")
+                return [goal]
+
+            self.logger.info(f"[任务拆解] 完成，共 {len(steps)} 步：{steps}")
+            return steps
+        except Exception as e:
+            self.logger.error(f"[任务拆解] 异常: {e}", exc_info=True)
+            return [goal]
+
     async def propose_next_goal(
         self,
         *,

@@ -50,6 +50,10 @@ class AgentRunner:
         self._current_task_meta: Optional[RunnerTask] = None  # 当前执行任务的元信息
         self._running_priority: Optional[int] = None
 
+        # 注入基于 LLM 的任务拆分器
+        with contextlib.suppress(Exception):
+            self._task_queue.set_splitter(self._split_goal_with_llm)
+
     # 生命周期
     async def start(self) -> None:
         if self._agent_task and not self._agent_task.done():
@@ -322,3 +326,17 @@ class AgentRunner:
             return int(generic) if generic is not None else None
         except Exception:
             return None
+
+    async def _split_goal_with_llm(self, goal: str) -> List[str]:
+        """使用 LLMPlanner + MCP 工具上下文进行目标拆解。"""
+        if not self.llm_planner:
+            return [goal]
+        try:
+            tool_names = []
+            if self.mcp_client and hasattr(self.mcp_client, "list_available_tools"):
+                tool_names = await self.mcp_client.list_available_tools()
+            max_steps = int(self.agent_cfg.get("split_max_steps", self.agent_cfg.get("max_steps", 5)))
+            steps = await self.llm_planner.decompose_goal(goal=goal, max_steps=max_steps, tool_names=tool_names)
+            return steps or [goal]
+        except Exception:
+            return [goal]
