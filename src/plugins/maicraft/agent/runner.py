@@ -16,6 +16,8 @@ from maim_message import (
 from src.core.amaidesu_core import AmaidesuCore
 from src.utils.logger import get_logger
 from .task_queue import TaskQueue, RunnerTask
+from src.plugins.maicraft.mcp.client import MCPClient
+from src.plugins.maicraft.agent.planner import LLMPlanner
 
 
 class AgentRunner:
@@ -25,8 +27,8 @@ class AgentRunner:
         self,
         *,
         core: AmaidesuCore,
-        mcp_client: Any,
-        llm_planner: Any,
+        mcp_client: MCPClient,
+        llm_planner: LLMPlanner,
         agent_cfg: Dict[str, Any],
     ) -> None:
         self.core = core
@@ -137,82 +139,104 @@ class AgentRunner:
         try:
             while not self._stop_event.is_set():
                 try:
-                    # 如果没有当前执行任务，则尝试取一个
                     if self._current_exec_task is None:
-                        task_meta = await self._task_queue.pop_next_task()
-                        if task_meta is None:
-                            # 等待新任务到达
-                            new_task_event = self._task_queue.get_new_task_event()
-                            try:
-                                await asyncio.wait_for(new_task_event.wait(), timeout=1.0)
-                            except asyncio.TimeoutError:
-                                continue
-                            new_task_event.clear()
+                        started = await self._try_start_next_task()
+                        if not started:
+                            await self._wait_for_new_task_idle(timeout=1.0)
                             continue
 
-                        # 创建执行任务
-                        self._current_task_meta = task_meta
-                        self._running_priority = task_meta.priority
-                        self._current_exec_task = asyncio.create_task(self._execute_task(task_meta))
+                    event_fired = await self._wait_for_event_or_task()
+                    if event_fired:
+                        await self._maybe_preempt()
 
-                    # 等待任务完成或有新任务到达
-                    new_task_event = self._task_queue.get_new_task_event()
-                    event_task = asyncio.create_task(new_task_event.wait())
-                    done, pending = await asyncio.wait(
-                        {self._current_exec_task, event_task},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    # 清理未完成的等待任务，避免泄漏
-                    if not event_task.done():
-                        event_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError, Exception):
-                            await event_task
-
-                    # 如果是新任务到达，检查是否应抢占
-                    if new_task_event.is_set():
-                        new_task_event.clear()
-                        min_pending_pri = await self._task_queue.peek_min_priority()
-                        if (
-                            self._current_exec_task
-                            and not self._current_exec_task.done()
-                            and min_pending_pri is not None
-                            and self._running_priority is not None
-                            and min_pending_pri < self._running_priority
-                        ):
-                            # 抢占：取消当前执行并将其剩余目标重新排队（当前步骤作为新的任务再次入队）
-                            self.logger.info(
-                                f"[调度] 发现更高优先任务(min={min_pending_pri}) < 运行中优先({self._running_priority})，触发抢占"
-                            )
-                            self._current_exec_task.cancel()
-                            # 不再等待当前任务完成，避免取消传播影响调度器
-                            await asyncio.sleep(0)
-                            # 将被中断的任务重新入队（保持原优先级）
-                            if self._current_task_meta:
-                                # 重新入队以便稍后继续
-                                await self._task_queue.push_task(self._current_task_meta)
-                            self._current_exec_task = None
-                            self._current_task_meta = None
-                            self._running_priority = None
-                            continue
-
-                    # 如果当前执行任务完成，清理状态
-                    if self._current_exec_task and self._current_exec_task.done():
-                        with contextlib.suppress(asyncio.CancelledError, Exception):
-                            await self._current_exec_task
-                        self._current_exec_task = None
-                        self._current_task_meta = None
-                        self._running_priority = None
+                    await self._cleanup_finished_task()
                 except asyncio.CancelledError:
                     if self._stop_event.is_set():
                         break
-                    # 不是停止信号引发的取消，继续循环
                     continue
                 except Exception as e:
                     self.logger.error(f"[调度] 循环异常: {e}", exc_info=True)
-                    # 继续循环，避免单次错误终止调度器
                     await asyncio.sleep(0)
         finally:
             self.logger.info("任务调度循环结束")
+
+    # ---- 调度循环辅助方法（提取以降低复杂度）----
+    async def _try_start_next_task(self) -> bool:
+        """尝试从队列中取出一个任务并启动执行。返回是否启动了任务。"""
+        task_meta = await self._task_queue.pop_next_task()
+        if task_meta is None:
+            return False
+
+        self._current_task_meta = task_meta
+        self._running_priority = task_meta.priority
+        self._current_exec_task = asyncio.create_task(self._execute_task(task_meta))
+        return True
+
+    async def _wait_for_new_task_idle(self, timeout: float) -> None:
+        """在没有任务可执行时，带超时地等待新任务到达。"""
+        new_task_event = self._task_queue.get_new_task_event()
+        try:
+            await asyncio.wait_for(new_task_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return
+        finally:
+            # 即使超时也清理一次，防止遗留 set 状态导致误触发
+            if new_task_event.is_set():
+                new_task_event.clear()
+
+    async def _wait_for_event_or_task(self) -> bool:
+        """等待当前执行任务完成或有新任务事件到达。返回是否有新任务事件触发。"""
+        if not self._current_exec_task:
+            return False
+
+        new_task_event = self._task_queue.get_new_task_event()
+        event_task = asyncio.create_task(new_task_event.wait())
+        try:
+            await asyncio.wait(
+                {self._current_exec_task, event_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            if not event_task.done():
+                event_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await event_task
+
+        event_fired = new_task_event.is_set()
+        if event_fired:
+            new_task_event.clear()
+        return event_fired
+
+    async def _maybe_preempt(self) -> None:
+        """当更高优先级任务到达时，尝试抢占当前任务。"""
+        min_pending_pri = await self._task_queue.peek_min_priority()
+        if (
+            self._current_exec_task
+            and not self._current_exec_task.done()
+            and min_pending_pri is not None
+            and self._running_priority is not None
+            and min_pending_pri < self._running_priority
+        ):
+            self.logger.info(
+                f"[调度] 发现更高优先任务(min={min_pending_pri}) < 运行中优先({self._running_priority})，触发抢占"
+            )
+            self._current_exec_task.cancel()
+            # 让出控制权，确保取消信号传递
+            await asyncio.sleep(0)
+            if self._current_task_meta:
+                await self._task_queue.push_task(self._current_task_meta)
+            self._current_exec_task = None
+            self._current_task_meta = None
+            self._running_priority = None
+
+    async def _cleanup_finished_task(self) -> None:
+        """当任务完成时进行收尾和状态重置。"""
+        if self._current_exec_task and self._current_exec_task.done():
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._current_exec_task
+            self._current_exec_task = None
+            self._current_task_meta = None
+            self._running_priority = None
 
     async def _execute_task(self, task_meta: RunnerTask) -> None:
         """执行单个任务目标。支持被取消以实现抢占。"""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Dict, List, Optional
 import json
 import os
@@ -36,6 +37,11 @@ class MCPClient:
             await self._client.__aenter__()
             self.connected = True
             self.logger.info("[MCP] fastmcp 客户端已连接 (MCP JSON 配置)")
+
+            # 获取工具列表
+            tools = await self.list_available_tools()
+            self.logger.info(f"[MCP] 获取工具列表: {tools}")
+
             return True
         except Exception as e:
             self.logger.error(f"[MCP] 连接 fastmcp 客户端失败: {e}")
@@ -130,12 +136,10 @@ class MCPClient:
                 return self._to_jsonable(value.to_dict())  # type: ignore[attr-defined]
             # 通用 json() → 解析
             if hasattr(value, "json") and callable(value.json):  # type: ignore[attr-defined]
-                try:
+                with contextlib.suppress(Exception):
                     import json as _json
 
                     return _json.loads(value.json())  # type: ignore[attr-defined]
-                except Exception:
-                    pass
             # 最后回退为字符串
             return str(value)
         except Exception:
