@@ -99,12 +99,61 @@ class MCPClient:
 
     async def call_tool_directly(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """直接调用工具，返回统一结构。"""
+        self.logger.info(f"[MCP] 开始调用工具: {tool_name}, 参数: {arguments}")
+        self.logger.info(f"[MCP] 参数类型: {type(arguments)}")
+        self.logger.info(f"[MCP] 参数键: {list(arguments.keys()) if isinstance(arguments, dict) else 'N/A'}")
+
+        # 详细检查参数
+        if isinstance(arguments, dict):
+            for key, value in arguments.items():
+                self.logger.info(f"[MCP] 参数 {key}: {value} (类型: {type(value)})")
+
         if not self._client:
+            self.logger.error("[MCP] MCP客户端未连接")
             return {"success": False, "error": "MCP 客户端未连接"}
+
+        # 检查客户端状态
+        self.logger.info(f"[MCP] 客户端类型: {type(self._client)}")
+        self.logger.info(f"[MCP] 客户端是否有call_tool方法: {hasattr(self._client, 'call_tool')}")
+
         try:
-            result = await self._client.call_tool(tool_name, arguments)
-            return {"success": True, "result": self._to_jsonable(result)}
+            self.logger.info(f"[MCP] 调用fastmcp客户端的call_tool方法")
+            self.logger.info(f"[MCP] 传递给fastmcp的参数: tool_name={tool_name}, arguments={arguments}")
+
+            # 尝试异步调用，如果失败则使用同步调用
+            import asyncio
+
+            try:
+                result = await asyncio.wait_for(
+                    self._client.call_tool(tool_name, arguments),
+                    timeout=10.0,  # 10秒超时
+                )
+                self.logger.info(f"[MCP] fastmcp异步调用结果: {result}")
+            except asyncio.TimeoutError:
+                self.logger.warning(f"[MCP] 异步调用超时，尝试同步调用: {tool_name}")
+                # 如果异步调用超时，尝试同步调用
+                try:
+                    import concurrent.futures
+
+                    loop = asyncio.get_event_loop()
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        result = await loop.run_in_executor(
+                            executor, lambda: self._client.call_tool(tool_name, arguments) if self._client else None
+                        )
+                    self.logger.info(f"[MCP] fastmcp同步调用结果: {result}")
+                except Exception as sync_error:
+                    self.logger.error(f"[MCP] 同步调用也失败: {sync_error}")
+                    return {"success": False, "error": f"工具调用失败: {sync_error}"}
+
+            jsonable_result = self._to_jsonable(result)
+            self.logger.info(f"[MCP] 转换后的结果: {jsonable_result}")
+
+            return {"success": True, "result": jsonable_result}
         except Exception as e:
+            self.logger.error(f"[MCP] 调用工具失败: {e}")
+            import traceback
+
+            self.logger.error(f"[MCP] 异常堆栈: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
     async def list_available_tools(self) -> List[str]:

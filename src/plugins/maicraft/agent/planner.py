@@ -40,7 +40,25 @@ class LLMPlanner:
         self.max_steps = max_steps
         self.system_prompt = (
             system_prompt
-            or "你是一个 Minecraft 游戏助手。你可以使用提供的工具来完成玩家的目标。请尽量少步数、稳健地规划和调用工具；当任务完成或无法继续时，直接给出清晰的最终回答。"
+            or """你是一个 Minecraft 游戏助手。你可以使用提供的工具来完成玩家的目标。
+
+重要指导原则：
+1. 请尽量少步数、稳健地规划和调用工具
+2. 当任务完成或无法继续时，直接给出清晰的最终回答
+3. 当工具执行失败时，请仔细分析错误信息并采取相应行动：
+   - 如果错误提示"未找到方块"，请先查询周围环境或尝试其他方法
+   - 如果错误提示"权限不足"，请尝试其他可行的操作
+   - 如果错误提示"位置无效"，请先获取当前位置信息
+   - 如果多次尝试失败，请向用户说明情况并建议替代方案
+4. 工具返回结果处理：
+   - 如果返回格式为"工具执行失败: [错误代码] - [错误描述]"，说明工具执行失败
+   - 如果返回完整JSON，请仔细分析其中的字段来判断是否成功：
+     * 检查是否有 `ok: false`、`success: false`、`error` 等错误字段
+     * 检查是否有 `error_message`、`error_code`、`message` 等错误信息字段
+     * 如果检测到错误，请根据错误信息调整策略
+5. 遇到错误时不要重复相同的操作，要尝试不同的策略
+
+请根据工具返回的结果和错误信息，灵活调整你的执行策略。"""
         )
 
     @staticmethod
@@ -213,15 +231,41 @@ class LLMPlanner:
                             "content": None,
                         }
                     )
-                    # 严格保证 content 可被 JSON 序列化
-                    try:
-                        tool_content = json.dumps(tool_result, ensure_ascii=False)
-                    except Exception:
-                        # 回退：将不可序列化对象转换为字符串
+
+                    # 处理工具结果，确保LLM能够理解错误信息
+                    if isinstance(tool_result, dict):
+                        # 检查是否是错误结果（由工具适配器标记的）
+                        if tool_result.get("success") == False:
+                            # 工具执行失败，构造清晰的错误信息
+                            error_message = tool_result.get("error_message") or tool_result.get("error", "未知错误")
+                            error_code = tool_result.get("error_code", "")
+
+                            if error_code:
+                                tool_content = f"工具执行失败: {error_code} - {error_message}"
+                            else:
+                                tool_content = f"工具执行失败: {error_message}"
+
+                            self.logger.warning(f"[LLM规划] 工具 {tool_name} 执行失败: {tool_content}")
+                        else:
+                            # 工具执行成功或返回完整JSON，让LLM自己判断
+                            try:
+                                tool_content = json.dumps(tool_result, ensure_ascii=False)
+                            except Exception:
+                                # 回退：将不可序列化对象转换为字符串
+                                try:
+                                    tool_content = json.dumps(str(tool_result), ensure_ascii=False)
+                                except Exception:
+                                    tool_content = "{}"
+                    else:
+                        # 工具返回非字典类型的结果
                         try:
-                            tool_content = json.dumps(str(tool_result), ensure_ascii=False)
+                            tool_content = json.dumps(tool_result, ensure_ascii=False)
                         except Exception:
-                            tool_content = "{}"
+                            # 回退：将不可序列化对象转换为字符串
+                            try:
+                                tool_content = json.dumps(str(tool_result), ensure_ascii=False)
+                            except Exception:
+                                tool_content = "{}"
 
                     messages.append(
                         {

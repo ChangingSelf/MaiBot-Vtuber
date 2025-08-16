@@ -1,366 +1,339 @@
 import asyncio
-import time
-import uuid
-import contextlib
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
-from maim_message import (
-    MessageBase,
-    BaseMessageInfo,
-    UserInfo,
-    GroupInfo,
-    Seg,
-    FormatInfo,
-)
-
-from src.core.amaidesu_core import AmaidesuCore
 from src.utils.logger import get_logger
+from .agent import MaicraftAgent
 from .task_queue import TaskQueue, RunnerTask
-from src.plugins.maicraft.mcp.client import MCPClient
-from src.plugins.maicraft.agent.planner import LLMPlanner
+from maim_message import MessageBase
 
 
 class AgentRunner:
-    """负责自主代理循环与消息处理的执行器。"""
+    """简化的Agent运行器，专注于任务调度"""
 
-    def __init__(
-        self,
-        *,
-        core: AmaidesuCore,
-        mcp_client: MCPClient,
-        llm_planner: LLMPlanner,
-        agent_cfg: Dict[str, Any],
-    ) -> None:
+    def __init__(self, core, mcp_client, agent: MaicraftAgent, agent_cfg: Dict[str, Any]):
         self.core = core
         self.mcp_client = mcp_client
-        self.llm_planner = llm_planner
+        self.agent = agent
         self.agent_cfg = agent_cfg
+        self.logger = get_logger("AgentRunner")
 
-        self.logger = get_logger("MaicraftAgent")
-        # 执行互斥锁（执行阶段串行化，允许被取消以实现抢占）
-        self._exec_lock = asyncio.Lock()
-        # 运行控制
-        self._stop_event = asyncio.Event()
-        self._agent_task: Optional[asyncio.Task] = None  # 负责自提目标的循环
-        self._dispatch_task: Optional[asyncio.Task] = None  # 负责从队列调度任务执行
-        # 对话历史
-        self._chat_history: List[str] = []
-        self._chat_history_limit: int = int(agent_cfg.get("chat_history_limit", 50))
-        # 任务队列管理器
-        self._task_queue = TaskQueue(agent_cfg)
-        self._current_exec_task: Optional[asyncio.Task] = None  # 当前正在执行的 asyncio.Task
-        self._current_task_meta: Optional[RunnerTask] = None  # 当前执行任务的元信息
-        self._running_priority: Optional[int] = None
+        # 使用TaskQueue替代简单的asyncio.Queue
+        self.task_queue = TaskQueue(agent_cfg)
+        self.running = False
+        self._task = None
+        self._current_task = None  # 当前正在执行的任务
 
-        # 注入基于 LLM 的任务拆分器
-        with contextlib.suppress(Exception):
-            self._task_queue.set_splitter(self._split_goal_with_llm)
+        # 配置参数
+        self.tick_seconds = float(agent_cfg.get("tick_seconds", 8.0))
+        self.report_each_step = bool(agent_cfg.get("report_each_step", True))
 
-    # 生命周期
-    async def start(self) -> None:
-        if self._agent_task and not self._agent_task.done():
-            return
-        self._stop_event.clear()
-        # 启动调度循环与自提目标循环
-        self._dispatch_task = asyncio.create_task(self._dispatch_loop(), name="MaicraftDispatchLoop")
-        self._agent_task = asyncio.create_task(self._agent_loop(), name="MaicraftAgentLoop")
+        # 统计信息
+        self.stats = {"tasks_processed": 0, "goals_proposed": 0, "errors_handled": 0, "start_time": None}
 
-    async def stop(self) -> None:
-        self._stop_event.set()
-        # 停止所有运行中的任务
-        for t in [self._current_exec_task, self._dispatch_task, self._agent_task]:
-            if t and not t.done():
-                t.cancel()
-        # 等待任务结束
-        for t in [self._current_exec_task, self._dispatch_task, self._agent_task]:
-            if t and not t.done():
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(t, timeout=2.0)
-
-    # 外部消息入口（抢占式：收到MaiCore消息→加入高优先队列并触发抢占）
-    async def handle_message(self, message: MessageBase) -> None:
-        if not self.mcp_client or not self.llm_planner:
-            self.logger.error("[消息处理] 组件未就绪，忽略消息")
-            return
-
+    async def start(self):
+        """启动Agent运行器"""
         try:
-            text_content = self._extract_text_from_message(message)
-            if not text_content:
-                self.logger.error("[消息处理] 消息中未找到有效文本内容")
-                return
+            self.logger.info("[AgentRunner] 启动Agent运行器")
 
-            self.logger.info(f"[消息处理] 提取到文本内容: {text_content}")
-            self._append_chat(text_content)
+            # 初始化Agent
+            await self.agent.initialize()
 
-            # 将收到的目标拆分为若干子任务并加入高优先队列
-            await self._task_queue.enqueue_goal_with_split(
-                text_content, priority=self._task_queue.PRIORITY_MAICORE, source="maicore"
-            )
+            # 启动运行循环
+            self.running = True
+            self.stats["start_time"] = asyncio.get_event_loop().time()
+            self._task = asyncio.create_task(self._run_loop())
+
+            self.logger.info("[AgentRunner] Agent运行器启动成功")
+
         except Exception as e:
-            self.logger.error(f"[消息处理] 异常: {e}")
+            self.logger.error(f"[AgentRunner] 启动失败: {e}")
+            raise
 
-    # 自主循环
-    async def _agent_loop(self) -> None:
-        """自主代理循环：当队列空闲时，提出一个普通优先级目标并入队。"""
-        tick_seconds = float(self.agent_cfg.get("tick_seconds", 8.0))
-        loop_iteration = 0
-        self.logger.info(f"自主代理循环开始运行 - tick间隔: {tick_seconds}s")
-        while not self._stop_event.is_set():
-            loop_iteration += 1
-            try:
-                if not self.mcp_client or not self.llm_planner:
-                    await asyncio.sleep(tick_seconds)
-                    continue
-
-                # 仅在没有正在运行的任务且队列为空时，提出一个新目标
-                if await self._task_queue.is_queue_idle() and self._current_exec_task is None:
-                    tools_meta = await self.mcp_client.get_tools_metadata()
-                    proposed_goal = await self.llm_planner.propose_next_goal(
-                        chat_history=self._chat_history, mcp_tools=tools_meta
-                    )
-                    if goal := proposed_goal or str(self.agent_cfg.get("default_goal", "探索周围环境并汇报所见")):
-                        await self._send_text_to_core(f"[Maicraft] 自主目标：{goal}")
-                        await self._task_queue.enqueue_goal_with_split(
-                            goal, priority=self._task_queue.PRIORITY_NORMAL, source="auto"
-                        )
-
-                await asyncio.sleep(tick_seconds)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.error(f"[AgentLoop] 异常: {e}")
-                await asyncio.sleep(tick_seconds)
-
-        self.logger.info(f"自主代理循环结束，总共运行了 {loop_iteration} 轮")
-
-    async def _dispatch_loop(self) -> None:
-        """调度循环：从任务队列中取出任务并串行执行；当高优先任务到达时可抢占当前任务。"""
-        self.logger.info("任务调度循环启动")
+    async def stop(self):
+        """停止Agent运行器"""
         try:
-            while not self._stop_event.is_set():
+            self.logger.info("[AgentRunner] 停止Agent运行器")
+
+            # 停止运行循环
+            self.running = False
+
+            # 取消当前任务
+            if self._current_task and not self._current_task.done():
+                self._current_task.cancel()
                 try:
-                    if self._current_exec_task is None:
-                        started = await self._try_start_next_task()
-                        if not started:
-                            await self._wait_for_new_task_idle(timeout=1.0)
-                            continue
-
-                    event_fired = await self._wait_for_event_or_task()
-                    if event_fired:
-                        await self._maybe_preempt()
-
-                    await self._cleanup_finished_task()
+                    await self._current_task
                 except asyncio.CancelledError:
-                    if self._stop_event.is_set():
-                        break
-                    continue
+                    self.logger.info("[AgentRunner] 当前任务已取消")
+
+            # 取消运行任务
+            if self._task:
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+
+            self.logger.info("[AgentRunner] Agent运行器已停止")
+
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 停止失败: {e}")
+
+    async def _run_loop(self):
+        """主运行循环"""
+        try:
+            self.logger.info("[AgentRunner] 开始主运行循环")
+
+            while self.running:
+                try:
+                    # 处理任务队列
+                    await self._process_task_queue()
+
+                    # 提议并执行目标
+                    await self._propose_and_execute_goal()
+
+                    # 等待下一个tick
+                    await asyncio.sleep(self.tick_seconds)
+
+                except asyncio.CancelledError:
+                    self.logger.info("[AgentRunner] 运行循环被取消")
+                    break
                 except Exception as e:
-                    self.logger.error(f"[调度] 循环异常: {e}", exc_info=True)
-                    await asyncio.sleep(0)
-        finally:
-            self.logger.info("任务调度循环结束")
+                    self.logger.error(f"[AgentRunner] 运行循环错误: {e}")
+                    await asyncio.sleep(1.0)  # 短暂等待后继续
 
-    # ---- 调度循环辅助方法（提取以降低复杂度）----
-    async def _try_start_next_task(self) -> bool:
-        """尝试从队列中取出一个任务并启动执行。返回是否启动了任务。"""
-        task_meta = await self._task_queue.pop_next_task()
-        if task_meta is None:
-            return False
+            self.logger.info("[AgentRunner] 主运行循环结束")
 
-        self._current_task_meta = task_meta
-        self._running_priority = task_meta.priority
-        self._current_exec_task = asyncio.create_task(self._execute_task(task_meta))
-        return True
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 运行循环异常: {e}")
 
-    async def _wait_for_new_task_idle(self, timeout: float) -> None:
-        """在没有任务可执行时，带超时地等待新任务到达。"""
-        new_task_event = self._task_queue.get_new_task_event()
+    async def _process_task_queue(self):
+        """处理任务队列"""
         try:
-            await asyncio.wait_for(new_task_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return
-        finally:
-            # 即使超时也清理一次，防止遗留 set 状态导致误触发
-            if new_task_event.is_set():
-                new_task_event.clear()
+            # 检查是否有待处理的任务
+            if not await self.task_queue.is_queue_idle():
+                task = await self.task_queue.pop_next_task()
+                if task:
+                    await self._process_task(task)
 
-    async def _wait_for_event_or_task(self) -> bool:
-        """等待当前执行任务完成或有新任务事件到达。返回是否有新任务事件触发。"""
-        if not self._current_exec_task:
-            return False
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 处理任务队列失败: {e}")
 
-        new_task_event = self._task_queue.get_new_task_event()
-        event_task = asyncio.create_task(new_task_event.wait())
+    async def _process_task(self, task: RunnerTask):
+        """处理任务"""
         try:
-            await asyncio.wait(
-                {self._current_exec_task, event_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            self.logger.info(f"[AgentRunner] 处理任务: {task.goal} (优先级: {task.priority}, 来源: {task.source})")
+
+            # 创建异步任务，支持取消
+            self._current_task = asyncio.create_task(self._execute_task(task))
+
+            try:
+                # 等待任务完成
+                result = await self._current_task
+
+                # 报告结果
+                await self._report_result(result, "task_execution")
+
+                # 更新统计
+                self.stats["tasks_processed"] += 1
+
+                self.logger.info(f"[AgentRunner] 任务处理完成: {task.goal}")
+
+            except asyncio.CancelledError:
+                self.logger.info(f"[AgentRunner] 任务被取消: {task.goal}")
+                # 报告任务取消
+                cancel_result = {
+                    "success": False,
+                    "error": "任务被用户打断",
+                    "task_goal": task.goal,
+                    "user_message": f"任务 '{task.goal}' 已被打断",
+                }
+                await self._report_result(cancel_result, "task_cancelled")
+                self.stats["errors_handled"] += 1
+
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 处理任务失败: {e}")
+            self.stats["errors_handled"] += 1
+
+            # 报告错误
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "task_goal": task.goal,
+                "user_message": "任务执行失败，请稍后重试",
+            }
+            await self._report_result(error_result, "error")
+
         finally:
-            if not event_task.done():
-                event_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await event_task
+            self._current_task = None
 
-        event_fired = new_task_event.is_set()
-        if event_fired:
-            new_task_event.clear()
-        return event_fired
-
-    async def _maybe_preempt(self) -> None:
-        """当更高优先级任务到达时，尝试抢占当前任务。"""
-        min_pending_pri = await self._task_queue.peek_min_priority()
-        if (
-            self._current_exec_task
-            and not self._current_exec_task.done()
-            and min_pending_pri is not None
-            and self._running_priority is not None
-            and min_pending_pri < self._running_priority
-        ):
-            self.logger.info(
-                f"[调度] 发现更高优先任务(min={min_pending_pri}) < 运行中优先({self._running_priority})，触发抢占"
-            )
-            self._current_exec_task.cancel()
-            # 让出控制权，确保取消信号传递
-            await asyncio.sleep(0)
-            if self._current_task_meta:
-                await self._task_queue.push_task(self._current_task_meta)
-            self._current_exec_task = None
-            self._current_task_meta = None
-            self._running_priority = None
-
-    async def _cleanup_finished_task(self) -> None:
-        """当任务完成时进行收尾和状态重置。"""
-        if self._current_exec_task and self._current_exec_task.done():
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._current_exec_task
-            self._current_exec_task = None
-            self._current_task_meta = None
-            self._running_priority = None
-
-    async def _execute_task(self, task_meta: RunnerTask) -> None:
-        """执行单个任务目标。支持被取消以实现抢占。"""
-        if not (self.mcp_client and self.llm_planner):
-            return
-        report_each_step = bool(self.agent_cfg.get("report_each_step", True))
-        tools_meta = await self.mcp_client.get_tools_metadata()
-
-        async def _call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-            result = await self.mcp_client.call_tool_directly(tool_name, arguments)
-            if report_each_step:
-                status = "成功" if result.get("success") else f"失败: {result.get('error', '未知错误')}"
-                await self._send_text_to_core(f"[Maicraft] 执行工具：{tool_name} 参数={arguments} 结果={status}")
+    async def _execute_task(self, task: RunnerTask) -> Dict[str, Any]:
+        """执行具体任务"""
+        try:
+            # 使用Agent执行任务
+            result = await self.agent.plan_and_execute(task.goal)
             return result
 
-        try:
-            async with self._exec_lock:
-                await self._send_text_to_core(f"[Maicraft] 开始执行（{task_meta.source}）：{task_meta.goal}")
-                plan_result = await self.llm_planner.plan_and_execute(
-                    user_input=task_meta.goal,
-                    mcp_tools=tools_meta,
-                    call_tool=_call_tool,
-                    max_steps_override=self._select_max_steps(task_meta.source),
-                )
-            final_text = plan_result.get("final") or plan_result.get("error") or "(无最终说明)"
-            await self._send_text_to_core(f"[Maicraft] 完成：{final_text}")
-        except asyncio.CancelledError:
-            # 被高优先任务抢占：使用异步fire-and-forget避免在取消态下阻塞
-            try:
-                asyncio.create_task(
-                    self._send_text_to_core(f"[Maicraft] 任务被中断，稍后将继续：{task_meta.goal[:40]}")
-                )
-            except Exception as e:
-                self.logger.error(f"[执行任务] 发送中断消息失败: {e}", exc_info=True)
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 执行任务失败: {e}")
             raise
-        except Exception as e:
-            self.logger.error(f"[执行任务] 异常: {e}")
-            await self._send_text_to_core(f"[Maicraft] 任务失败：{str(e)}")
 
-    # 内部工具
-    def _extract_text_from_message(self, message: MessageBase) -> Optional[str]:
-        segment = message.message_segment
-        if segment.type == "text" and isinstance(segment.data, str):
-            return segment.data.strip()
-        if segment.type == "seglist" and isinstance(segment.data, list):
-            for seg in segment.data:
-                if hasattr(seg, "type") and seg.type == "text" and hasattr(seg, "data"):
-                    return str(seg.data).strip()
-        self.logger.warning(f"收到不支持的消息格式: type='{segment.type}'，已忽略。")
-        return None
-
-    def _append_chat(self, text: str) -> None:
-        if not text:
-            return
-        self._chat_history.append(text)
-        if len(self._chat_history) > self._chat_history_limit:
-            self._chat_history = self._chat_history[-self._chat_history_limit :]
-
-    async def _send_text_to_core(self, text: str) -> None:
+    async def _propose_and_execute_goal(self):
+        """提议并执行目标"""
         try:
-            message = self._build_text_message(text)
-            await self.core.send_to_maicore(message)
+            # 检查是否需要提议目标
+            if await self.task_queue.is_queue_idle():
+                self.logger.debug("[AgentRunner] 提议下一个目标")
+
+                # 使用Agent提议目标
+                goal = await self.agent.propose_next_goal()
+                if goal:
+                    self.logger.info(f"[AgentRunner] 提议目标: {goal}")
+
+                    # 将目标作为任务添加到队列（低优先级）
+                    await self.task_queue.enqueue_goal_with_split(
+                        goal=goal, priority=self.task_queue.PRIORITY_NORMAL, source="auto"
+                    )
+
+                    # 更新统计
+                    self.stats["goals_proposed"] += 1
+
+                    # 报告目标提议
+                    goal_result = {
+                        "success": True,
+                        "goal": goal,
+                        "source": "agent_proposal",
+                        "user_message": f"我建议下一个目标: {goal}",
+                    }
+                    await self._report_result(goal_result, "goal_proposal")
+
         except Exception as e:
-            self.logger.error(f"发送文本到 MaiCore 失败: {e}")
+            self.logger.error(f"[AgentRunner] 提议目标失败: {e}")
+            self.stats["errors_handled"] += 1
 
-    def _build_text_message(self, text: str) -> MessageBase:
-        now = time.time()
-        message_id = f"maicraft_{int(now * 1000)}_{uuid.uuid4().hex[:6]}"
-        user_info = UserInfo(
-            platform=self.core.platform,
-            user_id=self.agent_cfg.get("user_id", "maicraft_agent"),
-            user_nickname=self.agent_cfg.get("user_nickname", "MaicraftAgent"),
-            user_cardname=self.agent_cfg.get("user_cardname", "MaicraftAgent"),
-        )
-        group_info: Optional[GroupInfo] = None
-        group_cfg = self.agent_cfg.get("group", {}) if isinstance(self.agent_cfg, dict) else {}
-        if group_cfg and group_cfg.get("enabled", False):
-            group_info = GroupInfo(
-                platform=self.core.platform,
-                group_id=group_cfg.get("group_id", 0),
-                group_name=group_cfg.get("group_name", "default"),
-            )
-
-        format_info = FormatInfo(content_format=["text"], accept_format=["text"])
-        message_info = BaseMessageInfo(
-            platform=self.core.platform,
-            message_id=message_id,
-            time=now,
-            user_info=user_info,
-            group_info=group_info,
-            template_info=None,
-            format_info=format_info,
-            additional_config={"source": "maicraft_plugin", "maimcore_reply_probability_gain": 0},
-        )
-        message_segment = Seg(type="text", data=text)
-        return MessageBase(message_info=message_info, message_segment=message_segment, raw_message=text)
-
-    # ---- 工具方法 ----
-
-    def _select_max_steps(self, source: str) -> Optional[int]:
-        """按来源选择最大步数覆盖。"""
+    async def _report_result(self, result: Dict[str, Any], source: str):
+        """报告执行结果"""
         try:
-            if source == "maicore":
-                value = self.agent_cfg.get("max_steps_maicore")
+            # 格式化结果
+            formatted_result = {
+                "source": source,
+                "timestamp": asyncio.get_event_loop().time(),
+                "success": result.get("success", False),
+                "content": result.get("user_message", ""),
+                "data": result,
+                "stats": self.stats.copy(),
+            }
+
+            # 发送到核心系统
+            if hasattr(self.core, "send_message"):
+                await self.core.send_message({"type": "agent_result", "data": formatted_result})
+
+            # 记录日志
+            if self.report_each_step:
+                self.logger.info(f"[AgentRunner] 报告结果 - 来源: {source}, 成功: {result.get('success', False)}")
+
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 报告结果失败: {e}")
+
+    async def handle_message(self, message: MessageBase):
+        """处理外部消息"""
+        try:
+            message_type = message.message_segment.type if message.message_segment else "unknown"
+            self.logger.info(f"[AgentRunner] 收到消息: {message_type}")
+
+            # 提取用户输入
+            user_input = self._extract_user_input(message)
+            if user_input:
+                # 检查是否需要打断当前任务
+                if self._current_task and not self._current_task.done():
+                    self.logger.info("[AgentRunner] 检测到新消息，准备打断当前任务")
+                    await self._interrupt_current_task()
+
+                # 将用户输入添加到队列（高优先级）
+                await self.task_queue.enqueue_goal_with_split(
+                    goal=user_input, priority=self.task_queue.PRIORITY_MAICORE, source="maicore"
+                )
+
+                self.logger.info(f"[AgentRunner] 用户任务已添加到队列: {user_input}")
             else:
-                value = self.agent_cfg.get("max_steps_auto")
-            if value is not None:
-                return int(value)
-            # 回退到通用 max_steps（若未设置则 None 表示使用 LLMPlanner 默认值）
-            generic = self.agent_cfg.get("max_steps")
-            return int(generic) if generic is not None else None
-        except Exception:
+                self.logger.warning("[AgentRunner] 消息中没有有效的用户输入")
+
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 处理消息失败: {e}")
+
+    async def _interrupt_current_task(self):
+        """打断当前正在执行的任务"""
+        try:
+            if self._current_task and not self._current_task.done():
+                self.logger.info("[AgentRunner] 正在打断当前任务")
+
+                # 取消当前任务
+                self._current_task.cancel()
+
+                # 等待任务取消完成
+                try:
+                    await self._current_task
+                except asyncio.CancelledError:
+                    self.logger.info("[AgentRunner] 当前任务已成功取消")
+
+                self._current_task = None
+
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 打断任务失败: {e}")
+
+    def _extract_user_input(self, message: MessageBase) -> Optional[str]:
+        """从MessageBase对象中提取用户输入"""
+        try:
+            # 首先尝试从message_segment中提取
+            if message.message_segment:
+                segment_type = message.message_segment.type
+                segment_data = message.message_segment.data
+
+                # 根据消息类型提取内容
+                if segment_type == "text":
+                    if isinstance(segment_data, str):
+                        return segment_data
+                    elif isinstance(segment_data, dict):
+                        # 如果是字典，尝试提取text或content字段
+                        return segment_data.get("text") or segment_data.get("content")
+
+            # 如果message_segment中没有找到，尝试从raw_message中提取
+            if message.raw_message:
+                if isinstance(message.raw_message, str):
+                    return message.raw_message
+                elif isinstance(message.raw_message, dict):
+                    # 如果是字典，尝试提取常见字段
+                    for key in ["text", "content", "message", "command"]:
+                        if key in message.raw_message:
+                            content = message.raw_message[key]
+                            if isinstance(content, str):
+                                return content
+
+            # 如果都没有找到，记录日志并返回None
+            self.logger.debug(
+                f"[AgentRunner] 无法从消息中提取用户输入，消息类型: {message.message_segment.type if message.message_segment else 'None'}"
+            )
             return None
 
-    async def _split_goal_with_llm(self, goal: str) -> List[str]:
-        """使用 LLMPlanner + MCP 工具上下文进行目标拆解。"""
-        if not self.llm_planner:
-            return [goal]
-        try:
-            tool_names = []
-            if self.mcp_client and hasattr(self.mcp_client, "list_available_tools"):
-                tool_names = await self.mcp_client.list_available_tools()
-            max_steps = int(self.agent_cfg.get("split_max_steps", self.agent_cfg.get("max_steps", 5)))
-            steps = await self.llm_planner.decompose_goal(goal=goal, max_steps=max_steps, tool_names=tool_names)
-            return steps or [goal]
-        except Exception:
-            return [goal]
+        except Exception as e:
+            self.logger.error(f"[AgentRunner] 提取用户输入失败: {e}")
+            return None
+
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        stats = self.stats.copy()
+        if stats["start_time"]:
+            stats["uptime"] = asyncio.get_event_loop().time() - stats["start_time"]
+        stats["queue_size"] = 0  # TaskQueue没有直接的qsize方法
+        stats["running"] = self.running
+        stats["current_task"] = self._current_task is not None and not self._current_task.done()
+        return stats
+
+    def clear_stats(self):
+        """清除统计信息"""
+        self.stats = {
+            "tasks_processed": 0,
+            "goals_proposed": 0,
+            "errors_handled": 0,
+            "start_time": asyncio.get_event_loop().time(),
+        }
+        self.logger.info("[AgentRunner] 统计信息已清除")

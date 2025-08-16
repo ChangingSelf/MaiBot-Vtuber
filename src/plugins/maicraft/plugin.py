@@ -5,8 +5,9 @@ from contextlib import suppress
 from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import BasePlugin
 from .mcp.client import MCPClient
-from .agent.planner import LLMPlanner
 from .agent.runner import AgentRunner
+from .agent.agent import MaicraftAgent
+from .config import load_config_from_dict
 
 
 class MaicraftPlugin(BasePlugin):
@@ -14,7 +15,7 @@ class MaicraftPlugin(BasePlugin):
         super().__init__(core, plugin_config)
         self.mcp_client: Optional[MCPClient] = None
         self.connected = False
-        self.llm_planner: Optional[LLMPlanner] = None
+        self.agent: Optional[MaicraftAgent] = None
         self._agent_cfg: Dict[str, Any] = self.plugin_config.get("agent", {})
         self._agent_runner: Optional[AgentRunner] = None
 
@@ -37,32 +38,28 @@ class MaicraftPlugin(BasePlugin):
         if self.connected:
             self.logger.info("[插件初始化] 成功连接到 MCP 服务器")
 
-            # 初始化 LLM 规划器
-            llm_cfg = self.plugin_config.get("llm", {})
-            self.logger.debug(f"[插件初始化] LLM配置: {llm_cfg}")
-
+            # 加载配置
             try:
-                # 最大步数从 agent 配置读取，支持按来源覆盖
-                agent_cfg = self._agent_cfg or {}
-                default_max_steps = int(agent_cfg.get("max_steps", 5))
-                self.llm_planner = LLMPlanner(
-                    api_key=llm_cfg.get("api_key"),
-                    base_url=llm_cfg.get("base_url") or None,
-                    model=llm_cfg.get("model", "gpt-4o-mini"),
-                    temperature=float(llm_cfg.get("temperature", 0.2)),
-                    max_steps=default_max_steps,
-                    system_prompt=llm_cfg.get("system_prompt"),
-                )
-                self.logger.info(f"[插件初始化] LLM规划器已初始化 - 模型: {llm_cfg.get('model', 'gpt-4o-mini')}")
+                self.config = load_config_from_dict(self.plugin_config)
+                self.logger.info("[插件初始化] 配置加载成功")
             except Exception as e:
-                self.logger.error(f"[插件初始化] 初始化 LLM 规划器失败: {e}")
+                self.logger.error(f"[插件初始化] 配置加载失败: {e}")
+                raise
+
+            # 初始化 MaicraftAgent
+            try:
+                self.agent = MaicraftAgent(self.config, self.mcp_client)
+                await self.agent.initialize()
+                self.logger.info("[插件初始化] MaicraftAgent初始化成功")
+            except Exception as e:
+                self.logger.error(f"[插件初始化] MaicraftAgent初始化失败: {e}")
                 raise
 
             # 初始化 AgentRunner
             self._agent_runner = AgentRunner(
                 core=self.core,
                 mcp_client=self.mcp_client,
-                llm_planner=self.llm_planner,
+                agent=self.agent,
                 agent_cfg=self._agent_cfg,
             )
 

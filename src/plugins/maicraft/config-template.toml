@@ -1,50 +1,74 @@
-# Maicraft Plugin Configuration Template
+# Maicraft插件配置模板
 
-# MCP配置（改为使用 [mcp] 根键）
-[mcp]
-# MCP 配置路径已硬编码为插件目录 mcp/mcp_servers.json，这里无需配置
-
-# 插件通用项（如 debug、重连等）不放在本插件的 TOML 中，由全局或代码管理
-
-# LLM Settings
 [llm]
-# OpenAI 模型名称（例如："gpt-4o-mini"、"gpt-4o" 等，或兼容 OpenAI 的模型名）
-model = "Pro/deepseek-ai/DeepSeek-V3"
-# OpenAI API Key（可留空，使用环境变量 OPENAI_API_KEY）
-api_key = ""
-# 兼容 OpenAI 的 API 基础地址（可选）。例如："https://api.xxx.com/v1"
-base_url = "https://api.siliconflow.cn/v1"
-# 采样温度
+model = "gpt-4o-mini"
 temperature = 0.2
-# 自定义系统提示（可选）
-system_prompt = ""
+# api_key = "your-api-key"  # 可选，如果不设置将使用环境变量
+# base_url = "https://api.openai.com/v1"  # 可选，用于自定义API端点
 
-# 自主代理设置
 [agent]
-# 是否启用自主规划-执行循环
 enabled = true
-# 每次循环的等待秒数（当空闲或推断不到目标时）
-tick_seconds = 8.0
-# 是否在每次工具调用后向 MaiCore 上报一步进度
-report_each_step = true
-# 保存的聊天历史条数上限（用于从上下文推断目标）
-chat_history_limit = 50
-
-# 任务步数上限配置（支持覆盖）
-# 通用默认最大步数（若下方未设置则使用该值）
+session_id = "maicraft_default"
 max_steps = 50
-# MaiCore 消息来源的任务最大步数（可选，不设置则用 max_steps）
-max_steps_maicore = 100
-# 自主目标来源的任务最大步数（可选，不设置则用 max_steps）
-max_steps_auto = 50
+tick_seconds = 8.0
+report_each_step = true
 
-# 向 MaiCore 发送状态/汇报时的消息身份（可选）
-user_id = "minecraft_agent"
-user_nickname = "MinecraftAgent"
-user_cardname = "MinecraftAgent"
+[langchain]
+max_token_limit = 4000
+verbose = false
+early_stopping_method = "generate"
+handle_parsing_errors = true
 
-# 群组信息（需要时启用）
-[group]
-enabled = false
-group_id = 0
-group_name = "default"
+# 错误检测配置
+[error_detection]
+# 错误检测模式：
+# - "full_json": 返回完整JSON给LLM，让LLM自己判断错误（推荐）
+# - "custom_keys": 使用自定义key检测错误
+mode = "full_json"
+
+# 当mode为"custom_keys"时，以下配置生效：
+
+# 错误检测字段映射：字段名 -> 错误值
+[error_detection.error_keys]
+success = false
+ok = false
+error = true
+failed = true
+status = "failed"
+result = "error"
+
+# 错误消息字段列表（按优先级排序）
+error_message_keys = [
+  "error_message",
+  "error",
+  "message",
+  "reason",
+  "description",
+]
+
+# 错误代码字段列表（按优先级排序）
+error_code_keys = ["error_code", "code", "status_code", "error_type"]
+
+# 配置示例：
+
+# 示例1：使用full_json模式（默认，推荐）
+# [error_detection]
+# mode = "full_json"
+
+# 示例2：使用custom_keys模式，适配特定MCP服务器
+# [error_detection]
+# mode = "custom_keys"
+# [error_detection.error_keys]
+# status = "failed"
+# result = "error"
+# error_message_keys = ["message", "reason"]
+# error_code_keys = ["code"]
+
+# 示例3：适配标准REST API错误格式
+# [error_detection]
+# mode = "custom_keys"
+# [error_detection.error_keys]
+# success = false
+# ok = false
+# error_message_keys = ["error_message", "message"]
+# error_code_keys = ["error_code", "code"]
