@@ -1,7 +1,10 @@
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Coroutine
 from langchain_core.tools import BaseTool, Tool
 from src.utils.logger import get_logger
 from src.plugins.maicraft.mcp.client import MCPClient
+from mcp.types import Tool as McpTool, TextContent
+from fastmcp.client.client import CallToolResult
+import dirtyjson
 
 
 class MCPToolAdapter:
@@ -11,7 +14,7 @@ class MCPToolAdapter:
         self.mcp_client = mcp_client
         self.logger = get_logger("MCPToolAdapter")
         self._tools_cache: Optional[List[BaseTool]] = None
-        self._tools_metadata_cache: Optional[List[Dict[str, Any]]] = None
+        self._tools_metadata_cache: Optional[List[McpTool]] = None
 
         # 错误检测配置，支持用户自定义
         self.error_detection_config = error_detection_config or {
@@ -46,7 +49,7 @@ class MCPToolAdapter:
                         langchain_tools.append(tool)
                         self.logger.info(f"[MCP工具适配器] 成功创建工具: {tool.name}")
                 except Exception as e:
-                    self.logger.error(f"[MCP工具适配器] 创建工具失败 {tool_info.get('name', 'unknown')}: {e}")
+                    self.logger.error(f"[MCP工具适配器] 创建工具失败 {tool_info.name}: {e}")
 
             self._tools_cache = langchain_tools
             self.logger.info(f"[MCP工具适配器] 成功创建 {len(langchain_tools)} 个LangChain工具")
@@ -56,7 +59,7 @@ class MCPToolAdapter:
             self.logger.error(f"[MCP工具适配器] 创建LangChain工具失败: {e}")
             return []
 
-    async def _get_mcp_tools(self) -> List[Dict[str, Any]]:
+    async def _get_mcp_tools(self) -> List[McpTool]:
         """获取MCP工具信息"""
         try:
             self.logger.info("[MCP工具适配器] 获取MCP工具信息")
@@ -74,12 +77,12 @@ class MCPToolAdapter:
             self.logger.error(f"[MCP工具适配器] 获取MCP工具信息失败: {e}")
             return []
 
-    async def _create_langchain_tool(self, tool_info: Dict[str, Any]) -> Optional[BaseTool]:
+    async def _create_langchain_tool(self, tool_info: McpTool) -> Optional[BaseTool]:
         """创建单个LangChain工具"""
         try:
-            name = tool_info.get("name", "")
-            description = tool_info.get("description", "")
-            schema = tool_info.get("inputSchema", {})
+            name = tool_info.name
+            description = tool_info.description or ""
+            schema = tool_info.inputSchema
 
             if not name:
                 self.logger.warning("[MCP工具适配器] 工具名称为空，跳过")
@@ -104,20 +107,13 @@ class MCPToolAdapter:
                         asyncio.set_event_loop(loop)
 
                     # 运行异步函数
-                    result = loop.run_until_complete(tool_func(input_json=input_json))
+                    result = loop.run_until_complete(tool_func(input_json))
 
-                    # 确保返回字符串格式
-                    if isinstance(result, dict):
-                        import json
-
-                        return json.dumps(result, ensure_ascii=False)
-                    else:
-                        return str(result)
+                    return result.content[0].text  # type: ignore
                 except Exception as e:
-                    self.logger.error(f"[MCP工具适配器] 工具执行异常 {name}: {e}")
-                    import json
-
-                    return json.dumps({"success": False, "tool": name, "error": str(e)}, ensure_ascii=False)
+                    err_msg = f"[MCP工具适配器] 工具执行异常 {name}: {e}"
+                    self.logger.error(err_msg)
+                    return err_msg
 
             # 使用Tool创建LangChain工具（不需要args_schema）
             langchain_tool = Tool(name=name, description=detailed_description, func=sync_wrapper)
@@ -125,10 +121,10 @@ class MCPToolAdapter:
             return langchain_tool
 
         except Exception as e:
-            self.logger.error(f"[MCP工具适配器] 创建工具 {tool_info.get('name', 'unknown')} 失败: {e}")
+            self.logger.error(f"[MCP工具适配器] 创建工具 {tool_info.name} 失败: {e}")
             return None
 
-    def _create_tool_model(self, name: str, schema: Dict[str, Any]) -> type:
+    def _create_tool_model(self, name: str, schema: McpTool) -> type:
         """根据MCP schema动态创建Pydantic模型"""
         try:
             # 对于ZeroShotAgent，我们需要创建单输入工具
@@ -164,13 +160,13 @@ class MCPToolAdapter:
         type_mapping = {"string": str, "integer": int, "number": float, "boolean": bool, "array": List, "object": Dict}
         return type_mapping.get(schema_type, str)
 
-    def _get_tool_metadata(self, tool_name: str) -> Optional[Dict[str, Any]]:
+    def _get_tool_metadata(self, tool_name: str) -> Optional[McpTool]:
         """获取指定工具的元数据"""
         if not self._tools_metadata_cache:
             return None
 
         return next(
-            (tool_info for tool_info in self._tools_metadata_cache if tool_info.get("name") == tool_name),
+            (tool_info for tool_info in self._tools_metadata_cache if tool_info.name == tool_name),
             None,
         )
 
@@ -211,7 +207,7 @@ class MCPToolAdapter:
             self.logger.warning(f"[MCP工具适配器] 未找到工具 {tool_name} 的元数据，跳过参数验证")
             return parsed_args
 
-        schema = tool_metadata.get("inputSchema", {})
+        schema = tool_metadata.inputSchema
         properties = schema.get("properties", {})
         required_fields = schema.get("required", [])
 
@@ -222,10 +218,7 @@ class MCPToolAdapter:
 
         # 检查必需字段
         missing_required = []
-        for field in required_fields:
-            if field not in parsed_args:
-                missing_required.append(field)
-
+        missing_required.extend(field for field in required_fields if field not in parsed_args)
         if missing_required:
             self.logger.warning(f"[MCP工具适配器] 工具 {tool_name} 缺少必需字段: {missing_required}")
 
@@ -239,144 +232,31 @@ class MCPToolAdapter:
 
         return parsed_args
 
-    def _create_tool_function(self, tool_name: str) -> Callable:
+    def _create_tool_function(self, tool_name: str) -> Callable[[str], Coroutine[Any, Any, CallToolResult]]:
         """创建工具执行函数"""
 
-        async def tool_function(input_json: str):
+        async def tool_function(input_json: str) -> CallToolResult:
             """工具执行函数"""
             try:
                 self.logger.info(f"[MCP工具适配器] 执行工具: {tool_name}, 参数: {input_json}")
 
                 # 解析JSON输入参数
                 try:
-                    import json
-                    import re
-
-                    # 如果输入是字符串，尝试解析为JSON
-                    if isinstance(input_json, str):
-                        if input_json.strip():
-                            # 尝试修复常见的JSON格式错误
-                            fixed_json = input_json
-
-                            # 修复1: 修复缺少逗号的问题 (例如: "count": 10" -> "count": 10)
-                            fixed_json = re.sub(r'(\d+)"(\s*[}\]])', r"\1\2", fixed_json)
-
-                            # 修复2: 修复多余的引号 (例如: "count": "10" -> "count": 10)
-                            fixed_json = re.sub(r':\s*"(\d+)"', r": \1", fixed_json)
-
-                            # 修复3: 修复布尔值 (例如: "enabled": "true" -> "enabled": true)
-                            fixed_json = re.sub(r':\s*"(true|false)"', r": \1", fixed_json)
-
-                            # 如果修复后的JSON与原始不同，记录日志
-                            if fixed_json != input_json:
-                                self.logger.info(f"[MCP工具适配器] 修复JSON格式: {input_json} -> {fixed_json}")
-
-                            try:
-                                parsed_args = json.loads(fixed_json)
-                            except json.JSONDecodeError:
-                                # 如果修复后仍然失败，尝试更激进的修复
-                                self.logger.warning(f"[MCP工具适配器] 修复后JSON仍无效，尝试更激进的修复: {fixed_json}")
-                                # 尝试提取键值对
-                                try:
-                                    # 使用正则表达式提取键值对，支持包含逗号的值
-                                    pattern = r'"([^"]+)"\s*:\s*"([^"]*)"'
-                                    matches = re.findall(pattern, fixed_json)
-                                    if matches:
-                                        parsed_args = dict(matches)
-                                        self.logger.info(f"[MCP工具适配器] 使用正则提取参数: {parsed_args}")
-                                    else:
-                                        # 如果正则表达式失败，尝试更简单的方法
-                                        try:
-                                            # 找到第一个冒号的位置
-                                            colon_pos = fixed_json.find(":")
-                                            if colon_pos > 0:
-                                                # 提取键（去掉开头的{和引号）
-                                                key_part = fixed_json[1:colon_pos].strip().strip('"')
-                                                # 提取值（去掉结尾的}和引号）
-                                                value_part = fixed_json[colon_pos + 1 : -1].strip().strip('"')
-                                                parsed_args = {key_part: value_part}
-                                                self.logger.info(f"[MCP工具适配器] 使用简单解析: {parsed_args}")
-                                            else:
-                                                raise ValueError("无法找到冒号分隔符")
-                                        except Exception:
-                                            raise ValueError("无法提取有效参数")
-                                except Exception:
-                                    # 最后的回退：尝试直接解析为键值对
-                                    try:
-                                        # 如果输入看起来像JSON但解析失败，尝试手动解析
-                                        if input_json.startswith("{") and input_json.endswith("}"):
-                                            # 移除大括号，分割键值对
-                                            content = input_json[1:-1].strip()
-                                            pairs = content.split(",")
-                                            parsed_args = {}
-                                            for pair in pairs:
-                                                if ":" in pair:
-                                                    key, value = pair.split(":", 1)
-                                                    key = key.strip().strip('"')
-                                                    value = value.strip().strip('"')
-                                                    parsed_args[key] = value
-                                        else:
-                                            # 如果不是JSON格式，使用原始值
-                                            parsed_args = {"value": input_json}
-                                    except Exception:
-                                        # 最后的回退：使用原始值
-                                        parsed_args = {"value": input_json}
-                        else:
-                            parsed_args = {}
-                    # 如果输入已经是字典，直接使用
-                    elif isinstance(input_json, dict):
-                        parsed_args = input_json
-                    # 如果输入是其他类型，尝试转换为字符串再解析
-                    else:
+                    if input_json.strip():
+                        # 使用dirty-json库自动修复和解析JSON
                         try:
-                            parsed_args = json.loads(str(input_json))
-                        except:
-                            # 如果转换失败，尝试直接解析
-                            try:
-                                if (
-                                    isinstance(input_json, str)
-                                    and input_json.startswith("{")
-                                    and input_json.endswith("}")
-                                ):
-                                    # 手动解析JSON格式的字符串
-                                    content = input_json[1:-1].strip()
-                                    pairs = content.split(",")
-                                    parsed_args = {}
-                                    for pair in pairs:
-                                        if ":" in pair:
-                                            key, value = pair.split(":", 1)
-                                            key = key.strip().strip('"')
-                                            value = value.strip().strip('"')
-                                            parsed_args[key] = value
-                                else:
-                                    # 如果不是JSON格式，使用原始值
-                                    parsed_args = {"value": input_json}
-                            except Exception:
-                                # 最后的回退：使用原始值
-                                parsed_args = {"value": input_json}
+                            parsed_args = dirtyjson.loads(input_json)
+                            self.logger.info(f"[MCP工具适配器] 使用dirty-json成功解析参数: {parsed_args}")
+                        except Exception as e:
+                            self.logger.warning(f"[MCP工具适配器] dirty-json解析失败: {e}")
+                            parsed_args = {}
+                    else:
+                        parsed_args = {}
 
                     self.logger.info(f"[MCP工具适配器] 解析后的参数: {parsed_args}")
-                except json.JSONDecodeError as e:
-                    self.logger.warning(f"[MCP工具适配器] JSON解析失败 {tool_name}: {e}, 尝试手动解析")
-                    # 如果JSON解析失败，尝试手动解析
-                    try:
-                        if isinstance(input_json, str) and input_json.startswith("{") and input_json.endswith("}"):
-                            # 手动解析JSON格式的字符串
-                            content = input_json[1:-1].strip()
-                            pairs = content.split(",")
-                            parsed_args = {}
-                            for pair in pairs:
-                                if ":" in pair:
-                                    key, value = pair.split(":", 1)
-                                    key = key.strip().strip('"')
-                                    value = value.strip().strip('"')
-                                    parsed_args[key] = value
-                        else:
-                            # 如果不是JSON格式，使用原始值
-                            parsed_args = {"value": input_json}
-                    except Exception:
-                        # 最后的回退：使用原始值
-                        parsed_args = {"value": input_json}
+                except Exception as e:
+                    self.logger.warning(f"[MCP工具适配器] 参数解析失败 {tool_name}: {e}")
+                    parsed_args = {}
 
                 # 基于工具元数据验证和修复参数
                 if isinstance(parsed_args, dict):
@@ -385,84 +265,25 @@ class MCPToolAdapter:
                 # 检查MCP客户端状态
                 if not self.mcp_client:
                     self.logger.error("[MCP工具适配器] MCP客户端为空")
-                    return {"success": False, "tool": tool_name, "error": "MCP客户端为空"}
-
-                if not hasattr(self.mcp_client, "call_tool_directly"):
-                    self.logger.warning("[MCP工具适配器] MCP客户端不支持call_tool_directly方法")
-                    return {"success": False, "tool": tool_name, "error": "MCP客户端不支持工具调用"}
+                    return CallToolResult(
+                        content=[TextContent(type="text", text="MCP客户端为空")],
+                        structured_content={},
+                        is_error=True,
+                        data={},
+                    )
 
                 # 使用MCP客户端的call_tool_directly方法
                 self.logger.info(f"[MCP工具适配器] 准备调用MCP工具: {tool_name}")
-                result = await self.mcp_client.call_tool_directly(tool_name, parsed_args)
-                self.logger.info(f"[MCP工具适配器] MCP工具调用结果: {result}")
-
-                if result.get("success"):
-                    # 获取工具的实际返回结果
-                    tool_result = result.get("result", result)
-
-                    # 根据配置模式处理错误检测
-                    if self.error_detection_config["mode"] == "full_json":
-                        # 模式1：返回完整JSON，让LLM自己判断
-                        self.logger.info(f"[MCP工具适配器] 工具执行成功: {tool_name}，返回完整JSON")
-                        return tool_result
-                    else:
-                        # 模式2：使用自定义key检测错误
-                        if isinstance(tool_result, dict):
-                            # 检查配置的错误字段
-                            error_detected = False
-                            error_key_found = None
-
-                            for key, expected_value in self.error_detection_config["error_keys"].items():
-                                if tool_result.get(key) == expected_value:
-                                    error_detected = True
-                                    error_key_found = key
-                                    break
-
-                            if error_detected:
-                                # 工具返回了错误，提取错误信息
-                                error_message = None
-                                error_code = None
-
-                                # 查找错误消息
-                                for key in self.error_detection_config["error_message_keys"]:
-                                    if key in tool_result:
-                                        error_message = tool_result[key]
-                                        break
-
-                                # 查找错误代码
-                                for key in self.error_detection_config["error_code_keys"]:
-                                    if key in tool_result:
-                                        error_code = tool_result[key]
-                                        break
-
-                                if not error_message:
-                                    error_message = f"工具执行失败 (检测到错误字段: {error_key_found})"
-
-                                self.logger.error(
-                                    f"[MCP工具适配器] 工具执行失败: {tool_name}, 错误代码: {error_code}, 错误信息: {error_message}"
-                                )
-                                return {
-                                    "success": False,
-                                    "tool": tool_name,
-                                    "error_code": error_code,
-                                    "error_message": error_message,
-                                    "raw_result": tool_result,
-                                }
-
-                    # 工具执行成功
-                    self.logger.info(f"[MCP工具适配器] 工具执行成功: {tool_name}")
-                    return tool_result
-                else:
-                    # MCP客户端调用失败
-                    self.logger.error(f"[MCP工具适配器] MCP客户端调用失败: {tool_name}, 错误: {result.get('error')}")
-                    return result
+                return await self.mcp_client.call_tool_directly(tool_name, parsed_args)
 
             except Exception as e:
                 self.logger.error(f"[MCP工具适配器] 工具执行失败 {tool_name}: {e}")
-                import traceback
-
-                self.logger.error(f"[MCP工具适配器] 异常堆栈: {traceback.format_exc()}")
-                return {"success": False, "tool": tool_name, "error": str(e)}
+                return CallToolResult(
+                    content=[TextContent(type="text", text=str(e))],
+                    structured_content={},
+                    is_error=True,
+                    data={},
+                )
 
         return tool_function
 

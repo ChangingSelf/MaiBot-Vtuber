@@ -15,7 +15,7 @@ report_each_step = true
 
 [langchain]
 max_token_limit = 4000
-verbose = false
+verbose = true
 early_stopping_method = "generate"
 handle_parsing_errors = true
 
