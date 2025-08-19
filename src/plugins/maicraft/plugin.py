@@ -11,6 +11,10 @@ from .config import load_config_from_dict
 
 
 class MaicraftPlugin(BasePlugin):
+    """
+    Maicraft 插件, 用于连接到 MCP 服务器, 并启动自主代理循环
+    """
+
     def __init__(self, core: AmaidesuCore, plugin_config: Dict[str, Any]):
         super().__init__(core, plugin_config)
         self.mcp_client: Optional[MCPClient] = None

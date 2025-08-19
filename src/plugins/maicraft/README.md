@@ -14,6 +14,10 @@
 - **错误处理链**：完善的错误检测、恢复和报告机制
 - **消息打断功能**：支持用户消息打断正在执行的任务，实现实时响应
 - **任务优先级管理**：用户消息具有高优先级，可以打断低优先级的自主任务
+- **智能记忆系统**：多层次记忆管理，支持上下文保持和偏好学习
+- **架构优化**：删除冗余组件，简化架构，符合LangChain最佳实践
+- **智能记忆系统**：多层次记忆管理，支持上下文保持和偏好学习
+- **架构优化**：删除冗余组件，简化架构，符合LangChain最佳实践
 
 ## 🏗️ 系统架构
 
@@ -40,7 +44,6 @@ graph TB
         end
         
         subgraph "LCEL Chains"
-            TaskChain[TaskPlanningChain]
             GoalChain[GoalProposalChain]
             MemoryChain[MemoryChain]
             ErrorChain[ErrorHandlingChain]
@@ -62,7 +65,6 @@ graph TB
     Runner --> Agent
     
     Agent --> ToolAdapter
-    Agent --> TaskChain
     Agent --> GoalChain
     Agent --> MemoryChain
     Agent --> ErrorChain
@@ -71,7 +73,6 @@ graph TB
     MCPClient --> MCPServers
     MCPClient --> MinecraftServer
     
-    TaskChain --> LLM
     GoalChain --> LLM
     MemoryChain --> LLM
     ErrorChain --> LLM
@@ -89,7 +90,7 @@ graph TB
     class Plugin plugin
     class MCPClient,ToolAdapter,MCPServers mcp
     class Runner,Agent,TaskQueue agent
-    class TaskChain,GoalChain,MemoryChain,ErrorChain chains
+    class GoalChain,MemoryChain,ErrorChain chains
     class LLM,MinecraftServer external
 ```
 
@@ -102,50 +103,566 @@ graph TB
 | **MCPToolAdapter** | MCP 工具适配器，将 MCP 工具转换为 LangChain Tool |
 | **MaicraftAgent** | 基于 LangChain Agent 的主代理，协调各个 LCEL 链 |
 | **AgentRunner** | 代理执行器，处理任务调度和消息响应 |
-| **TaskPlanningChain** | 任务规划链，负责任务分解和执行 |
 | **GoalProposalChain** | 目标提议链，生成自主目标 |
 | **MemoryChain** | 记忆管理链，处理上下文和聊天历史 |
 | **ErrorHandlingChain** | 错误处理链，检测和恢复错误 |
 | **TaskQueue** | 任务队列管理器，支持优先级调度和任务打断 |
 
-## 📊 工作流程
+## 🔄 MCP工具调用流程
+
+### 完整调用时序图
 
 ```mermaid
 sequenceDiagram
-    participant User as 用户/直播间
-    participant Core as AmaidesuCore
-    participant Runner as AgentRunner
-    participant Agent as MaicraftAgent
-    participant TaskChain as TaskPlanningChain
+    participant User as 用户
+    participant Plugin as MaicraftPlugin
+    participant MCPClient as MCPClient
+    participant MCPServer as MCP Server
     participant ToolAdapter as MCPToolAdapter
-    participant MCP as MCPClient
-    participant MC as Minecraft Server
-    participant LLM as LLM Service
-    
-    Note over User,LLM: 消息处理流程
-    
-    User->>Core: 发送消息<br/>"帮我挖10个石头"
-    Core->>Runner: 转发WebSocket消息
-    Runner->>Runner: 检查是否需要打断当前任务
-    alt 有正在执行的任务
-        Runner->>Runner: 取消当前任务
-        Runner->>Runner: 报告任务取消
+    participant Agent as MaicraftAgent
+    participant AgentRunner as AgentRunner
+    participant LangChain as LangChain Agent
+
+    Note over User, LangChain: 插件初始化阶段
+    User->>Plugin: 启动插件
+    Plugin->>MCPClient: 创建MCP客户端
+    MCPClient->>MCPServer: 连接MCP服务器
+    MCPServer-->>MCPClient: 连接成功
+    MCPClient->>MCPServer: 获取工具列表
+    MCPServer-->>MCPClient: 返回工具元数据
+    Plugin->>ToolAdapter: 创建工具适配器
+    ToolAdapter->>MCPClient: 获取工具元数据
+    MCPClient-->>ToolAdapter: 返回工具信息
+    ToolAdapter->>ToolAdapter: 转换为LangChain工具
+    Plugin->>Agent: 初始化MaicraftAgent
+    Agent->>ToolAdapter: 获取LangChain工具
+    ToolAdapter-->>Agent: 返回工具列表
+    Plugin->>AgentRunner: 创建AgentRunner
+    AgentRunner->>Agent: 启动Agent运行器
+
+    Note over User, LangChain: 用户消息处理阶段
+    User->>Plugin: 发送消息
+    Plugin->>AgentRunner: 转发消息
+    AgentRunner->>AgentRunner: 提取用户输入
+    AgentRunner->>AgentRunner: 添加到任务队列
+    AgentRunner->>Agent: 执行任务
+    Agent->>LangChain: 调用AgentExecutor
+    LangChain->>ToolAdapter: 选择并调用工具
+    ToolAdapter->>ToolAdapter: 解析参数
+    ToolAdapter->>MCPClient: 调用MCP工具
+    MCPClient->>MCPServer: 发送工具调用请求
+    MCPServer->>MCPServer: 执行工具逻辑
+    MCPServer-->>MCPClient: 返回执行结果
+    MCPClient-->>ToolAdapter: 返回结果
+    ToolAdapter->>ToolAdapter: 错误检测和处理
+    ToolAdapter-->>LangChain: 返回工具结果
+    LangChain->>LangChain: 处理工具结果
+    LangChain-->>Agent: 返回执行结果
+    Agent->>Agent: 更新记忆
+    Agent-->>AgentRunner: 返回任务结果
+    AgentRunner->>AgentRunner: 格式化结果
+    AgentRunner->>Plugin: 报告执行结果
+    Plugin-->>User: 返回用户响应
+
+    Note over User, LangChain: 自主代理循环阶段
+    loop 自主代理循环
+        AgentRunner->>Agent: 提议下一个目标
+        Agent->>GoalChain: 生成目标建议
+        GoalChain-->>Agent: 返回目标
+        Agent-->>AgentRunner: 返回目标提议
+        AgentRunner->>AgentRunner: 将目标加入队列
+        AgentRunner->>Agent: 执行目标任务
+        Agent->>LangChain: 调用AgentExecutor
+        LangChain->>ToolAdapter: 选择并调用工具
+        ToolAdapter->>MCPClient: 调用MCP工具
+        MCPClient->>MCPServer: 发送工具调用请求
+        MCPServer-->>MCPClient: 返回执行结果
+        MCPClient-->>ToolAdapter: 返回结果
+        ToolAdapter-->>LangChain: 返回工具结果
+        LangChain-->>Agent: 返回执行结果
+        Agent-->>AgentRunner: 返回任务结果
+        AgentRunner->>AgentRunner: 等待下一个tick
     end
-    Runner->>Agent: 处理用户输入
-    Agent->>TaskChain: 任务规划与分解
-    TaskChain->>LLM: 调用LLM分析任务
-    LLM-->>TaskChain: 返回执行计划
-    TaskChain->>ToolAdapter: 获取可用工具
-    ToolAdapter->>MCP: 调用MCP工具
-    MCP->>MC: 执行Minecraft操作
-    MC-->>MCP: 返回操作结果
-    MCP-->>ToolAdapter: 工具调用结果
-    ToolAdapter-->>TaskChain: 执行结果
-    TaskChain-->>Agent: 任务完成
-    Agent-->>Runner: 返回结果
-    Runner->>Core: 报告执行进度
-    Core->>User: 反馈执行状态
 ```
+
+### 核心调用流程详解
+
+#### 1. 插件初始化流程
+```python
+# MaicraftPlugin.setup()
+mcp_client = MCPClient(mcp_config)
+connected = await mcp_client.connect()  # 连接MCP服务器
+tools_metadata = await mcp_client.get_tools_metadata()  # 获取工具列表
+tool_adapter = MCPToolAdapter(mcp_client, config)
+langchain_tools = await tool_adapter.create_langchain_tools()  # 转换为LangChain工具
+agent = MaicraftAgent(config, mcp_client)
+await agent.initialize()  # 初始化Agent
+agent_runner = AgentRunner(core, mcp_client, agent, agent_cfg)
+await agent_runner.start()  # 启动运行器
+```
+
+#### 2. 工具调用流程
+```python
+# MCPToolAdapter._create_tool_function()
+async def tool_function(input_json: str):
+    parsed_args = json.loads(input_json)  # 解析参数
+    validated_args = self._validate_and_fix_parameters(tool_name, parsed_args)  # 验证参数
+    result = await self.mcp_client.call_tool_directly(tool_name, validated_args)  # 调用MCP工具
+    return self._process_result(result)  # 处理结果
+```
+
+#### 3. MCP客户端工具调用
+```python
+# MCPClient.call_tool_directly()
+async def call_tool_directly(self, tool_name: str, arguments: Dict[str, Any]):
+    result = await self._client.call_tool(tool_name, arguments)  # 调用fastmcp
+    jsonable_result = self._to_jsonable(result)  # 转换为JSON格式
+    return {"success": True, "result": jsonable_result}
+```
+
+#### 4. Agent执行流程
+```python
+# MaicraftAgent.plan_and_execute()
+result = await self.agent_executor.ainvoke({
+    "input": user_input, 
+    "chat_history": self.get_chat_history()
+})  # 使用LangChain Agent执行
+```
+
+## 🧠 记忆系统架构
+
+### 多层次记忆架构
+
+```mermaid
+graph TD
+    A[用户输入] --> B[MaicraftAgent]
+    B --> C[MemoryChain]
+    C --> D[ConversationBufferMemory]
+    D --> E[基础存储层]
+    
+    C --> F[LLM智能分析]
+    F --> G[记忆优化]
+    G --> H[上下文理解]
+    H --> I[偏好学习]
+    
+    I --> J[更新记忆]
+    J --> K[返回智能结果]
+```
+
+### 记忆组件关系
+
+#### 1. ConversationBufferMemory (基础存储)
+```python
+# 职责：原始数据存储
+self.memory = ConversationBufferMemory(
+    memory_key="chat_history", 
+    return_messages=True
+)
+```
+
+**特点**：
+- **简单存储**：只负责存储和检索原始对话数据
+- **无智能处理**：不进行数据分析或优化
+- **LangChain标准**：符合LangChain框架标准
+
+#### 2. MemoryChain (智能管理)
+```python
+# 职责：智能记忆处理
+self.memory_chain = MemoryChain(self.llm, self.memory)
+```
+
+**特点**：
+- **智能分析**：使用LLM分析记忆内容
+- **记忆优化**：压缩和优化记忆存储
+- **上下文理解**：提取重要信息和用户偏好
+
+### 记忆工作流程
+
+#### 1. 任务执行时的记忆传递
+```python
+async def plan_and_execute(self, user_input: str) -> Dict[str, Any]:
+    # 1. 获取聊天历史
+    chat_history = self.get_chat_history()
+    
+    # 2. 传递给Agent执行器（自动记忆管理）
+    result = await self.agent_executor.ainvoke({
+        "input": user_input, 
+        "chat_history": chat_history  # 自动更新记忆
+    })
+    
+    # 3. 手动更新记忆
+    await self._update_memory(user_input, formatted_result)
+```
+
+#### 2. 智能记忆更新
+```python
+async def _update_memory(self, user_input: str, result: Dict[str, Any]):
+    """更新记忆"""
+    if self.memory_chain:
+        memory_data = {
+            "current_memory": "",
+            "new_information": f"用户输入: {user_input}, 执行结果: {result}",
+            "memory_type": "task_execution",
+            "memory_limits": {"max_tokens": self.config.langchain.max_token_limit},
+        }
+        await self.memory_chain.execute(memory_data)
+```
+
+### 记忆系统特性
+
+1. **上下文保持**：维护完整的对话历史，提供连贯的用户体验
+2. **智能分析**：使用LLM分析记忆内容，提取重要信息
+3. **自动优化**：智能压缩和优化记忆，控制资源使用
+4. **偏好学习**：学习用户偏好，提供个性化服务
+5. **错误恢复**：记忆操作失败不影响主要功能
+6. **灵活配置**：支持记忆大小限制和优化策略配置
+
+## 🤖 Agent架构优化
+
+### MaicraftAgent和AgentRunner的关系
+
+#### 职责分工
+
+**MaicraftAgent：智能决策核心**
+```python
+class MaicraftAgent:
+    """基于LangChain Agent的Minecraft Agent"""
+    
+    # 核心职责：
+    # 1. 管理LLM和工具
+    # 2. 提供智能决策能力
+    # 3. 执行具体的任务规划
+    # 4. 管理记忆和上下文
+```
+
+**AgentRunner：任务调度和生命周期管理**
+```python
+class AgentRunner:
+    """简化的Agent运行器，专注于任务调度"""
+    
+    # 核心职责：
+    # 1. 任务队列管理
+    # 2. 生命周期控制
+    # 3. 消息处理
+    # 4. 自主代理循环
+```
+
+#### 协作模式
+
+```python
+# AgentRunner调用MaicraftAgent
+async def _execute_task(self, task: RunnerTask) -> Dict[str, Any]:
+    """执行具体任务"""
+    # Runner委托给Agent执行
+    result = await self.agent.plan_and_execute(task.goal)
+    return result
+
+async def _propose_and_execute_goal(self):
+    """提议并执行目标"""
+    # Runner使用Agent的目标提议能力
+    goal = await self.agent.propose_next_goal()
+    if goal:
+        await self.task_queue.enqueue_goal_with_split(
+            goal=goal, priority=self.task_queue.PRIORITY_NORMAL, source="auto"
+        )
+```
+
+### 架构设计优势
+
+1. **职责分离**：
+   - MaicraftAgent：专注智能决策
+   - AgentRunner：专注任务调度
+
+2. **可扩展性**：
+   - 可以替换不同的Agent实现
+   - 可以增强AgentRunner的调度功能
+
+3. **错误隔离**：
+   - Agent执行失败不影响Runner
+   - Runner可以处理Agent的错误
+
+4. **并发安全**：
+   - AgentRunner处理并发任务调度
+   - MaicraftAgent专注于单次任务执行
+
+## 🔄 MCP工具调用流程
+
+### 完整调用时序图
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Plugin as MaicraftPlugin
+    participant MCPClient as MCPClient
+    participant MCPServer as MCP Server
+    participant ToolAdapter as MCPToolAdapter
+    participant Agent as MaicraftAgent
+    participant AgentRunner as AgentRunner
+    participant LangChain as LangChain Agent
+
+    Note over User, LangChain: 插件初始化阶段
+    User->>Plugin: 启动插件
+    Plugin->>MCPClient: 创建MCP客户端
+    MCPClient->>MCPServer: 连接MCP服务器
+    MCPServer-->>MCPClient: 连接成功
+    MCPClient->>MCPServer: 获取工具列表
+    MCPServer-->>MCPClient: 返回工具元数据
+    Plugin->>ToolAdapter: 创建工具适配器
+    ToolAdapter->>MCPClient: 获取工具元数据
+    MCPClient-->>ToolAdapter: 返回工具信息
+    ToolAdapter->>ToolAdapter: 转换为LangChain工具
+    Plugin->>Agent: 初始化MaicraftAgent
+    Agent->>ToolAdapter: 获取LangChain工具
+    ToolAdapter-->>Agent: 返回工具列表
+    Plugin->>AgentRunner: 创建AgentRunner
+    AgentRunner->>Agent: 启动Agent运行器
+
+    Note over User, LangChain: 用户消息处理阶段
+    User->>Plugin: 发送消息
+    Plugin->>AgentRunner: 转发消息
+    AgentRunner->>AgentRunner: 提取用户输入
+    AgentRunner->>AgentRunner: 添加到任务队列
+    AgentRunner->>Agent: 执行任务
+    Agent->>LangChain: 调用AgentExecutor
+    LangChain->>ToolAdapter: 选择并调用工具
+    ToolAdapter->>ToolAdapter: 解析参数
+    ToolAdapter->>MCPClient: 调用MCP工具
+    MCPClient->>MCPServer: 发送工具调用请求
+    MCPServer->>MCPServer: 执行工具逻辑
+    MCPServer-->>MCPClient: 返回执行结果
+    MCPClient-->>ToolAdapter: 返回结果
+    ToolAdapter->>ToolAdapter: 错误检测和处理
+    ToolAdapter-->>LangChain: 返回工具结果
+    LangChain->>LangChain: 处理工具结果
+    LangChain-->>Agent: 返回执行结果
+    Agent->>Agent: 更新记忆
+    Agent-->>AgentRunner: 返回任务结果
+    AgentRunner->>AgentRunner: 格式化结果
+    AgentRunner->>Plugin: 报告执行结果
+    Plugin-->>User: 返回用户响应
+
+    Note over User, LangChain: 自主代理循环阶段
+    loop 自主代理循环
+        AgentRunner->>Agent: 提议下一个目标
+        Agent->>GoalChain: 生成目标建议
+        GoalChain-->>Agent: 返回目标
+        Agent-->>AgentRunner: 返回目标提议
+        AgentRunner->>AgentRunner: 将目标加入队列
+        AgentRunner->>Agent: 执行目标任务
+        Agent->>LangChain: 调用AgentExecutor
+        LangChain->>ToolAdapter: 选择并调用工具
+        ToolAdapter->>MCPClient: 调用MCP工具
+        MCPClient->>MCPServer: 发送工具调用请求
+        MCPServer-->>MCPClient: 返回执行结果
+        MCPClient-->>ToolAdapter: 返回结果
+        ToolAdapter-->>LangChain: 返回工具结果
+        LangChain-->>Agent: 返回执行结果
+        Agent-->>AgentRunner: 返回任务结果
+        AgentRunner->>AgentRunner: 等待下一个tick
+    end
+```
+
+### 核心调用流程详解
+
+#### 1. 插件初始化流程
+```python
+# MaicraftPlugin.setup()
+mcp_client = MCPClient(mcp_config)
+connected = await mcp_client.connect()  # 连接MCP服务器
+tools_metadata = await mcp_client.get_tools_metadata()  # 获取工具列表
+tool_adapter = MCPToolAdapter(mcp_client, config)
+langchain_tools = await tool_adapter.create_langchain_tools()  # 转换为LangChain工具
+agent = MaicraftAgent(config, mcp_client)
+await agent.initialize()  # 初始化Agent
+agent_runner = AgentRunner(core, mcp_client, agent, agent_cfg)
+await agent_runner.start()  # 启动运行器
+```
+
+#### 2. 工具调用流程
+```python
+# MCPToolAdapter._create_tool_function()
+async def tool_function(input_json: str):
+    parsed_args = json.loads(input_json)  # 解析参数
+    validated_args = self._validate_and_fix_parameters(tool_name, parsed_args)  # 验证参数
+    result = await self.mcp_client.call_tool_directly(tool_name, validated_args)  # 调用MCP工具
+    return self._process_result(result)  # 处理结果
+```
+
+#### 3. MCP客户端工具调用
+```python
+# MCPClient.call_tool_directly()
+async def call_tool_directly(self, tool_name: str, arguments: Dict[str, Any]):
+    result = await self._client.call_tool(tool_name, arguments)  # 调用fastmcp
+    jsonable_result = self._to_jsonable(result)  # 转换为JSON格式
+    return {"success": True, "result": jsonable_result}
+```
+
+#### 4. Agent执行流程
+```python
+# MaicraftAgent.plan_and_execute()
+result = await self.agent_executor.ainvoke({
+    "input": user_input, 
+    "chat_history": self.get_chat_history()
+})  # 使用LangChain Agent执行
+```
+
+## 🧠 记忆系统架构
+
+### 多层次记忆架构
+
+```mermaid
+graph TD
+    A[用户输入] --> B[MaicraftAgent]
+    B --> C[MemoryChain]
+    C --> D[ConversationBufferMemory]
+    D --> E[基础存储层]
+    
+    C --> F[LLM智能分析]
+    F --> G[记忆优化]
+    G --> H[上下文理解]
+    H --> I[偏好学习]
+    
+    I --> J[更新记忆]
+    J --> K[返回智能结果]
+```
+
+### 记忆组件关系
+
+#### 1. ConversationBufferMemory (基础存储)
+```python
+# 职责：原始数据存储
+self.memory = ConversationBufferMemory(
+    memory_key="chat_history", 
+    return_messages=True
+)
+```
+
+**特点**：
+- **简单存储**：只负责存储和检索原始对话数据
+- **无智能处理**：不进行数据分析或优化
+- **LangChain标准**：符合LangChain框架标准
+
+#### 2. MemoryChain (智能管理)
+```python
+# 职责：智能记忆处理
+self.memory_chain = MemoryChain(self.llm, self.memory)
+```
+
+**特点**：
+- **智能分析**：使用LLM分析记忆内容
+- **记忆优化**：压缩和优化记忆存储
+- **上下文理解**：提取重要信息和用户偏好
+
+### 记忆工作流程
+
+#### 1. 任务执行时的记忆传递
+```python
+async def plan_and_execute(self, user_input: str) -> Dict[str, Any]:
+    # 1. 获取聊天历史
+    chat_history = self.get_chat_history()
+    
+    # 2. 传递给Agent执行器（自动记忆管理）
+    result = await self.agent_executor.ainvoke({
+        "input": user_input, 
+        "chat_history": chat_history  # 自动更新记忆
+    })
+    
+    # 3. 手动更新记忆
+    await self._update_memory(user_input, formatted_result)
+```
+
+#### 2. 智能记忆更新
+```python
+async def _update_memory(self, user_input: str, result: Dict[str, Any]):
+    """更新记忆"""
+    if self.memory_chain:
+        memory_data = {
+            "current_memory": "",
+            "new_information": f"用户输入: {user_input}, 执行结果: {result}",
+            "memory_type": "task_execution",
+            "memory_limits": {"max_tokens": self.config.langchain.max_token_limit},
+        }
+        await self.memory_chain.execute(memory_data)
+```
+
+### 记忆系统特性
+
+1. **上下文保持**：维护完整的对话历史，提供连贯的用户体验
+2. **智能分析**：使用LLM分析记忆内容，提取重要信息
+3. **自动优化**：智能压缩和优化记忆，控制资源使用
+4. **偏好学习**：学习用户偏好，提供个性化服务
+5. **错误恢复**：记忆操作失败不影响主要功能
+6. **灵活配置**：支持记忆大小限制和优化策略配置
+
+## 🤖 Agent架构优化
+
+### MaicraftAgent和AgentRunner的关系
+
+#### 职责分工
+
+**MaicraftAgent：智能决策核心**
+```python
+class MaicraftAgent:
+    """基于LangChain Agent的Minecraft Agent"""
+    
+    # 核心职责：
+    # 1. 管理LLM和工具
+    # 2. 提供智能决策能力
+    # 3. 执行具体的任务规划
+    # 4. 管理记忆和上下文
+```
+
+**AgentRunner：任务调度和生命周期管理**
+```python
+class AgentRunner:
+    """简化的Agent运行器，专注于任务调度"""
+    
+    # 核心职责：
+    # 1. 任务队列管理
+    # 2. 生命周期控制
+    # 3. 消息处理
+    # 4. 自主代理循环
+```
+
+#### 协作模式
+
+```python
+# AgentRunner调用MaicraftAgent
+async def _execute_task(self, task: RunnerTask) -> Dict[str, Any]:
+    """执行具体任务"""
+    # Runner委托给Agent执行
+    result = await self.agent.plan_and_execute(task.goal)
+    return result
+
+async def _propose_and_execute_goal(self):
+    """提议并执行目标"""
+    # Runner使用Agent的目标提议能力
+    goal = await self.agent.propose_next_goal()
+    if goal:
+        await self.task_queue.enqueue_goal_with_split(
+            goal=goal, priority=self.task_queue.PRIORITY_NORMAL, source="auto"
+        )
+```
+
+### 架构设计优势
+
+1. **职责分离**：
+   - MaicraftAgent：专注智能决策
+   - AgentRunner：专注任务调度
+
+2. **可扩展性**：
+   - 可以替换不同的Agent实现
+   - 可以增强AgentRunner的调度功能
+
+3. **错误隔离**：
+   - Agent执行失败不影响Runner
+   - Runner可以处理Agent的错误
+
+4. **并发安全**：
+   - AgentRunner处理并发任务调度
+   - MaicraftAgent专注于单次任务执行
+
+## 🔄 工作流程
 
 ## 🚀 快速开始
 
@@ -413,18 +930,12 @@ Maicraft 提供丰富的 MCP 工具：
 ```
 chains/
 ├── base.py                    # 基础链类
-├── task_planning_chain.py     # 任务规划链
 ├── goal_proposal_chain.py     # 目标提议链
 ├── memory_chain.py            # 记忆管理链
 └── error_handling_chain.py    # 错误处理链
 ```
 
 ### 链功能说明
-
-#### TaskPlanningChain（任务规划链）
-- **输入预处理**：分析用户输入，提取任务目标和参数
-- **任务执行**：选择合适的工具并执行任务
-- **输出后处理**：格式化执行结果，生成用户友好的响应
 
 #### GoalProposalChain（目标提议链）
 - **上下文分析**：分析聊天历史和当前状态
@@ -435,11 +946,22 @@ chains/
 - **记忆加载**：从存储中加载历史记忆
 - **记忆更新**：更新当前对话和状态信息
 - **记忆保存**：将更新后的记忆保存到存储
+- **智能分析**：使用LLM分析记忆内容，提取重要信息
+- **记忆优化**：压缩和优化记忆存储，控制token使用量
 
 #### ErrorHandlingChain（错误处理链）
 - **错误检测**：检测工具调用和LLM响应中的错误
 - **错误恢复**：尝试自动恢复或提供替代方案
 - **错误报告**：生成详细的错误报告和日志
+
+### 链使用情况
+
+| 链名称 | 使用状态 | 用途 |
+|--------|----------|------|
+| **GoalProposalChain** | ✅ 使用中 | 自主目标提议 |
+| **MemoryChain** | ✅ 使用中 | 智能记忆管理 |
+| **ErrorHandlingChain** | ✅ 使用中 | 错误处理和恢复 |
+| ~~TaskPlanningChain~~ | ❌ 已删除 | ~~任务规划~~（由LangChain内置Agent替代） |
 
 ## 🎯 消息打断功能
 
@@ -553,6 +1075,12 @@ config.validate_and_log()
    - 验证参数格式
    - 确认 Maicraft 工具是否可用
 
+5. **记忆系统问题**
+   - 检查记忆链初始化状态
+   - 验证LLM服务连接
+   - 查看记忆更新日志
+   - 确认token限制配置
+
 ### 日志调试
 
 启用详细日志：
@@ -565,10 +1093,21 @@ verbose = true
 查看关键日志：
 - `[MCP工具适配器]` - MCP 工具转换日志
 - `[MaicraftAgent]` - Agent 执行日志
-- `[TaskPlanningChain]` - 任务规划日志
+- `[MemoryChain]` - 记忆管理日志
 - `[ErrorHandlingChain]` - 错误处理日志
+- `[AgentRunner]` - 任务调度日志
 
 ## 📝 更新日志
+
+### v2.1.0 (架构优化版本)
+- ✅ 删除未使用的TaskPlanningChain，简化架构
+- ✅ 优化LCEL链使用，只保留实际使用的链
+- ✅ 增强类型安全性，添加空值检查
+- ✅ 完善记忆系统文档和说明
+- ✅ 优化Agent架构，明确MaicraftAgent和AgentRunner职责
+- ✅ 符合LangChain最佳实践，提高代码质量
+- ✅ 减少代码冗余，提高维护性
+- ✅ 完善MCP工具调用流程文档
 
 ### v2.0.0 (重构版本)
 - ✅ 使用 LangChain Agent 替代自定义 LLMPlanner

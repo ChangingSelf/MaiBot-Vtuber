@@ -1,12 +1,9 @@
 from typing import Dict, List, Any, Optional
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain.agents import AgentExecutor
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import BaseTool
 from langchain.memory import ConversationBufferMemory
-from langchain_core.prompts import ChatPromptTemplate
 from src.utils.logger import get_logger
-from ..chains.base import BaseChain
-from ..chains.task_planning_chain import TaskPlanningChain
 from ..chains.goal_proposal_chain import GoalProposalChain
 from ..chains.memory_chain import MemoryChain
 from ..chains.error_handling_chain import ErrorHandlingChain
@@ -15,7 +12,7 @@ from ..config import MaicraftConfig
 
 
 class MaicraftAgent:
-    """基于LangChain Agent的Minecraft Agent（简化版）"""
+    """基于LangChain Agent的Minecraft Agent"""
 
     def __init__(self, config: MaicraftConfig, mcp_client):
         self.config = config
@@ -32,7 +29,6 @@ class MaicraftAgent:
         self.memory: Optional[ConversationBufferMemory] = None
 
         # LCEL链组件
-        self.task_planning_chain: Optional[TaskPlanningChain] = None
         self.goal_proposal_chain: Optional[GoalProposalChain] = None
         self.memory_chain: Optional[MemoryChain] = None
         self.error_handling_chain: Optional[ErrorHandlingChain] = None
@@ -89,15 +85,13 @@ class MaicraftAgent:
     async def _create_chains(self):
         """创建LCEL链"""
         try:
-            # 创建任务规划链
-            self.task_planning_chain = TaskPlanningChain(self.llm, self.tools)
-            self.logger.info("[MaicraftAgent] 任务规划链创建成功")
-
             # 创建目标提议链
             self.goal_proposal_chain = GoalProposalChain(self.llm)
             self.logger.info("[MaicraftAgent] 目标提议链创建成功")
 
             # 创建记忆管理链
+            if self.memory is None:
+                raise RuntimeError("记忆未初始化")
             self.memory_chain = MemoryChain(self.llm, self.memory)
             self.logger.info("[MaicraftAgent] 记忆管理链创建成功")
 
@@ -177,9 +171,7 @@ class MaicraftAgent:
 
         except Exception as e:
             self.logger.error(f"[MaicraftAgent] 任务执行失败: {e}")
-            # 使用错误处理链处理错误
-            error_result = await self._handle_error(e, user_input)
-            return error_result
+            return await self._handle_error(e, user_input)
 
     async def propose_next_goal(self) -> Optional[str]:
         """提议下一个目标"""
@@ -202,6 +194,10 @@ class MaicraftAgent:
             }
 
             # 使用目标提议链生成目标
+            if self.goal_proposal_chain is None:
+                self.logger.error("[MaicraftAgent] 目标提议链未初始化")
+                return None
+
             result = await self.goal_proposal_chain.execute(input_data)
 
             # 检查是否有目标提议结果（包括备用目标）
@@ -226,9 +222,7 @@ class MaicraftAgent:
     def get_chat_history(self) -> List[str]:
         """获取聊天历史"""
         try:
-            if self.memory_chain:
-                return self.memory_chain.get_chat_history()
-            return []
+            return self.memory_chain.get_chat_history() if self.memory_chain else []
         except Exception as e:
             self.logger.error(f"[MaicraftAgent] 获取聊天历史失败: {e}")
             return []
@@ -269,9 +263,11 @@ class MaicraftAgent:
                 "user_impact": "任务执行失败",
             }
 
-            result = await self.error_handling_chain.execute(error_data)
-            return result
+            if self.error_handling_chain is None:
+                self.logger.error("[MaicraftAgent] 错误处理链未初始化")
+                return {"success": False, "error": str(error), "user_response": "系统出现错误，请稍后重试"}
 
+            return await self.error_handling_chain.execute(error_data)
         except Exception as e:
             self.logger.error(f"[MaicraftAgent] 错误处理失败: {e}")
             return {"success": False, "error": str(error), "user_response": "系统出现错误，请稍后重试"}

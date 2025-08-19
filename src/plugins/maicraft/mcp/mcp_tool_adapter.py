@@ -1,16 +1,13 @@
 from typing import Dict, List, Any, Optional, Callable
 from langchain_core.tools import BaseTool, Tool
-from pydantic import BaseModel, Field, create_model
 from src.utils.logger import get_logger
-import json
-import asyncio
-from functools import wraps
+from src.plugins.maicraft.mcp.client import MCPClient
 
 
 class MCPToolAdapter:
     """将MCP工具转换为LangChain Tool"""
 
-    def __init__(self, mcp_client, error_detection_config=None):
+    def __init__(self, mcp_client: MCPClient, error_detection_config: Dict[str, Any]):
         self.mcp_client = mcp_client
         self.logger = get_logger("MCPToolAdapter")
         self._tools_cache: Optional[List[BaseTool]] = None
@@ -172,10 +169,10 @@ class MCPToolAdapter:
         if not self._tools_metadata_cache:
             return None
 
-        for tool_info in self._tools_metadata_cache:
-            if tool_info.get("name") == tool_name:
-                return tool_info
-        return None
+        return next(
+            (tool_info for tool_info in self._tools_metadata_cache if tool_info.get("name") == tool_name),
+            None,
+        )
 
     def _generate_detailed_description(self, name: str, description: str, schema: Dict[str, Any]) -> str:
         """生成包含参数信息的详细工具描述"""
@@ -196,11 +193,7 @@ class MCPToolAdapter:
 
                     # 构建参数描述
                     param_desc = f"- {field_name} ({field_type})"
-                    if is_required:
-                        param_desc += " [必需]"
-                    else:
-                        param_desc += " [可选]"
-
+                    param_desc += " [必需]" if is_required else " [可选]"
                     if field_desc:
                         param_desc += f": {field_desc}"
 
