@@ -27,3 +27,10 @@ tomli
 torchaudio
 maim-message
 customtkinter
+fastmcp
+# LangChain dependencies
+langchain
+langchain-core
+langchain-openai
+langchain-community
+dirtyjson

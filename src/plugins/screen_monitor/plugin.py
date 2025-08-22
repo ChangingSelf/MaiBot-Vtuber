@@ -45,7 +45,7 @@ class ScreenMonitorPlugin(BasePlugin):
         
         # 插件配置
         self.enabled = plugin_config.get("enabled", True)
-        self.api_key = plugin_config.get("api_key", "sk-587745e2aa7843d8b9217655a7c4d17c")
+        self.api_key = plugin_config.get("api_key", "")
         self.base_url = plugin_config.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         self.model_name = plugin_config.get("model_name", "qwen2.5-vl-72b-instruct")
         
