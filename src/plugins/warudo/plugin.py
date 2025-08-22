@@ -31,7 +31,7 @@ from .small_actions.blink_action import BlinkTask
 # 导入眼部移动任务
 from .small_actions.shift_action import ShiftTask
 # 导入回复状态管理器
-from .reply_state import reply_state
+from .reply_state import ReplyState
 
 class WarudoPlugin(BasePlugin):
     """
@@ -96,6 +96,8 @@ class WarudoPlugin(BasePlugin):
         # 初始化眼部移动任务
         self.shift_task = ShiftTask(self.state_manager, self.logger)
         
+        self.reply_state = ReplyState(self.state_manager, self.logger)
+        
         # --- 字幕相关配置 ---
         subtitle_config = self.config.get("subtitle", {})
         self.subtitle_enabled = subtitle_config.get("enabled", True)
@@ -132,7 +134,7 @@ class WarudoPlugin(BasePlugin):
         if message.message_segment.type == "state":
             state_data = message.message_segment.data
             self.logger.info(f"收到state消息: '{state_data}'")
-            await reply_state.deal_state(state_data)
+            await self.reply_state.deal_state(state_data)
             
         if message.message_segment.type == "body_action":
             body_action_data = message.message_segment.data
@@ -338,7 +340,7 @@ class WarudoPlugin(BasePlugin):
         """停止说话状态"""
         if self.is_speaking:
             self.is_speaking = False
-            await reply_state.stop_talking()
+            await self.reply_state.stop_talking()
             # 无论连接状态如何，都尝试清理口型状态
             try:
                 # 发送最终的闭嘴指令（清零所有元音值和音量）
@@ -366,7 +368,7 @@ class WarudoPlugin(BasePlugin):
         # 开始说话状态（如果还没有的话）
         if not self.reseted:
             await self._start_speaking()
-            await reply_state.start_talking()
+            await self.reply_state.start_talking()
 
         with self.audio_analysis_lock:
             self.accumulated_audio.extend(audio_data)

@@ -6,6 +6,49 @@ from typing import Dict, Any, Optional
 from enum import Enum
 import websockets
 from .action_sender import action_sender
+import random
+
+ALL_SIGHT_STATE = {
+    "camera": 0.0,
+    "danmu": 0.0,
+    "phone": 0.0,
+}
+
+name_tranfer_dict = {
+    "camera": "漫游",
+    "danmu": "danmu",
+    "phone": "phone",
+}
+
+class SightState():
+    def __init__(self):
+        self.first_layer = {
+            "camera": 0.0,
+            "danmu": 0.0,
+            "phone": 0.0,
+        }
+        self.changed = True
+        
+    async def send_state(self):
+        state = self.get_sight_state()
+        for k, v in state.items():
+            if v > 0:
+                await action_sender.send_action("sight", name_tranfer_dict[k])
+            
+    def get_sight_state(self) -> Dict[str, float]:
+        result = ALL_SIGHT_STATE.copy()
+        if any(v > 0 for v in self.first_layer.values()):
+            for k in result:
+                if k in self.first_layer:
+                    result[k] = self.first_layer[k]
+        return result
+    
+    def set_state(self, key: str, intensity: float):
+        for k in self.first_layer:
+            self.first_layer[k] = 0.0
+        self.first_layer[key] = intensity
+        self.changed = True
+
 
 ALL_EYEBROW_STATE = {
     "eyebrow_happy_weak": 0.0,
@@ -42,10 +85,10 @@ class EyebrowState():
                     result[k] = self.first_layer[k]
         return result
                     
-    def set_first_layer(self, key: str):
+    def set_first_layer(self, key: str, weight: float = 1.0):
         for k in self.first_layer:
             self.first_layer[k] = 0.0
-        self.first_layer[key] = 1.0
+        self.first_layer[key] = weight
         self.changed = True
 
 ALL_EYE_STATE = {
@@ -79,7 +122,7 @@ class EyeState():
         self.is_blinking = is_blinking
         self.changed = True
     
-    def set_first_layer(self, key: str):
+    def set_first_layer(self, key: str, weight: float = 1.0):
         if not key:
             for k in self.first_layer:
                 self.first_layer[k] = 0.0
@@ -88,7 +131,7 @@ class EyeState():
         
         for k in self.first_layer:
             self.first_layer[k] = 0.0
-        self.first_layer[key] = 1.0
+        self.first_layer[key] = weight
         self.changed = True
         
     def get_eye_state(self) -> Dict[str, float]:
@@ -107,6 +150,8 @@ class EyeState():
 ALL_PUPIL_STATE = {
     "eye_shift_left": 0.0,
     "eye_shift_right": 0.0,
+    "eye_shift_up": 0.0,
+    "eye_shift_down": 0.0,
 }
 
 class PupilState():
@@ -115,6 +160,8 @@ class PupilState():
         self.first_layer = {
             "eye_shift_left": 0.0,
             "eye_shift_right": 0.0,
+            "eye_shift_up": 0.0,
+            "eye_shift_down": 0.0,
         }
         self.changed = True
         
@@ -138,6 +185,10 @@ class PupilState():
 ALL_MOUTH_STATE = {
     "mouth_happy_strong": 0.0,
     "mouth_angry_weak": 0.0,
+    "mouth_sad_weak": 0.0,
+    "mouth_smlie_2": 0.0,
+    "mouth_smlie_3": 0.0,
+    "mouth_smlie_teeth": 0.0,
     "VowelA": 0.0,
     "VowelI": 0.0,
     "VowelU": 0.0,
@@ -151,6 +202,10 @@ class MouthState():
         self.first_layer = {
             "mouth_happy_strong": 0.0,
             "mouth_angry_weak": 0.0,
+            "mouth_sad_weak": 0.0,
+            "mouth_smlie_2": 0.0,
+            "mouth_smlie_3": 0.0,
+            "mouth_smlie_teeth": 0.0,
         }
         self.second_layer = {
             "VowelA": 0.0,
@@ -167,10 +222,10 @@ class MouthState():
         for k, v in state.items():
             await action_sender.send_action(k, v)
             
-    def set_first_layer(self, key: str):
+    def set_first_layer(self, key: str, weight: float = 1.0):
         for k in self.first_layer:
             self.first_layer[k] = 0.0
-        self.first_layer[key] = 1.0
+        self.first_layer[key] = weight
         self.changed = True
         
 
@@ -204,14 +259,6 @@ class MouthState():
                 self.changed = True
 
 
-
-class GazeState(Enum):
-    """视线状态枚举"""
-    WANDERING = "wandering"  # 随意
-    LENS = "lens"           # 相机
-    DANMU = "danmu"         # 弹幕
-
-
 class WarudoStateManager:
     """Warudo模型状态管理器"""
     
@@ -222,7 +269,7 @@ class WarudoStateManager:
         self.pupil_state = PupilState()
         self.mouth_state = MouthState()
         self.eyebrow_state = EyebrowState()
-    
+        self.sight_state = SightState()
         
         # 需要使用debug日志级别的动作列表
         self.debug_actions = {
@@ -261,11 +308,11 @@ class WarudoStateManager:
                 await self.eyebrow_state.send_state()
                 self.logger.info("发送眉毛状态")
                 self.eyebrow_state.changed = False
-    
-    
-
-    
-
+        
+            if self.sight_state.changed:
+                await self.sight_state.send_state()
+                self.logger.info("发送视线状态")
+                self.sight_state.changed = False
 
 class MoodStateManager:
     """心情状态管理器"""
@@ -285,29 +332,49 @@ class MoodStateManager:
         # 表情组合模板（根据新的表情动作调整）
         self.expression_combinations = {
             "happy": {
-                "eye": "",
-                "eyebrow": "eyebrow_happy_weak", 
-                "mouth": "mouth_happy_strong",
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_happy_weak", "weight": 0.8},
+                "mouth": {"action": "mouth_happy_strong", "weight": 0.3},
+            },
+            "happy_2": {
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_happy_strong", "weight": 1},
+                "mouth": {"action": "mouth_smlie_2", "weight": 0.2},
             },
             "very_happy": {
-                "eye": "eye_happy_strong",
-                "eyebrow": "eyebrow_happy_strong",
-                "mouth": "mouth_happy_strong",
+                "eye": {"action": "eye_happy_strong", "weight": 1},
+                "eyebrow": {"action": "eyebrow_happy_strong", "weight": 1},
+                "mouth": {"action": "mouth_happy_strong", "weight": 0.57},
+            },
+            "very_happy_2": {
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_happy_strong", "weight": 1},
+                "mouth": {"action": "mouth_smlie_3", "weight": 0.63},
             },
             "sad": {
-                "eye": "",
-                "eyebrow": "eyebrow_sad_strong",
-                "mouth": "mouth_happy_strong",
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_sad_week", "weight": 1},
+                "mouth": {"action": "mouth_sad_weak", "weight": 1},
             },
             "angry": {
-                "eye": "",
-                "eyebrow": "eyebrow_angry_strong",
-                "mouth": "mouth_angry_weak",
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_angry_strong", "weight": 1},
+                "mouth": {"action": "mouth_angry_weak", "weight": 0.8},
+            },
+            "angry_2": {
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_angry_strong", "weight": 0.81},
+                "mouth": {"action": "mouth_happy_strong", "weight": 0.18},
+            },
+            "very_angry": {
+                "eye": {"action": "", "weight": 1},
+                "eyebrow": {"action": "eyebrow_angry_weak", "weight": 0.8},
+                "mouth": {"action": "mouth_angry_weak", "weight": 0.7},
             },
             "neutral": {
-                "eye": "",
-                "eyebrow": "",
-                "mouth": "",
+                "eye": {"action": "", "weight": 0},
+                "eyebrow": {"action": "", "weight": 0},
+                "mouth": {"action": "", "weight": 0},
             }
         }
         
@@ -377,8 +444,13 @@ class MoodStateManager:
                 return "happy"
             else:
                 return "neutral"
-        elif dominant_emotion == "anger" and self.current_mood["anger"] >= 5:
-            return "angry"
+        elif dominant_emotion == "anger":
+            if self.current_mood["anger"] >= 7:
+                return "very_angry"
+            elif self.current_mood["anger"] >= 5:
+                return "angry"
+            else:
+                return "neutral"
         elif dominant_emotion == "sorrow" and self.current_mood["sorrow"] >= 5:
             return "sad"
         else:
@@ -387,26 +459,30 @@ class MoodStateManager:
     def _apply_expression(self, expression_name: str):
         """应用指定的表情组合"""
         try:
+            # 随机选择同前缀的表情组合
+            candidates = [k for k in self.expression_combinations if k.startswith(expression_name)]
+            if len(candidates) > 1:
+                chosen = random.choice(candidates)
+                self.logger.info(f"表情前缀'{expression_name}'有多个候选，随机选择: {chosen}")
+                expression_name = chosen
+            
             if expression_name not in self.expression_combinations:
                 self.logger.warning(f"未知的表情: {expression_name}")
                 return
             
             expression_config = self.expression_combinations[expression_name]
             
-            
             # 应用新表情配置
             for part, action in expression_config.items():
-                self.logger.info(f"应用表情 '{expression_name}' 的 {part} 状态: {action}")
+                weight = action.get("weight", 1)
+                action_value = action.get("action", "")
+                self.logger.info(f"应用表情 '{expression_name}' 的 {part} 状态: {action_value} (权重: {weight})")
                 if part == "eye":
-                    # 找到对应的眼部状态枚举
-                    self.state_manager.eye_state.set_first_layer(action)                    
+                    self.state_manager.eye_state.set_first_layer(action_value,weight=weight)
                 elif part == "eyebrow":
-                    # 找到对应的眉毛状态枚举
-                    self.state_manager.eyebrow_state.set_first_layer(action)
+                    self.state_manager.eyebrow_state.set_first_layer(action_value,weight=weight)
                 elif part == "mouth":
-                    # 找到对应的嘴巴状态枚举
-                    self.state_manager.mouth_state.set_first_layer(action)
-            
+                    self.state_manager.mouth_state.set_first_layer(action_value,weight=weight)
             
             self.logger.info(f"应用表情 '{expression_name}'")
             
