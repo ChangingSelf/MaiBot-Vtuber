@@ -402,7 +402,20 @@ class EnvironmentInfo:
         if self.inventory:
             lines.append(f"  物品数量: {len(self.inventory)}")
             for i, item in enumerate(self.inventory):
-                lines.append(f"  [{i}]: {item}")
+                # 构建更可读的物品信息
+                item_info = []
+                if 'displayName' in item and item['displayName']:
+                    item_info.append(item['displayName'])
+                if 'name' in item and item['name']:
+                    item_info.append(f"({item['name']})")
+                if 'count' in item:
+                    item_info.append(f"x{item['count']}")
+                if 'slot' in item:
+                    item_info.append(f"[槽位{item['slot']}]")
+                
+                # 组合物品信息
+                item_str = " ".join(item_info)
+                lines.append(f"  [{i}]: {item_str}")
         else:
             lines.append("  物品栏为空")
         lines.append("")
@@ -437,18 +450,18 @@ class EnvironmentInfo:
             lines.append("  附近没有实体")
         lines.append("")
         
-        # 最近事件
-        lines.append("【最近事件】")
-        if self.recent_events:
-            lines.append(f"  事件数量: {len(self.recent_events)}")
-            # 只显示最近5个事件
-            recent_events = self.recent_events[-5:] if len(self.recent_events) > 5 else self.recent_events
-            for i, event in enumerate(recent_events, 1):
-                event_time = datetime.fromtimestamp(event.timestamp / 1000).strftime("%H:%M:%S")
-                lines.append(f"  {i}. [{event_time}] {self._get_event_description(event)}")
-        else:
-            lines.append("  没有最近事件")
-        lines.append("")
+        # # 最近事件
+        # lines.append("【最近事件】")
+        # if self.recent_events:
+        #     lines.append(f"  事件数量: {len(self.recent_events)}")
+        #     # 只显示最近5个事件
+        #     recent_events = self.recent_events[-5:] if len(self.recent_events) > 5 else self.recent_events
+        #     for i, event in enumerate(recent_events, 1):
+        #         event_time = datetime.fromtimestamp(event.timestamp / 1000).strftime("%H:%M:%S")
+        #         lines.append(f"  {i}. [{event_time}] {self._get_event_description(event)}")
+        # else:
+        #     lines.append("  没有最近事件")
+        # lines.append("")
         
         # 系统状态
         # lines.append("【系统状态】")

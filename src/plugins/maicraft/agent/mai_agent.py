@@ -90,11 +90,12 @@ class MaiAgent:
                 continue
             
             success, result = await self.execute_goal(goal=goal, steps=steps, notes=notes)
+            self.goal_list.append((goal, success))
             if not success:
                 self.logger.error(f"[MaiAgent] 目标执行失败: {result}")
                 continue
             
-            self.goal_list.append((goal, success))
+            # self.goal_list.append((goal, success))
             
             self.logger.info(f"[MaiAgent] 目标执行成功: {result}")
             
@@ -191,7 +192,7 @@ class MaiAgent:
             
             done = False
             attempt = 0
-            max_attempts = 10
+            max_attempts = 20
             
             while not done and attempt < max_attempts:
                 attempt += 1
@@ -220,11 +221,19 @@ class MaiAgent:
                     system_message="你是一个Minecraft游戏助手，请选择合适的工具来执行游戏步骤。"
                 )
                 
+                # self.logger.info(f"[MaiAgent] 执行步骤响应: {response}")
+                
                 if not response.get("success"):
                     self.logger.error(f"[MaiAgent] LLM调用失败: {response.get('error')}")
                     continue
                 
                 # 检查是否有工具调用
+                response_content = response.get("content", "")
+                self.logger.info(f"[MaiAgent] 使用了工具，想法: {response_content}")
+                if "完成" in response_content:
+                    done = True
+                    break
+                
                 tool_calls = response.get("tool_calls", [])
                 if tool_calls:
                     # 执行选中的工具
@@ -250,6 +259,7 @@ class MaiAgent:
                             # 记录工具执行历史
                             tool_execution_record = {
                                 "tool_name": tool_name,
+                                "response": response_content,
                                 "arguments": parsed_args,
                                 "success": is_success,
                                 "result": result_content,
@@ -263,16 +273,11 @@ class MaiAgent:
                             
                             self.logger.info(f"[MaiAgent] 工具执行成功: {result_content}")
                             
-                            # 检查步骤是否完成
-                            if self._is_goal_completed(goal, result_content):
-                                done = True
-                                self.logger.info(f"[MaiAgent] 目标完成: {goal}")
-                                break
-                            
                         except Exception as e:
                             # 记录工具执行异常
                             tool_execution_record = {
                                 "tool_name": tool_name,
+                                "response": response_content,
                                 "arguments": parsed_args,
                                 "success": False,
                                 "result": f"执行异常: {str(e)}",
@@ -285,7 +290,7 @@ class MaiAgent:
                 else:
                     # 如果没有工具调用，检查文本响应
                     content = response.get("content", "")
-                    self.logger.info(f"[MaiAgent] 执行步骤响应: {content}")
+                    self.logger.info(f"[MaiAgent] 没有使用工具，产生想法: {content}")
                     
                     if "完成" in content:
                         done = True
@@ -320,6 +325,7 @@ class MaiAgent:
             tool_name = record["tool_name"]
             arguments = record["arguments"]
             result = record["result"]
+            response = record["response"]
             
             # 格式化参数
             if isinstance(arguments, dict):
@@ -337,38 +343,19 @@ class MaiAgent:
             else:
                 result_str = str(result)
             
-            formatted_record = f"工具: {tool_name}({args_str}) - {status} - 结果: {result_str}"
+            # 将时间戳转换为可读格式（不是13位毫秒时间戳，直接按秒处理）
+            from datetime import datetime
+            try:
+                if isinstance(timestamp, (int, float)):
+                    readable_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    readable_time = str(timestamp)
+            except Exception:
+                readable_time = str(timestamp)
+                
+            formatted_record = f"{readable_time}，你的想法：{response}。你使用 {tool_name}({args_str})\n结果: {result_str}\n"
             formatted_history.append(formatted_record)
         
         return "\n".join(formatted_history)
-    
-    def _is_goal_completed(self, goal: str, tool_result) -> bool:
-        """检查目标是否已完成"""
-        try:
-            # 从工具结果中提取文本内容
-            if hasattr(tool_result, 'content') and tool_result.content:
-                result_text = ""
-                for content in tool_result.content:
-                    if hasattr(content, 'text'):
-                        result_text += content.text
-                
-                # 简单的完成检测逻辑
-                completion_indicators = ["完成", "成功", "done", "success", "finished"]
-                for indicator in completion_indicators:
-                    if indicator.lower() in result_text.lower():
-                        return True
-                
-                # 检查是否有错误信息
-                error_indicators = ["错误", "失败", "error", "failed", "exception"]
-                for indicator in error_indicators:
-                    if indicator.lower() in result_text.lower():
-                        return False
-            
-            # 默认认为目标未完成，需要继续尝试
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"[MaiAgent] 目标完成检测异常: {e}")
-            return False
             
     
