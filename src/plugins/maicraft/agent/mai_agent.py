@@ -1,5 +1,7 @@
 import asyncio
 import json
+import time
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from langchain.agents import AgentExecutor
 from langchain_openai import ChatOpenAI
@@ -107,8 +109,11 @@ class MaiAgent:
             return "无已执行目标"
         lines = []
         for idx, (goal, success) in enumerate(self.goal_list, 1):
-            status = "成功" if success else "失败"
-            lines.append(f"{idx}. 目标：{goal}\n   状态：{status}")
+            # status = "成功" if success else "失败"
+            if success:
+                lines.append(f"{idx}. 完成了目标：{goal}")
+            else:
+                lines.append(f"{idx}. 尝试目标：{goal}。但最终失败了，没有完成该目标")
         return "\n".join(lines)
     
     
@@ -192,7 +197,7 @@ class MaiAgent:
             
             done = False
             attempt = 0
-            max_attempts = 20
+            max_attempts = 10
             
             while not done and attempt < max_attempts:
                 attempt += 1
@@ -263,7 +268,7 @@ class MaiAgent:
                                 "arguments": parsed_args,
                                 "success": is_success,
                                 "result": result_content,
-                                "timestamp": asyncio.get_event_loop().time()
+                                "timestamp": time.time()
                             }
                             executed_tools_history.append(tool_execution_record)
                             
@@ -281,7 +286,7 @@ class MaiAgent:
                                 "arguments": parsed_args,
                                 "success": False,
                                 "result": f"执行异常: {str(e)}",
-                                "timestamp": asyncio.get_event_loop().time()
+                                "timestamp": time.time()
                             }
                             executed_tools_history.append(tool_execution_record)
                             
@@ -305,7 +310,7 @@ class MaiAgent:
                 return False, f"目标执行超时: {goal}"
             
             self.logger.info("[MaiAgent] 所有步骤执行完成")
-            return True, "目标执行成功"
+            return True, f"目标执行成功，最终想法：{response_content}"
             
         except Exception as e:
             self.logger.error(f"[MaiAgent] 目标执行异常: {e}")
@@ -344,16 +349,9 @@ class MaiAgent:
                 result_str = str(result)
             
             # 将时间戳转换为可读格式（不是13位毫秒时间戳，直接按秒处理）
-            from datetime import datetime
-            try:
-                if isinstance(timestamp, (int, float)):
-                    readable_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-                else:
-                    readable_time = str(timestamp)
-            except Exception:
-                readable_time = str(timestamp)
+            readable_time = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
                 
-            formatted_record = f"{readable_time}，你的想法：{response}。你使用 {tool_name}({args_str})\n结果: {result_str}\n"
+            formatted_record = f"{readable_time}，你的想法：{response}你使用 {tool_name}({args_str})\n结果: {result_str}\n"
             formatted_history.append(formatted_record)
         
         return "\n".join(formatted_history)
