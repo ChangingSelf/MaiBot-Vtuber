@@ -211,10 +211,7 @@ class MCPToolAdapter:
         properties = schema.get("properties", {})
         required_fields = schema.get("required", [])
 
-        self.logger.info(f"[MCP工具适配器] 验证工具 {tool_name} 的参数")
-        self.logger.info(f"[MCP工具适配器] 必需字段: {required_fields}")
-        self.logger.info(f"[MCP工具适配器] 可选字段: {list(properties.keys())}")
-        self.logger.info(f"[MCP工具适配器] 传入参数: {list(parsed_args.keys())}")
+        self.logger.info(f"[MCP工具适配器] 验证工具 {tool_name} 的参数, 必需字段: {required_fields}, 可选字段: {list(properties.keys())}, 传入参数: {list(parsed_args.keys())}")
 
         # 检查必需字段
         missing_required = []
@@ -246,7 +243,7 @@ class MCPToolAdapter:
                         # 使用dirty-json库自动修复和解析JSON
                         try:
                             parsed_args = dirtyjson.loads(input_json)
-                            self.logger.info(f"[MCP工具适配器] 使用dirty-json成功解析参数: {parsed_args}")
+                            self.logger.debug(f"[MCP工具适配器] 使用dirty-json成功解析参数: {parsed_args}")
                         except Exception as e:
                             self.logger.warning(f"[MCP工具适配器] dirty-json解析失败: {e}")
                             parsed_args = {}

@@ -81,6 +81,7 @@ class AgentRunner:
     async def _run_loop(self):
         """主运行循环"""
         try:
+            await asyncio.sleep(1)
             self.logger.info("[AgentRunner] 开始主运行循环")
 
             while self.running:

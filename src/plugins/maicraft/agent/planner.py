@@ -313,7 +313,7 @@ class LLMPlanner:
         try:
             tool_hint = "\n可用工具列表：" + ", ".join(tool_names or []) if tool_names else ""
             system = (
-                "你是一个专业的任务拆解器，领域为 Minecraft 代理。\n"
+                "请把以下你想要在Minecraft中做的事情拆分为具体的步骤：\n"
                 "请把给定的目标拆分为 1-" + str(max_steps) + " 个可以依次执行的简短中文步骤。\n"
                 "每一步应可由工具执行，明确且原子化，避免模糊表达。\n"
                 "偏向使用已知工具可实现的动作。" + tool_hint + "\n"

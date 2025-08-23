@@ -9,6 +9,8 @@ from ..chains.memory_chain import MemoryChain
 from ..chains.error_handling_chain import ErrorHandlingChain
 from ..mcp.mcp_tool_adapter import MCPToolAdapter
 from ..config import MaicraftConfig
+from .environment_updater import EnvironmentUpdater
+from .environment import global_environment
 
 
 class MaicraftAgent:
@@ -32,6 +34,9 @@ class MaicraftAgent:
         self.goal_proposal_chain: Optional[GoalProposalChain] = None
         self.memory_chain: Optional[MemoryChain] = None
         self.error_handling_chain: Optional[ErrorHandlingChain] = None
+
+        # 环境更新器
+        self.environment_updater: Optional[EnvironmentUpdater] = None
 
         # 初始化状态
         self.initialized = False
@@ -74,6 +79,9 @@ class MaicraftAgent:
 
             # 创建Agent执行器
             await self._create_agent_executor()
+
+            # 创建并启动环境更新器
+            await self._create_environment_updater()
 
             self.initialized = True
             self.logger.info("[MaicraftAgent] 初始化完成")
@@ -132,6 +140,28 @@ class MaicraftAgent:
             self.logger.error(f"[MaicraftAgent] 创建Agent执行器失败: {e}")
             raise
 
+    async def _create_environment_updater(self):
+        """创建并启动环境更新器"""
+        try:
+            self.logger.info("[MaicraftAgent] 开始创建环境更新器")
+
+            # 创建环境更新器实例
+            self.environment_updater = EnvironmentUpdater(
+                agent=self,
+                update_interval=5,  # 默认5秒更新间隔
+                auto_start=False  # 不自动启动，等初始化完成后再启动
+            )
+
+            # 启动环境更新器
+            if self.environment_updater.start():
+                self.logger.info("[MaicraftAgent] 环境更新器启动成功")
+            else:
+                self.logger.error("[MaicraftAgent] 环境更新器启动失败")
+
+        except Exception as e:
+            self.logger.error(f"[MaicraftAgent] 创建环境更新器失败: {e}")
+            raise
+
     async def plan_and_execute(self, user_input: str) -> Dict[str, Any]:
         """规划并执行任务（使用AgentExecutor调用工具）"""
         try:
@@ -140,11 +170,21 @@ class MaicraftAgent:
 
             self.logger.info(f"[MaicraftAgent] 开始规划并执行任务: {user_input}")
 
+            # 构建包含环境信息的增强输入
+            environment_text = global_environment.get_summary()
+            enhanced_input = f"{user_input}\n\n{environment_text}\n\n请基于以上环境信息，合理规划并执行用户请求的任务。"
+            
+            self.logger.info(f"[MaicraftAgent] 增强输入: {enhanced_input}")
+            self.logger.info(f"[MaicraftAgent] 聊天历史: {self.get_chat_history()}")
+
             # 使用AgentExecutor执行任务（这会实际调用工具）
             if not self.agent_executor:
                 raise RuntimeError("Agent执行器未初始化")
 
-            result = await self.agent_executor.ainvoke({"input": user_input, "chat_history": self.get_chat_history()})
+            result = await self.agent_executor.ainvoke({
+                "input": enhanced_input, 
+                "chat_history": self.get_chat_history()
+            })
 
             # 格式化结果
             formatted_result = {
@@ -162,6 +202,8 @@ class MaicraftAgent:
                 },
                 "raw_result": result,
             }
+
+            self.logger.info(f"[MaicraftAgent] 任务执行结果: {formatted_result}")
 
             # 更新记忆
             await self._update_memory(user_input, formatted_result)
@@ -181,17 +223,22 @@ class MaicraftAgent:
 
             self.logger.info("[MaicraftAgent] 开始提议下一个目标")
 
-            # 准备输入数据（使用默认的游戏状态）
+            # 获取环境信息摘要
+            environment_summary = self.get_environment_summary()
             input_data = {
                 "game_state": "Minecraft生存模式",
-                "player_position": "出生点附近",
-                "inventory": "基础工具和材料",
-                "environment": "平原或森林环境",
-                "recent_activities": ["刚刚开始游戏"],
+                "player_position": "当前游戏位置",
+                "inventory": "当前物品栏",
+                "environment": "当前游戏环境",
+                "recent_activities": ["基于当前环境"],
                 "player_preferences": {"探索": "高", "建造": "中", "收集": "高"},
                 "time_constraints": {"可用时间": "15-30分钟"},
-                "current_resources": {"木材": "少量", "石头": "少量", "食物": "基础"},
+                "current_resources": {"基于当前状态"},
+                "environment_context": environment_summary.get("environment_summary", "环境信息获取失败")
             }
+
+
+            self.logger.info(f"[MaicraftAgent] 目标提议输入数据: {input_data}")
 
             # 使用目标提议链生成目标
             if self.goal_proposal_chain is None:
@@ -227,14 +274,6 @@ class MaicraftAgent:
             self.logger.error(f"[MaicraftAgent] 获取聊天历史失败: {e}")
             return []
 
-    def clear_memory(self):
-        """清除记忆"""
-        try:
-            if self.memory_chain:
-                self.memory_chain.clear_memory()
-            self.logger.info("[MaicraftAgent] 记忆已清除")
-        except Exception as e:
-            self.logger.error(f"[MaicraftAgent] 清除记忆失败: {e}")
 
     async def _update_memory(self, user_input: str, result: Dict[str, Any]):
         """更新记忆"""
@@ -249,6 +288,22 @@ class MaicraftAgent:
                 await self.memory_chain.execute(memory_data)
         except Exception as e:
             self.logger.error(f"[MaicraftAgent] 更新记忆失败: {e}")
+
+    def get_environment_summary(self) -> Dict[str, Any]:
+        """获取环境信息摘要（同步方法）"""
+        try:
+            return {
+                "success": True,
+                "environment_summary": global_environment.get_summary()
+            }
+
+        except Exception as e:
+            self.logger.error(f"[MaicraftAgent] 获取环境摘要失败: {e}")
+            return {
+                "success": False,
+                "error": f"获取环境摘要失败: {str(e)}",
+                "user_response": "无法获取环境摘要"
+            }
 
     async def _handle_error(self, error: Exception, user_input: str) -> Dict[str, Any]:
         """处理错误"""
@@ -271,3 +326,12 @@ class MaicraftAgent:
         except Exception as e:
             self.logger.error(f"[MaicraftAgent] 错误处理失败: {e}")
             return {"success": False, "error": str(error), "user_response": "系统出现错误，请稍后重试"}
+
+    def __del__(self):
+        """析构函数，确保资源被正确清理"""
+        try:
+            if hasattr(self, 'environment_updater') and self.environment_updater:
+                self.environment_updater.stop()
+                self.logger.info("[MaicraftAgent] 环境更新器已停止")
+        except:
+            pass

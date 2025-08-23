@@ -27,6 +27,8 @@ class LLMConfig(BaseModel):
             "claude-3-opus",
             # DeepSeek models
             "deepseek-chat",
+            "deepseek-v3.1",
+            "qwen3-30b-a3b-instruct-2507",
             "deepseek-coder",
             "deepseek-vision",
             # Other compatible models
@@ -48,6 +50,20 @@ class LLMConfig(BaseModel):
             raise ValueError("温度参数必须在0.0到2.0之间")
         return v
 
+
+class AgentModeConfig(BaseModel):
+    """Agent模式配置模型"""
+
+    mode: str = Field(default="mai_agent", description="Agent模式")
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v):
+        """验证Agent模式"""
+        valid_modes = ["mai_agent","default_agent"]
+        if v not in valid_modes:
+            raise ValueError(f"不支持的Agent模式: {v}。支持的模式: {valid_modes}")
+        return v
 
 class AgentConfig(BaseModel):
     """Agent配置模型"""
@@ -119,9 +135,16 @@ class MaicraftConfig(BaseModel):
     """Maicraft插件配置模型"""
 
     llm: LLMConfig = Field(default_factory=LLMConfig, description="LLM配置")
+    agent_mode: AgentModeConfig = Field(default_factory=AgentModeConfig, description="Agent模式配置")
     agent: AgentConfig = Field(default_factory=AgentConfig, description="Agent配置")
     langchain: LangChainConfig = Field(default_factory=LangChainConfig, description="LangChain配置")
     error_detection: ErrorDetectionConfig = Field(default_factory=ErrorDetectionConfig, description="错误检测配置")
+
+    @field_validator("agent_mode")
+    @classmethod
+    def validate_agent_mode_config(cls, v):
+        """验证Agent模式配置"""
+        return v
 
     @field_validator("agent")
     @classmethod

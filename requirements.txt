@@ -34,3 +34,4 @@ langchain-core
 langchain-openai
 langchain-community
 dirtyjson
+json-repair
