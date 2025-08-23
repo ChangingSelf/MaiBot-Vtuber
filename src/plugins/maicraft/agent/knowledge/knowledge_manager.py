@@ -1,3 +1,5 @@
+import json
+import os
 from typing import List, Dict, Any
 
 class KnowledgeManager:
@@ -21,6 +23,40 @@ class KnowledgeManager:
             "category": category
         }
         self.knowledge_base[category].append(knowledge_item)
+
+    def load_preset_knowledge(self, file_path="preset_knowledge.json"):
+        """从JSON文件加载预置知识
+        
+        Args:
+            file_path: 预置知识文件路径
+            
+        Returns:
+            成功加载的知识数量
+        """
+        try:
+            if not os.path.exists(file_path):
+                print(f"预置知识文件不存在: {file_path}")
+                return 0
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                preset_data = json.load(f)
+            
+            loaded_count = 0
+            for category, knowledge_list in preset_data.items():
+                for knowledge_item in knowledge_list:
+                    self.add_knowledge(
+                        knowledge=knowledge_item["knowledge"],
+                        category=knowledge_item["category"],
+                        keywords=knowledge_item["keywords"]
+                    )
+                    loaded_count += 1
+            
+            print(f"成功加载 {loaded_count} 条预置知识")
+            return loaded_count
+            
+        except Exception as e:
+            print(f"加载预置知识失败: {e}")
+            return 0
 
     def get_knowledge_by_category(self, category):
         """通过分类获取知识
@@ -116,5 +152,23 @@ class KnowledgeManager:
                 del self.knowledge_base[category]
             elif 0 <= knowledge_index < len(self.knowledge_base[category]):
                 self.knowledge_base[category].pop(knowledge_index)
+
+    def export_knowledge(self, file_path="exported_knowledge.json"):
+        """导出知识库到JSON文件
+        
+        Args:
+            file_path: 导出文件路径
+            
+        Returns:
+            是否导出成功
+        """
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.knowledge_base, f, ensure_ascii=False, indent=2)
+            print(f"知识库已导出到: {file_path}")
+            return True
+        except Exception as e:
+            print(f"导出知识库失败: {e}")
+            return False
 
 knowledge_manager = KnowledgeManager()
