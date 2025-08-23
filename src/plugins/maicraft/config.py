@@ -11,37 +11,6 @@ class LLMConfig(BaseModel):
     base_url: Optional[str] = Field(default=None, description="API基础URL")
     temperature: float = Field(default=0.2, ge=0.0, le=2.0, description="温度参数")
 
-    @field_validator("model")
-    @classmethod
-    def validate_model(cls, v):
-        """验证模型名称"""
-        valid_models = [
-            # OpenAI models
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            # Claude models
-            "claude-3-haiku",
-            "claude-3-sonnet",
-            "claude-3-opus",
-            # DeepSeek models
-            "deepseek-chat",
-            "deepseek-v3.1",
-            "qwen3-30b-a3b-instruct-2507",
-            "deepseek-coder",
-            "deepseek-vision",
-            # Other compatible models
-            "qwen-turbo",
-            "qwen-plus",
-            "qwen-max",
-            "gemini-pro",
-            "gemini-pro-vision",
-        ]
-        if v not in valid_models:
-            raise ValueError(f"不支持的模型: {v}。支持的模型: {valid_models}")
-        return v
-
     @field_validator("temperature")
     @classmethod
     def validate_temperature(cls, v):

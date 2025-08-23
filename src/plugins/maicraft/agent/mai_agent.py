@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Dict, List, Any, Optional
 from langchain.agents import AgentExecutor
 from langchain_openai import ChatOpenAI
@@ -15,7 +16,7 @@ from .environment_updater import EnvironmentUpdater
 from .environment import global_environment
 from .prompt_manager.prompt_manager import prompt_manager
 from .prompt_manager.template import init_templates
-from .utils import parse_json, convert_mcp_tools_to_openai_format, parse_tool_result
+from .utils import parse_json, convert_mcp_tools_to_openai_format, parse_tool_result, filter_action_tools
 
 class MaiAgent:
     def __init__(self, config: MaicraftConfig, mcp_client):
@@ -178,8 +179,12 @@ class MaiAgent:
             
             self.logger.info(f"[MaiAgent] 获取到 {len(available_tools)} 个可用工具")
             
+            # 过滤工具，只保留动作类工具，排除查询类工具
+            action_tools = filter_action_tools(available_tools)
+            self.logger.info(f"[MaiAgent] 过滤后可用动作工具: {len(action_tools)} 个")
+            
             # 将MCP工具转换为OpenAI工具格式
-            openai_tools = convert_mcp_tools_to_openai_format(available_tools)
+            openai_tools = convert_mcp_tools_to_openai_format(action_tools)
             
             # 记录工具执行历史
             executed_tools_history = []
@@ -231,7 +236,6 @@ class MaiAgent:
                         
                         try:
                             # 解析工具参数
-                            import json
                             if isinstance(tool_args, str):
                                 parsed_args = json.loads(tool_args)
                             else:
@@ -329,9 +333,9 @@ class MaiAgent:
                 for content in result.content:
                     if hasattr(content, 'text'):
                         result_text += content.text
-                result_str = result_text[:100] + "..." if len(result_text) > 100 else result_text
+                result_str = result_text
             else:
-                result_str = str(result)[:100] + "..." if len(str(result)) > 100 else str(result)
+                result_str = str(result)
             
             formatted_record = f"工具: {tool_name}({args_str}) - {status} - 结果: {result_str}"
             formatted_history.append(formatted_record)
