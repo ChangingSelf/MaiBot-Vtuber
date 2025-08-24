@@ -103,7 +103,7 @@ class LLMClient:
                     for tool_call in response.choices[0].message.tool_calls
                 ]
             
-            self.logger.info(f"LLM请求成功，消耗tokens: {result['usage']['total_tokens']}")
+
             return result
             
         except Exception as e:

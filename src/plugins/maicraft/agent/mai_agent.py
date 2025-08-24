@@ -40,7 +40,7 @@ class MaiAgent:
         self.initialized = False
         
         
-        self.goal_list: list[tuple[str, bool]] = []
+        self.goal_list: list[tuple[str, str, str]] = []  # (goal, status, details)
         
     async def initialize(self):
         """异步初始化"""
@@ -80,19 +80,37 @@ class MaiAgent:
         """
         运行主循环
         """
+        modification_reason = ""  # 初始化修改原因
         while True:
             success, goal = await self.propose_next_goal()
             if not success:
                 self.logger.error("[MaiAgent] 目标提议失败")
                 continue
             
-            steps, notes = await self.anaylze_goal(goal)
-            if not steps:
-                self.logger.error(f"[MaiAgent] 目标分解失败: {notes}")
-                continue
+            # steps, notes = await self.anaylze_goal(goal)
+            # if not steps:
+                # self.logger.error(f"[MaiAgent] 目标分解失败: {notes}")
+                # continue
             
-            success, result = await self.execute_goal(goal=goal, steps=steps, notes=notes)
-            self.goal_list.append((goal, success))
+            success, result = await self.execute_goal(goal=goal)
+            
+            # 根据执行结果确定状态和详细信息
+            if success:
+                status = "完成"
+                details = result
+            else:
+                if "目标需要修改:" in result:
+                    status = "修改"
+                    details = result.replace("目标需要修改: ", "")
+                    modification_reason = details  # 保存修改原因用于下一个目标
+                else:
+                    status = "失败"
+                    details = result
+                    modification_reason = ""  # 失败时清空修改原因
+            
+            # 记录目标执行结果
+            self.goal_list.append((goal, status, details))
+            
             if not success:
                 self.logger.error(f"[MaiAgent] 目标执行失败: {result}")
                 continue
@@ -107,13 +125,23 @@ class MaiAgent:
         """
         if not self.goal_list:
             return "无已执行目标"
+        
         lines = []
-        for idx, (goal, success) in enumerate(self.goal_list, 1):
-            # status = "成功" if success else "失败"
-            if success:
+        for idx, (goal, status, details) in enumerate(self.goal_list, 1):
+            if status == "完成":
                 lines.append(f"{idx}. 完成了目标：{goal}")
-            else:
-                lines.append(f"{idx}. 尝试目标：{goal}。但最终失败了，没有完成该目标")
+                if details and "目标执行成功" in details:
+                    # 提取成功时的想法
+                    if "最终想法：" in details:
+                        final_thought = details.split("最终想法：")[-1]
+                        lines.append(f"   想法：{final_thought}")
+            elif status == "修改":
+                lines.append(f"{idx}. 目标需要修改：{goal}")
+                lines.append(f"   原因：{details}")
+            elif status == "失败":
+                lines.append(f"{idx}. 目标执行失败：{goal}")
+                lines.append(f"   原因：{details}")
+        
         return "\n".join(lines)
     
     
@@ -131,7 +159,7 @@ class MaiAgent:
         }
         
         prompt = prompt_manager.generate_prompt("minecraft_goal_generation", **input_data)
-        self.logger.info(f"[MaiAgent] 目标提议输入数据: {input_data}")
+        # self.logger.info(f"[MaiAgent] 目标提议输入数据: {input_data}")
         self.logger.info(f"[MaiAgent] 目标提议提示词: {prompt}")
         
         response = await self.llm_client.simple_chat(prompt)
@@ -171,7 +199,7 @@ class MaiAgent:
         return steps, notes
     
     
-    async def execute_goal(self, goal: str, steps: list[str], notes: str):
+    async def execute_goal(self, goal: str):
         """
         执行目标
         返回: (执行结果, 执行状态)
@@ -197,7 +225,7 @@ class MaiAgent:
             
             done = False
             attempt = 0
-            max_attempts = 10
+            max_attempts = 20
             
             while not done and attempt < max_attempts:
                 attempt += 1
@@ -212,7 +240,6 @@ class MaiAgent:
                 # 使用原有的提示词模板，但通过call_tool传入工具
                 input_data = {
                     "goal": goal,
-                    "all_steps": steps,
                     "environment": environment_info,
                     "executed_tools": executed_tools_str,
                 }
@@ -235,7 +262,14 @@ class MaiAgent:
                 # 检查是否有工具调用
                 response_content = response.get("content", "")
                 self.logger.info(f"[MaiAgent] 使用了工具，想法: {response_content}")
-                if "完成" in response_content:
+                
+                # 根据模板说明检查目标完成情况
+                if "<完成>" in response_content:
+                    done = True
+                    break
+                elif "<修改：" in response_content:
+                    # 目标无法完成或需要修改
+                    self.logger.warning(f"[MaiAgent] 目标需要修改: {response_content}")
                     done = True
                     break
                 
@@ -297,7 +331,13 @@ class MaiAgent:
                     content = response.get("content", "")
                     self.logger.info(f"[MaiAgent] 没有使用工具，产生想法: {content}")
                     
-                    if "完成" in content:
+                    # 根据模板说明检查目标完成情况
+                    if "<完成>" in content:
+                        done = True
+                        break
+                    elif "<修改：" in content:
+                        # 目标无法完成或需要修改
+                        self.logger.warning(f"[MaiAgent] 目标需要修改: {content}")
                         done = True
                         break
                 
@@ -309,8 +349,15 @@ class MaiAgent:
                 self.logger.warning(f"[MaiAgent] 目标执行超时: {goal}")
                 return False, f"目标执行超时: {goal}"
             
-            self.logger.info("[MaiAgent] 所有步骤执行完成")
-            return True, f"目标执行成功，最终想法：{response_content}"
+            # 检查最终响应内容，判断目标完成情况
+            if "<修改：" in response_content:
+                # 提取修改原因
+                modification_reason = self._extract_modification_reason(response_content)
+                self.logger.info(f"[MaiAgent] 目标需要修改: {modification_reason}")
+                return False, f"目标需要修改: {modification_reason}"
+            else:
+                self.logger.info("[MaiAgent] 所有步骤执行完成")
+                return True, f"目标执行成功，最终想法：{response_content}"
             
         except Exception as e:
             self.logger.error(f"[MaiAgent] 目标执行异常: {e}")
@@ -346,7 +393,17 @@ class MaiAgent:
                         result_text += content.text
                 result_str = result_text
             else:
-                result_str = str(result)
+                # 根据工具类型使用专门的翻译函数
+                if tool_name == "move":
+                    result_str = self._translate_move_tool_result(result, arguments)
+                elif tool_name == "query_recipe":
+                    result_str = self._translate_query_recipe_tool_result(result)
+                elif tool_name == "craft_item":
+                    result_str = self._translate_craft_item_tool_result(result)
+                elif tool_name == "mine_block":
+                    result_str = self._translate_mine_block_tool_result(result)
+                else:
+                    result_str = str(result)
             
             # 将时间戳转换为可读格式（不是13位毫秒时间戳，直接按秒处理）
             readable_time = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
@@ -357,3 +414,261 @@ class MaiAgent:
         return "\n".join(formatted_history)
             
     
+    def _translate_move_tool_result(self, result: Any, arguments: Any = None) -> str:
+        """
+        翻译move工具的执行结果，使其更可读
+        
+        Args:
+            result: move工具的执行结果
+            arguments: 工具调用参数，用于提供更准确的错误信息
+            
+        Returns:
+            翻译后的可读文本
+        """
+        try:
+            # 如果结果是字符串，尝试解析JSON
+            if isinstance(result, str):
+                try:
+                    result_data = json.loads(result)
+                except json.JSONDecodeError:
+                    return str(result)
+            else:
+                result_data = result
+            
+            # 检查是否是move工具的结果
+            if not isinstance(result_data, dict):
+                return str(result)
+            
+            # 提取关键信息
+            ok = result_data.get("ok", False)
+            data = result_data.get("data", {})
+            
+            if not ok:
+                # 处理移动失败的情况
+                error_msg = result_data.get("error", "")
+                if "MOVE_FAILED" in error_msg:
+                    if "Took to long to decide path to goal" in error_msg:
+                        # 根据工具参数提供更准确的错误信息
+                        if arguments and isinstance(arguments, dict):
+                            if "block" in arguments:
+                                block_name = arguments["block"]
+                                return f"移动失败: 这附近没有{block_name}"
+                            elif "type" in arguments and arguments["type"] == "coordinate":
+                                return "移动失败: 无法到达指定坐标"
+                        return "移动失败: 这附近没有目标方块"
+                    else:
+                        return f"移动失败: {error_msg}"
+                else:
+                    return f"移动失败: {error_msg}"
+            
+            # 提取移动信息
+            target = data.get("target", "")
+            distance = data.get("distance", 0)
+            position = data.get("position", {})
+            
+            # 格式化位置信息
+            x = position.get("x", 0)
+            y = position.get("y", 0)
+            z = position.get("z", 0)
+            
+            # 构建可读文本
+            readable_text = f"成功移动到坐标 ({x}, {y}, {z})"
+            
+            if target:
+                readable_text += f"，目标：{target}"
+            
+            if distance is not None:
+                readable_text += f"，距离目标：{distance} 格"
+            
+            return readable_text
+            
+        except Exception as e:
+            # 如果解析失败，返回原始结果
+            return str(result)
+    
+    def _translate_query_recipe_tool_result(self, result: Any) -> str:
+        """
+        翻译query_recipe工具的执行结果，使其更可读
+        
+        Args:
+            result: query_recipe工具的执行结果
+            
+        Returns:
+            翻译后的可读文本
+        """
+        try:
+            # 如果结果是字符串，尝试解析JSON
+            if isinstance(result, str):
+                try:
+                    result_data = json.loads(result)
+                except json.JSONDecodeError:
+                    return str(result)
+            else:
+                result_data = result
+            
+            # 检查是否是query_recipe工具的结果
+            if not isinstance(result_data, dict):
+                return str(result)
+            
+            # 提取关键信息
+            ok = result_data.get("ok", False)
+            data = result_data.get("data", [])
+            
+            if not ok:
+                return "查询配方失败"
+            
+            # 处理配方数据
+            if not data:
+                return "没有找到该物品的配方"
+            
+            # 构建可读文本
+            readable_text = "找到以下配方：\n"
+            
+            for i, recipe in enumerate(data, 1):
+                if isinstance(recipe, list):
+                    ingredients = []
+                    for ingredient in recipe:
+                        if isinstance(ingredient, dict):
+                            name = ingredient.get("name", "未知物品")
+                            count = ingredient.get("count", 1)
+                            ingredients.append(f"{count}个{name}")
+                    
+                    if ingredients:
+                        readable_text += f"配方{i}: {', '.join(ingredients)}\n"
+            
+            return readable_text.strip()
+            
+        except Exception as e:
+            # 如果解析失败，返回原始结果
+            return str(result)
+    
+    def _translate_craft_item_tool_result(self, result: Any) -> str:
+        """
+        翻译craft_item工具的执行结果，使其更可读
+        
+        Args:
+            result: craft_item工具的执行结果
+            
+        Returns:
+            翻译后的可读文本
+        """
+        try:
+            # 如果结果是字符串，尝试解析JSON
+            if isinstance(result, str):
+                try:
+                    result_data = json.loads(result)
+                except json.JSONDecodeError:
+                    return str(result)
+            else:
+                result_data = result
+            
+            # 检查是否是craft_item工具的结果
+            if not isinstance(result_data, dict):
+                return str(result)
+            
+            # 提取关键信息
+            ok = result_data.get("ok", False)
+            data = result_data.get("data", {})
+            
+            if not ok:
+                return "合成物品失败"
+            
+            # 提取合成信息
+            item_name = data.get("item", "未知物品")
+            count = data.get("count", 1)
+            
+            # 构建可读文本
+            if count == 1:
+                readable_text = f"成功合成1个{item_name}"
+            else:
+                readable_text = f"成功合成{count}个{item_name}"
+            
+            return readable_text
+            
+        except Exception as e:
+            # 如果解析失败，返回原始结果
+            return str(result)
+    
+    def _translate_mine_block_tool_result(self, result: Any) -> str:
+        """
+        翻译mine_block工具的执行结果，使其更可读
+        
+        Args:
+            result: mine_block工具的执行结果
+            
+        Returns:
+            翻译后的可读文本
+        """
+        try:
+            # 如果结果是字符串，尝试解析JSON
+            if isinstance(result, str):
+                try:
+                    result_data = json.loads(result)
+                except json.JSONDecodeError:
+                    return str(result)
+            else:
+                result_data = result
+            
+            # 检查是否是mine_block工具的结果
+            if not isinstance(result_data, dict):
+                return str(result)
+            
+            # 提取关键信息
+            ok = result_data.get("ok", False)
+            data = result_data.get("data", {})
+            
+            if not ok:
+                return "挖掘方块失败"
+            
+            # 检查是否有挖掘数据
+            if "minedCount" in data:
+                mined_count = data["minedCount"]
+                block_name = data.get("blockName", "未知方块")
+                
+                # 导入方块名称翻译函数
+                from .utils import _translate_block_name
+                block_name_cn = _translate_block_name(block_name)
+                
+                # 构建可读文本
+                if mined_count == 1:
+                    readable_text = f"成功挖掘了1个{block_name_cn}"
+                else:
+                    readable_text = f"成功挖掘了{mined_count}个{block_name_cn}"
+                
+                return readable_text
+            else:
+                # 如果没有挖掘数据，返回原始结果
+                return str(result)
+            
+        except Exception as e:
+            # 如果解析失败，返回原始结果
+            return str(result)
+    
+    def _extract_modification_reason(self, response_content: str) -> str:
+        """
+        从响应内容中提取目标修改的原因
+        
+        Args:
+            response_content: LLM的响应内容
+            
+        Returns:
+            提取的修改原因
+        """
+        try:
+            if "<修改：" in response_content:
+                # 找到<修改：标记的位置
+                start_pos = response_content.find("<修改：")
+                if start_pos != -1:
+                    # 找到对应的结束标记
+                    end_pos = response_content.find(">", start_pos)
+                    if end_pos != -1:
+                        # 提取修改原因（去掉<修改：和>标记）
+                        reason = response_content[start_pos + 4:end_pos].strip()
+                        return reason
+            
+            # 如果没有找到标准格式，返回原始内容
+            return response_content
+            
+        except Exception as e:
+            # 如果提取失败，返回原始内容
+            return response_content

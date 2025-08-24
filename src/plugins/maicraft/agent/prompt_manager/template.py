@@ -7,7 +7,7 @@ def init_templates() -> None:
         name="minecraft_goal_generation",
         template="""
     你的用户名是Mai，是一个Minecraft玩家。现在请你根据游戏情况一个简单可行的游戏目标。
-    你目前的主要目标是探索和搜集不同的物资，最终目的是制作一把铁镐，请在你的能力范围内，请进行决策，你会有兴趣，也会乏味
+    你目前的主要目标是探索和搜集不同的物资，最终目的是制作一把铁镐，请进行决策，你会有兴趣，也会乏味
     当前信息:
     - 你的位置: {player_position}
     - 你的库存: {inventory}
@@ -15,17 +15,7 @@ def init_templates() -> None:
     环境信息: 
     {environment}
     
-你在游戏中只能进行以下操作：
-chat - 发送聊天消息
-craft_item - 合成物品
-smelt_item - 熔炼物品
-use_chest - 使用箱子
-swim_to_land - 游向陆地
-kill_mob - 击杀生物
-mine_block - 挖掘方块
-place_block - 放置方块
-follow_player - 跟随玩家
-(除了上述动作，你无法进行其他任何操作)
+
     
 你之前执行过的目标：
 {executed_goals}
@@ -35,6 +25,7 @@ follow_player - 跟随玩家
     2. 5-15分钟内可完成
     3. 可以通过物品栏，环境信息，位置信息和状态来进行验证是否完成
     4. 根据现在的状态和已经完成的目标进行决策
+    5. 如果之前有目标失败，请考虑失败原因，避免类似问题
 
     直接返回目标描述，不要JSON格式，不要复杂分析：""",
         description="Minecraft游戏目标生成模板",
@@ -58,18 +49,6 @@ follow_player - 跟随玩家
 3. 不需要复杂资源
 4. 可以通过物品栏，环境信息，位置信息和状态来进行验证
 
-你在游戏中只能进行以下操作：
-chat - 发送聊天消息
-craft_item - 合成物品
-smelt_item - 熔炼物品
-use_chest - 使用箱子
-swim_to_land - 游向陆地
-kill_mob - 击杀生物
-mine_block - 挖掘方块
-place_block - 放置方块
-follow_player - 跟随玩家
-(除了上述动作，你无法进行其他任何操作)
-
 请使用json格式输出步骤列表，例如
 {{
     "steps": [
@@ -91,7 +70,7 @@ follow_player - 跟随玩家
 你是Mai，一名Minecraft玩家。请你选择合适的动作来完成当前任务：
 
 **当前目标**：{goal}
-**目标步骤**：{all_steps}
+
 **环境信息**：{environment}
 
 **已经执行的工具**：
@@ -103,13 +82,14 @@ follow_player - 跟随玩家
 
 你可以：
 1. 选择合适的工具来执行当前步骤
-2. 如果当前目标已经完成，返回"完成"
-3. 如果无法选择合适的工具，说明原因
-4. 请注意观察你已经使用过的工具，关注成功和失败的结果，并做出调整
+2. 如果当前目标已经完成，返回<完成>
+3. 如果当前目标无法完成或者短期内无法达成，需要修改，返回<修改：修改的原因>
+4. 如果无法选择合适的工具，说明原因
+5. 请注意观察你已经使用过的工具，关注成功和失败的结果，并做出调整
 
-请你输出你的想法，一定要简短，不要分点。然后
+请你输出你的想法，一定要简短，不要分点。
 请使用工具来执行步骤，输出你的想法和使用的工具。
 """,
         description="Minecraft游戏步骤执行模板",
-        parameters=["goal", "all_steps", "environment", "executed_tools"],
+        parameters=["goal", "environment", "executed_tools"],
     ))

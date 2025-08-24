@@ -146,50 +146,11 @@ def filter_action_tools(available_tools) -> List:
     """
     # 定义查询类工具名称（需要排除的工具）
     query_tool_names = {
-        "query_state",      # 查询状态
-        "query_events",     # 查询事件
-        "get_state",        # 获取状态
-        "get_events",       # 获取事件
-        "list_players",     # 列出玩家
-        "get_inventory",    # 获取物品栏
-        "get_position",     # 获取位置
-        "get_health",       # 获取生命值
-        "get_hunger",       # 获取饥饿值
-        "get_experience",   # 获取经验值
-        "get_weather",      # 获取天气
-        "get_time",         # 获取时间
-        "get_biome",        # 获取生物群系
-        "get_block_info",   # 获取方块信息
-        "get_entity_info",  # 获取实体信息
-    }
-    
-    # 定义动作类工具名称（需要保留的工具）
-    action_tool_names = {
-        "chat",             # 发送聊天消息
-        "mine_block",       # 挖掘方块
-        "place_block",      # 放置方块
-        "craft_item",       # 合成物品
-        "smelt_item",       # 熔炼物品
-        "use_chest",        # 使用箱子
-        "swim_to_land",     # 游向陆地
-        "kill_mob",         # 击杀生物
-        "follow_player",    # 跟随玩家
-        "move_to",          # 移动到指定位置
-        "jump",             # 跳跃
-        "attack",           # 攻击
-        "use_item",         # 使用物品
-        "drop_item",        # 丢弃物品
-        "pickup_item",      # 拾取物品
-        "eat_food",         # 吃食物
-        "sleep",            # 睡觉
-        "open_door",        # 开门
-        "close_door",       # 关门
-        "break_block",      # 破坏方块
-        "build_structure",  # 建造结构
-        "plant_crop",       # 种植作物
-        "harvest_crop",     # 收获作物
-        "breed_animal",     # 繁殖动物
-        "tame_animal",      # 驯服动物
+        "query_game_state", # 查询游戏状态
+        "query_player_status", # 查询玩家状态
+        "query_recent_events", # 查询最近事件
+        # "query_recipe", # 查询配方
+        "query_surroundings", # 查询周围环境
     }
     
     filtered_tools = []
@@ -202,34 +163,100 @@ def filter_action_tools(available_tools) -> List:
             logger.debug(f"[MaiAgent] 排除查询类工具: {tool.name}")
             continue
         
-        # 如果工具名称在动作类工具列表中，则保留
-        if tool_name in action_tool_names:
-            filtered_tools.append(tool)
-            logger.debug(f"[MaiAgent] 保留动作类工具: {tool.name}")
-            continue
-        
-        # 如果工具名称包含查询相关关键词，则排除
-        query_keywords = ["query", "get", "list", "find", "search", "check", "inspect", "examine"]
-        if any(keyword in tool_name for keyword in query_keywords):
-            logger.debug(f"[MaiAgent] 排除查询类工具（关键词匹配）: {tool.name}")
-            continue
-        
-        # 如果工具名称包含动作相关关键词，则保留
-        action_keywords = ["mine", "place", "craft", "smelt", "use", "swim", "kill", "follow", "move", "jump", "attack", "drop", "pickup", "eat", "sleep", "open", "close", "break", "build", "plant", "harvest", "breed", "tame"]
-        if any(keyword in tool_name for keyword in action_keywords):
-            filtered_tools.append(tool)
-            logger.debug(f"[MaiAgent] 保留动作类工具（关键词匹配）: {tool.name}")
-            continue
-        
-        # 默认情况下，如果工具描述包含动作相关词汇，则保留
-        if tool.description:
-            action_desc_keywords = ["执行", "操作", "移动", "挖掘", "放置", "合成", "熔炼", "使用", "攻击", "建造", "种植", "收获"]
-            if any(keyword in tool.description for keyword in action_desc_keywords):
-                filtered_tools.append(tool)
-                logger.debug(f"[MaiAgent] 保留动作类工具（描述匹配）: {tool.name}")
-                continue
-        
-        # 如果都不匹配，则排除（保守策略）
-        logger.debug(f"[MaiAgent] 排除未知类型工具: {tool.name}")
+        filtered_tools.append(tool)
     
     return filtered_tools
+
+
+def _translate_block_name(block_name: str) -> str:
+    """将英文方块名转换为中文
+    
+    Args:
+        block_name: 英文方块名
+        
+    Returns:
+        中文方块名
+    """
+    # 方块名称映射表
+    block_name_mapping = {
+        # 基础方块
+        "stone": "石头",
+        "dirt": "泥土",
+        "grass": "草方块",
+        "sand": "沙子",
+        "gravel": "沙砾",
+        "clay": "粘土",
+        "soul_sand": "灵魂沙",
+        "soul_soil": "灵魂土",
+        
+        # 矿物方块
+        "coal_ore": "煤矿石",
+        "iron_ore": "铁矿石",
+        "gold_ore": "金矿石",
+        "diamond_ore": "钻石矿石",
+        "emerald_ore": "绿宝石矿石",
+        "lapis_ore": "青金石矿石",
+        "redstone_ore": "红石矿石",
+        "copper_ore": "铜矿石",
+        "deepslate_coal_ore": "深板岩煤矿石",
+        "deepslate_iron_ore": "深板岩铁矿石",
+        "deepslate_gold_ore": "深板岩金矿石",
+        "deepslate_diamond_ore": "深板岩钻石矿石",
+        "deepslate_emerald_ore": "深板岩绿宝石矿石",
+        "deepslate_lapis_ore": "深板岩青金石矿石",
+        "deepslate_redstone_ore": "深板岩红石矿石",
+        "deepslate_copper_ore": "深板岩铜矿石",
+        
+        # 装饰方块
+        "oak_log": "橡木原木",
+        "spruce_log": "云杉原木",
+        "birch_log": "白桦原木",
+        "jungle_log": "丛林原木",
+        "acacia_log": "金合欢原木",
+        "dark_oak_log": "深色橡木原木",
+        "mangrove_log": "红树木原木",
+        "cherry_log": "樱花原木",
+        "bamboo_block": "竹子块",
+        
+        # 树叶
+        "oak_leaves": "橡木树叶",
+        "spruce_leaves": "云杉树叶",
+        "birch_leaves": "白桦树叶",
+        "jungle_leaves": "丛林树叶",
+        "acacia_leaves": "金合欢树叶",
+        "dark_oak_leaves": "深色橡木树叶",
+        "mangrove_leaves": "红树树叶",
+        "cherry_leaves": "樱花树叶",
+        "bamboo": "竹子",
+        
+        # 其他常见方块
+        "cobblestone": "圆石",
+        "mossy_cobblestone": "苔石",
+        "stone_bricks": "石砖",
+        "mossy_stone_bricks": "苔石砖",
+        "cracked_stone_bricks": "裂纹石砖",
+        "chiseled_stone_bricks": "錾制石砖",
+        "granite": "花岗岩",
+        "polished_granite": "磨制花岗岩",
+        "diorite": "闪长岩",
+        "polished_diorite": "磨制闪长岩",
+        "andesite": "安山岩",
+        "polished_andesite": "磨制安山岩",
+        "netherrack": "下界岩",
+        "basalt": "玄武岩",
+        "polished_basalt": "磨制玄武岩",
+        "blackstone": "黑石",
+        "polished_blackstone": "磨制黑石",
+        "end_stone": "末地石",
+        "purpur_block": "紫珀块",
+        "obsidian": "黑曜石",
+        "bedrock": "基岩",
+        "water": "水",
+        "lava": "岩浆",
+        "air": "空气",
+        "cave_air": "洞穴空气",
+        "void_air": "虚空空气",
+    }
+    
+    # 返回中文名称，如果没有找到则返回原英文名称
+    return block_name_mapping.get(block_name.lower(), block_name)

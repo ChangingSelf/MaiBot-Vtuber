@@ -90,7 +90,7 @@ class MCPClient:
             try:
                 result = await asyncio.wait_for(
                     self._client.call_tool(tool_name, arguments),
-                    timeout=30.0,  # 30秒超时
+                    timeout=120.0,  # 30秒超时
                 )
             except asyncio.TimeoutError:
                 return CallToolResult(
