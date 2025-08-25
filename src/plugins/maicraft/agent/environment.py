@@ -517,33 +517,17 @@ class EnvironmentInfo:
                     # block_name = self._get_block_name(block_type)
                     lines.append(f"  {block_type}: {count} 个")
                     
-                    # 显示位置信息（限制显示数量避免过长）
-                    if positions and len(positions) <= 10:
-                        for pos in positions:
-                            if isinstance(pos, list) and len(pos) >= 3:
-                                x, y, z = pos[0], pos[1], pos[2]
-                                # 将相对位置转换为绝对位置
-                                if self.position:
-                                    abs_x = self.position.x + x
-                                    abs_y = self.position.y + y
-                                    abs_z = self.position.z + z
-                                    lines.append(f"    位置: X={abs_x:.1f}, Y={abs_y:.1f}, Z={abs_z:.1f}")
-                                else:
-                                    lines.append(f"    相对位置: X={x}, Y={y}, Z={z}")
-                    elif positions and len(positions) > 5:
-                        lines.append(f"    位置数量过多，显示前5个:")
-                        for i, pos in enumerate(positions[:10]):
-                            if isinstance(pos, list) and len(pos) >= 3:
-                                x, y, z = pos[0], pos[1], pos[2]
-                                # 将相对位置转换为绝对位置
-                                if self.position:
-                                    abs_x = self.position.x + x
-                                    abs_y = self.position.y + y
-                                    abs_z = self.position.z + z
-                                    lines.append(f"      {i+1}. 位置: X={abs_x:.1f}, Y={abs_y:.1f}, Z={abs_z:.1f}")
-                                else:
-                                    lines.append(f"      {i+1}. 相对位置: X={x}, Y={y}, Z={z}")
-                        lines.append(f"    ... 还有 {len(positions) - 5} 个位置")
+
+                    for pos in positions:
+                        if isinstance(pos, list) and len(pos) >= 3:
+                            x, y, z = pos[0], pos[1], pos[2]
+                            # 将相对位置转换为绝对位置
+                            abs_x = self.position.x + x
+                            abs_y = self.position.y + y
+                            abs_z = self.position.z + z
+                            lines.append(f"    x={abs_x:.1f}, y={abs_y:.1f}, z={abs_z:.1f}")
+
+                    
             lines.append("")
         else:
             lines.append("【附近方块】")
