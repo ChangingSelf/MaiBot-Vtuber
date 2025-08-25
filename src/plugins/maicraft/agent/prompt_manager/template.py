@@ -8,9 +8,8 @@ def init_templates() -> None:
         template="""
     你的用户名是Mai，是一个Minecraft玩家。现在请你根据游戏情况一个简单可行的游戏目标。
     你的目标是：
-    1.挖到钻石
-    2.设置一个仓库，用于存储物品
-    两个总体目标不分先后
+    设置一个箱子仓库，用于存储物品
+
     
     请进行决策，你会有兴趣，也会乏味
     当前信息:
@@ -79,72 +78,74 @@ def init_templates() -> None:
 
 **你可以做的动作**
  1. chat：在聊天框发送消息
+ {{
+     "action_type":"chat",
+     "message":"消息内容",
+ }}
  2. craft_item：合成物品(直接合成或使用工作台)
- 3. kill_mob：杀死生物
- 4. mine_block：找到附近的特定方块，并挖掘
+ {{
+     "action_type":"craft_item",
+     "item":"物品名称",
+     "count":"数量",
+ }}
+ 3. mine_block：找到附近的特定方块，并挖掘
+ {{
+     "action_type":"mine_block",
+     "block":"方块名称",
+     "count":"数量",
+ }}
+ 4. place_block：放置方块
+ {{
+     "action_type":"place_block",
+     "block":"方块名称",
+     "x":"放置位置",
+     "y":"放置位置",
+     "z":"放置位置",
+ }}
  5. move：移动到指定位置
- 6. place_block：放置方块
- 7. smelt_item：熔炼物品
- 8. swim_to_land：游泳到陆地
-9. use_chest：使用箱子
+ {{
+     "action_type":"move",
+     "x":"位置",
+     "y":"位置",
+     "z":"位置",
+ }}
+ 6. get_recipe：获取物品的合成表
+ {{
+     "action_type":"get_recipe",
+     "item":"物品名称",
+ }}
+ 
+ 
+ **你可以做的动作：任务动作**
+ 1. 完成当前任务
+ {{
+     "action_type":"complete_task",
+     "dont":true,
+ }}
+ 
+ 2. 更新当前任务的进展
+ {{
+     "action_type":"update_task_progress",
+     "progress":"目前任务的进展情况",
+ }}
+ 
+ 3. 如果当前任务无法完成，需要前置任务，创建新任务:
+ {{
+     "action_type":"create_new_task",
+     "new_task":"前置任务的描述",
+     "new_task_criteria":"前置任务的评估标准",
+ }}
 
-**已经执行的工具**：
-{executed_tools}
 
+之前的思考和执行的记录：
+{thinking_list}
+请你先总结之前的思考和执行的记录，然后根据现有的工具，任务和情景，进行思考，如果要使用动作，直接在思考后输出动作，使用json格式:
 
-请分析当前任务需要什么动作，输出你的规划和想法。
-注意：
-1. 在想法中，用[]来标记出现的所有游戏内的物品和方块，例如[方块:石头]，[物品:铁镐]
-2. 在想法中，如果涉及合成，请用[合成:物品名称]来标记，例如[合成:石稿]
-3. 在想法中，如果涉及挖掘，请用[挖掘:方块名称]来标记，例如[挖掘:石头]
-4. 在想法中，如果涉及熔炼，请用[熔炼:物品名称]来标记，例如[熔炼:铁锭]
-5. 如果当前任务进度有变化，请输出[进度:目前任务的进展情况]
-6. 如果当前任务已经完成，请输出[完成:true]
-7. 如果当前任务无法完成或者需要前置任务，请用输出前置任务的任务描述和评估标准，例如：[新任务:合成一把铁镐，用于挖掘钻石][评估标准:物品栏中包含一把铁镐]
-
-想法注意：
-1.精简且可执行
-2. 先对上一步想法执行的动作结果进行总结，然后进一步思考
-3. 不要与先前想法重复，在之前的想法上总结并进一步思考
-
-请你根据任务，环境和执行记录，输出你的想法，简短，不要分点，遵守上述格式。
 """,
         description="Minecraft游戏任务执行想法模板",
-        parameters=["task", "environment", "executed_tools"],
+        parameters=["task", "environment", "executed_tools", "thinking_list"],
     ))
     
-    
-    prompt_manager.register_template(
-        PromptTemplate(
-        name="minecraft_excute_task_action",
-        template="""
-你是Mai，一名Minecraft玩家。请你选择合适的动作来完成当前任务：
-
-**当前需要执行的任务**：
-{task}
-
-**环境信息**：{environment}
-
-**已经执行的工具**：
-{executed_tools}
-
-
-请分析当前任务需要什么动作，然后从可用的工具中选择最合适的工具来执行。
-
-你可以：
-1. 选择合适的工具来执行当前任务
-2. 请注意观察你已经使用过的工具，关注成功和失败的结果，并做出调整
-3. 参考你的想法进行工具使用
-
-**执行任务的想法**：
-{thinking}
-
-
-请使用工具来执行任务，输出你使用的工具。
-""",
-        description="Minecraft游戏任务执行模板",
-        parameters=["task", "environment", "executed_tools", "thinking"],
-    ))
     
     
     

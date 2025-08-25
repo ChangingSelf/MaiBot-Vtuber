@@ -66,14 +66,14 @@ class RecipeFinder:
             
             if result_crafting_table.is_error:
                 self.logger.error(f"[RecipeFinder] 获取合成表失败：{result_crafting_table}")
-                return ""
+                return f"未找到 {item_name} 的合成表"
             
             # 解析返回结果
             recipe_info_crafting_table = await self._parse_recipe_result(result_crafting_table, normalized_name, True)
             
             
             if not recipe_info and not recipe_info_crafting_table:
-                return ""
+                return f"未找到 {item_name} 的合成表"
             
             
             return recipe_info + recipe_info_crafting_table
@@ -181,7 +181,7 @@ class RecipeFinder:
                 formatted_recipes.append(f"{i}. {self._normalize_item_name(recipe)}")
         
         # 构建最终的合成表描述
-        recipe_text = f"🔧 {item_name} 的合成表：\n"
+        recipe_text = f"查询得到：{item_name} 的合成表：\n"
         if use_crafting_table:
             recipe_text += "使用工作台合成：\n"
         recipe_text += "\n".join(formatted_recipes)

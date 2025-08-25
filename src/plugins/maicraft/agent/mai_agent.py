@@ -16,6 +16,15 @@ from .tool_handler import ToolHandlerRegistry, PlaceBlockHandler
 from .to_do_list import ToDoList, ToDoItem
 from .memory.position_memory import FurnaceMemory, CraftingTableMemory
 from .action.recipe_action import recipe_finder
+import traceback
+
+class ThinkingJsonResult:
+    def __init__(self):
+        self.result_str = ""
+        self.done = False
+        self.new_task = ""
+        self.new_task_criteria = ""
+        self.progress = ""
 
 
 class MaiAgent:
@@ -51,6 +60,7 @@ class MaiAgent:
         
         self.furnace_memory: FurnaceMemory = FurnaceMemory()
         self.crafting_table_memory: CraftingTableMemory = CraftingTableMemory()
+        
         
     async def initialize(self):
         """异步初始化"""
@@ -241,7 +251,7 @@ class MaiAgent:
         
         prompt = prompt_manager.generate_prompt("minecraft_goal_generation", **input_data)
         # self.logger.info(f"[MaiAgent] 目标提议输入数据: {input_data}")
-        self.logger.info(f"[MaiAgent] 目标提议提示词: {prompt}")
+        # self.logger.info(f"[MaiAgent] 目标提议提示词: {prompt}")
         
         response = await self.llm_client.simple_chat(prompt)
         self.logger.info(f"[MaiAgent] 目标提议响应: {response}")
@@ -260,7 +270,7 @@ class MaiAgent:
                 "task_done_list": self._format_task_done_list(),
             }
             prompt = prompt_manager.generate_prompt("minecraft_choose_task", **input_data)
-            self.logger.info(f"[MaiAgent] 任务选择提示词: {prompt}")
+            # self.logger.info(f"[MaiAgent] 任务选择提示词: {prompt}")
             
             response = await self.llm_client.simple_chat(prompt)
             self.logger.info(f"[MaiAgent] 任务选择响应: {response}")
@@ -340,6 +350,8 @@ class MaiAgent:
             attempt = 0
             max_attempts = 20
             
+            thinking_list: List[str] = []
+            
             while not done and attempt < max_attempts:
                 attempt += 1
                 self.logger.info(f"[MaiAgent]\n执行任务:\n {task} \n尝试 {attempt}/{max_attempts}")
@@ -355,6 +367,7 @@ class MaiAgent:
                     "task": task.__str__(),
                     "environment": environment_info,
                     "executed_tools": executed_tools_str,
+                    "thinking_list": "\n".join(thinking_list)
                 }
                 prompt = prompt_manager.generate_prompt("minecraft_excute_task_thinking", **input_data)
                 self.logger.info(f"[MaiAgent] 执行任务提示词: {prompt}")
@@ -363,91 +376,104 @@ class MaiAgent:
                 thinking = await self.llm_client.simple_chat(prompt)
                 self.logger.info(f"[MaiAgent] 任务想法: {thinking}")
                 
-                quit_task,thinking = await self.parse_thinking(thinking, task)
+                json_obj, json_before = await self.parse_thinking(thinking, task)
                 
-                if quit_task == "done":
-                    return True, f"任务执行成功: {task.__str__()}"
-                elif quit_task == "new":
-                    return False, f"新任务: {task.__str__()}"
-                
-                
-                # 进行 tool 选择
-                input_data["thinking"] = thinking
-                prompt = prompt_manager.generate_prompt("minecraft_excute_task_action", **input_data)
-                # self.logger.info(f"[MaiAgent] 执行任务提示词: {prompt}")
-                
-                # 使用call_tool方法调用LLM，传入工具参数
-                tool_calls = await self.llm_client.call_tool(
-                    prompt=prompt,
-                    tools=self.openai_tools,
-                )
-
-                if tool_calls:
-                    # 执行选中的工具
-                    for tool_call in tool_calls:
-                        tool_name = tool_call["function"]["name"]
-                        tool_args = tool_call["function"]["arguments"]
-                        
-                        self.logger.info(f"[MaiAgent] 执行工具: {tool_name} 参数: {tool_args}")
-                        
-                        try:
-                            # 解析工具参数
-                            if isinstance(tool_args, str):
-                                parsed_args = json.loads(tool_args)
-                            else:
-                                parsed_args = tool_args
-                            
-                            # 调用MCP工具
-                            result = await self.mcp_client.call_tool_directly(tool_name, parsed_args)
-
-                            # 工具结果后处理：若有专用处理器则在返回后处理
-                            handler = self.tool_handler_registry.find(tool_name)
-                            if handler is not None:
-                                result = await handler.post_process(
-                                    tool_name=tool_name,
-                                    arguments=parsed_args,
-                                    result=result,
-                                    environment=global_environment,
-                                    logger=self.logger,
-                                )
-                            
-                            # 解析工具执行结果，判断是否真的成功
-                            is_success, result_content = parse_tool_result(result)
-                            
-                            # 记录工具执行历史
-                            tool_execution_record = {
-                                "tool_name": tool_name,
-                                "thinking": thinking,
-                                "arguments": parsed_args,
-                                "success": is_success,
-                                "result": result_content,
-                                "timestamp": time.time()
-                            }
-                            executed_tools_history.append(tool_execution_record)
-                            
-                            if not is_success:
-                                self.logger.error(f"[MaiAgent] 工具执行失败: {result_content}")
-                                continue
-                            
-                            self.logger.info(f"[MaiAgent] 工具执行成功: {result_content}")
-                            
-                        except Exception as e:
-                            # 记录工具执行异常
-                            tool_execution_record = {
-                                "tool_name": tool_name,
-                                "thinking": thinking,
-                                "arguments": parsed_args,
-                                "success": False,
-                                "result": f"执行异常: {str(e)}",
-                                "timestamp": time.time()
-                            }
-                            executed_tools_history.append(tool_execution_record)
-                            
-                            self.logger.error(f"[MaiAgent] 工具执行异常: {e}")
-                            continue
+                if json_obj:
+                    self.logger.info(f"[MaiAgent] 解析思考结果: {json_obj}")
+                    self.logger.info(f"[MaiAgent] 解析思考结果前: {json_before}")
+                    thinking_list.append(json_before)
+                    
+                    result = await self.excute_json(json_obj)
+                    
+                    thinking_list.append(result.result_str)
+                    if result.done:
+                        return True, f"任务执行成功: {task.__str__()}"
+                    elif result.new_task:
+                        return False, f"新任务: {result.new_task}"
+                    elif result.progress:
+                        task.progress = result.progress
                 else:
-                    self.logger.error("[MaiAgent] 没有工具调用")
-                    continue
+                    thinking_list.append(json_before)
+            
+                
+                
+                # # 进行 tool 选择
+                # input_data["thinking"] = thinking
+                # prompt = prompt_manager.generate_prompt("minecraft_excute_task_action", **input_data)
+                # # self.logger.info(f"[MaiAgent] 执行任务提示词: {prompt}")
+                
+                # # 使用call_tool方法调用LLM，传入工具参数
+                # tool_calls = await self.llm_client.call_tool(
+                #     prompt=prompt,
+                #     tools=self.openai_tools,
+                # )
+
+                # if tool_calls:
+                #     # 执行选中的工具
+                #     for tool_call in tool_calls:
+                #         tool_name = tool_call["function"]["name"]
+                #         tool_args = tool_call["function"]["arguments"]
+                        
+                #         self.logger.info(f"[MaiAgent] 执行工具: {tool_name} 参数: {tool_args}")
+                        
+                #         try:
+                #             # 解析工具参数
+                #             if isinstance(tool_args, str):
+                #                 parsed_args = json.loads(tool_args)
+                #             else:
+                #                 parsed_args = tool_args
+                            
+                #             # 调用MCP工具
+                #             result = await self.mcp_client.call_tool_directly(tool_name, parsed_args)
+
+                #             # 工具结果后处理：若有专用处理器则在返回后处理
+                #             handler = self.tool_handler_registry.find(tool_name)
+                #             if handler is not None:
+                #                 result = await handler.post_process(
+                #                     tool_name=tool_name,
+                #                     arguments=parsed_args,
+                #                     result=result,
+                #                     environment=global_environment,
+                #                     logger=self.logger,
+                #                 )
+                            
+                #             # 解析工具执行结果，判断是否真的成功
+                #             is_success, result_content = parse_tool_result(result)
+                            
+                #             # 记录工具执行历史
+                #             tool_execution_record = {
+                #                 "tool_name": tool_name,
+                #                 "thinking": thinking,
+                #                 "arguments": parsed_args,
+                #                 "success": is_success,
+                #                 "result": result_content,
+                #                 "timestamp": time.time()
+                #             }
+                #             executed_tools_history.append(tool_execution_record)
+                            
+                #             if not is_success:
+                #                 self.logger.error(f"[MaiAgent] 工具执行失败: {result_content}")
+                #                 continue
+                            
+                #             self.logger.info(f"[MaiAgent] 工具执行成功: {result_content}")
+                            
+                #         except Exception as e:
+                #             # 记录工具执行异常
+                #             tool_execution_record = {
+                #                 "tool_name": tool_name,
+                #                 "thinking": thinking,
+                #                 "arguments": parsed_args,
+                #                 "success": False,
+                #                 "result": f"执行异常: {str(e)}",
+                #                 "timestamp": time.time()
+                #             }
+                #             executed_tools_history.append(tool_execution_record)
+                            
+                #             self.logger.error(f"[MaiAgent] 工具执行异常: {e}")
+                #             continue
+                # else:
+                #     self.logger.error("[MaiAgent] 没有工具调用")
+                #     continue
 
                 if task.done:
                     done = True
@@ -458,56 +484,151 @@ class MaiAgent:
                 return False, f"任务执行超时: {task.__str__()}"
 
         except Exception as e:
-            self.logger.error(f"[MaiAgent] 任务执行异常: {e}")
+            self.logger.error(f"[MaiAgent] 任务执行异常: {traceback.format_exc()}")
             return False, f"任务执行异常: {str(e)}"
+
+    async def excute_json(self, json_obj: dict) -> ThinkingJsonResult:
+        """
+        执行json
+        返回: ThinkingJsonResult
+        """
+        result = ThinkingJsonResult()
+        action_type = json_obj.get("action_type")
+        if action_type == "move":
+            x = json_obj.get("x")
+            y = json_obj.get("y")
+            z = json_obj.get("z")
+            args = {"x": x, "y": y, "z": z, "type": "coordinate","useAbsoluteCoords": True}
+            result.result_str = f"尝试移动到：{x},{y},{z}"
+            call_result = await self.mcp_client.call_tool_directly("move", args)
+            is_success, result_content = await self.parse_action_result(action_type, args, call_result)
+            if is_success:
+                result.result_str += self._translate_move_tool_result(result_content, args)
+            else:
+                result.result_str += f"移动失败: {result_content}"
+        elif action_type == "craft_item":
+            item = json_obj.get("item")
+            count = json_obj.get("count")
+            args = {"item": item, "count": count}
+            result.result_str = f"尝试合成：{item} 数量：{count}"
+            call_result = await self.mcp_client.call_tool_directly("craft_item", args)
+            is_success, result_content = await self.parse_action_result(action_type, args, call_result)
+            if is_success:
+                result.result_str += self._translate_craft_item_tool_result(result_content)
+            else:
+                result.result_str += f"合成失败: {result_content}"
+        elif action_type == "mine_block":
+            block = json_obj.get("block")
+            count = json_obj.get("count")
+            args = {"name": block, "count": count}
+            result.result_str = f"尝试挖掘：{block} 数量：{count}"
+            call_result = await self.mcp_client.call_tool_directly("mine_block", args)
+            is_success, result_content = await self.parse_action_result(action_type, args, call_result)
+            if is_success:
+                result.result_str += self._translate_mine_block_tool_result(result_content)
+            else:
+                result.result_str += f"挖掘失败: {result_content}"
+        elif action_type == "place_block":
+            block = json_obj.get("block")
+            x = json_obj.get("x")
+            y = json_obj.get("y")
+            z = json_obj.get("z")
+            args = {"block": block, "x": x, "y": y, "z": z,"useAbsoluteCoords": True}
+            result.result_str = f"尝试放置：{block} 到：{x},{y},{z}"
+            call_result = await self.mcp_client.call_tool_directly("place_block", args)
+            is_success, result_content = await self.parse_action_result(action_type, args, call_result)
+            if is_success:
+                result.result_str += result_content
+            else:
+                result.result_str += f"放置失败: {result_content}"
+        elif action_type == "chat":
+            message = json_obj.get("message")
+            args = {"message": message}
+            call_result = await self.mcp_client.call_tool_directly("chat", args)
+            is_success, result_content = await self.parse_action_result(action_type, args, call_result)
+            if is_success:
+                result.result_str = self._translate_chat_tool_result(result_content)
+            else:
+                result.result_str = f"聊天失败: {result_content}"
+        elif action_type == "get_recipe":
+            item = json_obj.get("item")
+            result.result_str = f"尝试查询：{item} 的合成表：\n"
+            recipe_str = await recipe_finder.find_recipe(item)
+            result.result_str += recipe_str
+        # 任务动作
+        elif action_type == "complete_task":
+            result.done = True
+            result.result_str = "任务完成"
+        elif action_type == "update_task_progress":
+            progress = json_obj.get("progress")
+            result.result_str = f"任务进度已更新: {progress}"
+            result.progress = progress
+        elif action_type == "create_new_task":
+            new_task = json_obj.get("new_task")
+            new_task_criteria = json_obj.get("new_task_criteria")
+            result.new_task = new_task
+            result.new_task_criteria = new_task_criteria
+        else:
+            self.logger.warning(f"[MaiAgent] 不支持的action_type: {action_type}")
+        
+        return result
     
-    async def parse_thinking(self, thinking: str, task: ToDoItem) -> tuple[str, str]:
+    async def parse_action_result(self, action_type: str, arguments: dict, result: str) -> tuple[bool, str]:
+        """
+        解析动作执行结果
+        返回: 动作执行结果
+        """
+        handler = self.tool_handler_registry.find(action_type)
+        if handler is not None:
+            result = await handler.post_process(
+                tool_name=action_type,
+                arguments=arguments,
+                result=result,
+                environment=global_environment,
+                logger=self.logger,
+            )
+        
+        # 解析工具执行结果，判断是否真的成功
+        is_success, result_content = parse_tool_result(result)
+        return is_success, result_content
+    
+    async def parse_thinking(self, thinking: str, task: 'ToDoItem') -> tuple[str, str, dict, str]:
         """
         解析思考结果
-        返回: (是否成功, 思考结果)
+        1. 先解析thinking中有没有json，如果有，就获取第一个json的完整内容
+        2. 拆分出第一个json前所有内容
+        返回: (是否成功, 思考结果, 第一个json对象, json前内容)
         """
-        tags = parse_tag(thinking)
-        additional_info = ""
-        
-        new_task_details = ""
-        new_task_done_criteria = ""
-        
-        recipe_list = set()
-        
-        print(tags)
-        
-        for tag in tags:
-            if tag[0] == "进度":
-                task.progress = tag[1]
-            elif tag[0] == "完成" and tag[1] == "true":
-                task.done = True
-                return "done", thinking
-            elif tag[0] == "合成": 
-                self.logger.info(f"[MaiAgent] 激活合成表: {tag[1]}")
-                recipe_list.add(tag[1])
-            elif tag[0] == "挖掘":
-                self.logger.info(f"[MaiAgent] 挖掘方块: {tag[1]}")
-            elif tag[0] == "熔炼":
-                self.logger.info(f"[MaiAgent] 熔炼物品: {tag[1]}")
-            elif tag[0] == "新任务":
-                self.logger.info(f"[MaiAgent] 新任务: {tag[1]}")
-                new_task_details = tag[1]
-            elif tag[0] == "评估标准":
-                new_task_done_criteria = tag[1]
-            
-        if new_task_details and new_task_done_criteria:
-            self.to_do_list.add_task(details=f"任务{task.id}的前置任务:{new_task_details}", done_criteria=new_task_done_criteria)
-            return "new", thinking
-        
-        
-        
-        
-        for recipe in recipe_list:
-            recipe_info = await recipe_finder.find_recipe(recipe)
-            if recipe_info:
-                additional_info += f"\n{recipe_info}"
-        
-        return "continue", thinking + additional_info
+        # 匹配第一个json对象（支持嵌套大括号）
+        def find_first_json(text):
+            stack = []
+            start = None
+            for i, c in enumerate(text):
+                if c == '{':
+                    if not stack:
+                        start = i
+                    stack.append('{')
+                elif c == '}':
+                    if stack:
+                        stack.pop()
+                        if not stack and start is not None:
+                            return text[start:i+1], start, i+1
+            return None, None, None
+
+        json_obj = None
+        json_str, json_start, json_end = find_first_json(thinking)
+        json_before = ""
+        if json_str:
+            json_before = thinking[:json_start].strip()
+            try:
+                json_obj = parse_json(json_str)
+            except Exception:
+                self.logger.error(f"[MaiAgent] 解析思考结果时异常: {json_str}")
+        else:
+            json_before = thinking.strip()
+
+        return json_obj, json_before
+    
     
     def _format_executed_tools_history(self, executed_tools_history: List[Dict[str, Any]]) -> str:
         """格式化已执行工具的历史记录"""
