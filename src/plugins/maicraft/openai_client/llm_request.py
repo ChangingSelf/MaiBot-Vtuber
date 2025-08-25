@@ -148,11 +148,20 @@ class LLMClient:
         Returns:
             包含工具调用结果的字典
         """
-        return await self.chat_completion(
+        response = await self.chat_completion(
             prompt=prompt,
             tools=tools,
             system_message=system_message
         )
+        
+        if not response.get("success"):
+            self.logger.error(f"[MaiAgent] LLM调用失败: {response.get('error')}")
+            return None
+        
+        tool_calls = response.get("tool_calls", [])
+        
+        return tool_calls
+        
     
     def get_config_info(self) -> Dict[str, Any]:
         """获取配置信息

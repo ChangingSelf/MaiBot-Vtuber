@@ -271,8 +271,8 @@ class MCPToolsBrowser:
         if default_value is not None and not is_required:
             print(f"    默认值: {default_value}")
     
-    def display_interactive_menu(self, tools_info: List[Dict[str, Any]]):
-        """显示交互式菜单"""
+    async def display_interactive_menu(self, tools_info: List[Dict[str, Any]]):
+        """显示交互式菜单（异步）"""
         while True:
             print("\n" + "-"*60)
             print("MCP工具浏览器 - 交互式菜单")
@@ -281,12 +281,13 @@ class MCPToolsBrowser:
             print("2. 浏览所有工具详细信息")
             print("3. 搜索工具")
             print("4. 按名称或编号查看工具")
-            print("5. 导出工具信息到JSON文件")
-            print("6. 退出")
+            print("5. 执行工具并查看返回值")
+            print("6. 导出工具信息到JSON文件")
+            print("7. 退出")
             print("-"*60)
             
             try:
-                choice = input("请选择操作 (1-6): ").strip()
+                choice = input("请选择操作 (1-7): ").strip()
                 
                 if choice == "1":
                     self.display_tools_summary(tools_info)
@@ -298,17 +299,20 @@ class MCPToolsBrowser:
                     self.search_tools(tools_info)
                 
                 elif choice == "4":
-                    self.view_tool_by_name_or_id(tools_info)
+                    await self.view_tool_by_name_or_id(tools_info)
                 
                 elif choice == "5":
-                    self.export_tools_to_json(tools_info)
+                    await self.execute_tool_flow(tools_info)
                 
                 elif choice == "6":
+                    self.export_tools_to_json(tools_info)
+                
+                elif choice == "7":
                     print("退出MCP工具浏览器")
                     break
                 
                 else:
-                    print("无效选择，请输入1-6之间的数字")
+                    print("无效选择，请输入1-7之间的数字")
                     
             except KeyboardInterrupt:
                 print("\n\n用户中断，退出程序")
@@ -369,8 +373,8 @@ class MCPToolsBrowser:
         else:
             print(f"没有找到包含关键词 '{search_term}' 的工具")
     
-    def view_tool_by_name_or_id(self, tools_info: List[Dict[str, Any]]):
-        """按名称或编号查看工具详细信息"""
+    async def view_tool_by_name_or_id(self, tools_info: List[Dict[str, Any]]):
+        """按名称或编号查看工具详细信息，并可选择执行工具"""
         if not tools_info:
             print("没有可用的工具")
             return
@@ -418,6 +422,9 @@ class MCPToolsBrowser:
                         tool_info = tools_info[tool_id - 1]
                         print(f"\n✅ 找到工具 (编号 {tool_id}):")
                         self.display_tool_details(tool_info)
+                        # 询问是否执行该工具
+                        if self._ask_execute_tool():
+                            await self._execute_single_tool(tool_info)
                         
                         # 询问是否继续查看其他工具
                         if not self._ask_continue_viewing():
@@ -435,6 +442,8 @@ class MCPToolsBrowser:
                         tool_info = matching_tools[0]
                         print(f"\n✅ 找到工具: {tool_info['name']}")
                         self.display_tool_details(tool_info)
+                        if self._ask_execute_tool():
+                            await self._execute_single_tool(tool_info)
                         
                         # 询问是否继续查看其他工具
                         if not self._ask_continue_viewing():
@@ -460,6 +469,8 @@ class MCPToolsBrowser:
                                 selected_tool = matching_tools[choice_id - 1]
                                 print(f"\n✅ 查看工具: {selected_tool['name']}")
                                 self.display_tool_details(selected_tool)
+                                if self._ask_execute_tool():
+                                    await self._execute_single_tool(selected_tool)
                                 
                                 # 询问是否继续查看其他工具
                                 if not self._ask_continue_viewing():
@@ -581,6 +592,275 @@ class MCPToolsBrowser:
         except Exception as e:
             print(f"导出失败: {e}")
 
+    def _ask_execute_tool(self) -> bool:
+        """询问是否执行该工具"""
+        while True:
+            try:
+                choice = input("\n是否立即执行该工具? (y/n): ").strip().lower()
+                if choice in ["y", "yes", "是", ""]:
+                    return True
+                if choice in ["n", "no", "否"]:
+                    return False
+                print("请输入 y/是 或 n/否")
+            except KeyboardInterrupt:
+                print("\n用户中断，取消执行")
+                return False
+
+    async def execute_tool_flow(self, tools_info: List[Dict[str, Any]]):
+        """执行工具并查看返回值的完整流程"""
+        if not tools_info:
+            print("没有可用的工具")
+            return
+        
+        print(f"\n{'='*60}")
+        print("执行工具并查看返回值")
+        print(f"{'='*60}")
+        
+        # 显示工具列表
+        print("可用工具列表:")
+        for i, tool in enumerate(tools_info, 1):
+            tool_type = "查询" if any(keyword in tool["name"].lower() for keyword in ["query", "get", "list", "find", "search"]) else "动作"
+            print(f"  {i:2d}. [{tool_type}] {tool['name']}")
+        
+        print("-" * 60)
+        
+        while True:
+            try:
+                user_input = input("请输入工具编号或名称 (输入 'back' 返回主菜单): ").strip()
+                
+                if user_input.lower() == 'back':
+                    print("返回主菜单...")
+                    break
+                
+                if not user_input:
+                    print("❌ 输入不能为空，请重新输入")
+                    continue
+                
+                # 尝试按编号查找
+                if user_input.isdigit():
+                    tool_id = int(user_input)
+                    if 1 <= tool_id <= len(tools_info):
+                        tool_info = tools_info[tool_id - 1]
+                        await self._execute_single_tool(tool_info)
+                        break
+                    else:
+                        print(f"❌ 无效的工具编号，请输入 1-{len(tools_info)} 之间的数字")
+                        continue
+                
+                # 按名称查找
+                else:
+                    matching_tools = self._find_tools_by_name(tools_info, user_input)
+                    
+                    if len(matching_tools) == 1:
+                        await self._execute_single_tool(matching_tools[0])
+                        break
+                    elif len(matching_tools) > 1:
+                        print(f"\n🔍 找到 {len(matching_tools)} 个匹配的工具:")
+                        for i, tool in enumerate(matching_tools, 1):
+                            tool_type = "查询" if any(keyword in tool["name"].lower() for keyword in ["query", "get", "list", "find", "search"]) else "动作"
+                            print(f"  {i}. [{tool_type}] {tool['name']}")
+                        
+                        choice_input = input("\n请选择要执行的工具编号: ").strip()
+                        if choice_input.isdigit():
+                            choice_id = int(choice_input)
+                            if 1 <= choice_id <= len(matching_tools):
+                                selected_tool = matching_tools[choice_id - 1]
+                                await self._execute_single_tool(selected_tool)
+                                break
+                            else:
+                                print(f"❌ 无效的选择，请输入 1-{len(matching_tools)} 之间的数字")
+                        else:
+                            print("❌ 请输入有效的数字")
+                    else:
+                        print(f"❌ 未找到名称包含 '{user_input}' 的工具")
+                        print("💡 提示: 检查拼写或使用工具编号")
+                        continue
+                        
+            except KeyboardInterrupt:
+                print("\n\n用户中断操作")
+                break
+            except Exception as e:
+                print(f"❌ 操作过程中发生错误: {e}")
+                continue
+    
+    async def _execute_single_tool(self, tool_info: Dict[str, Any]):
+        """执行单个工具并展示结果"""
+        print(f"\n{'='*60}")
+        print(f"执行工具: {tool_info['name']}")
+        print(f"{'='*60}")
+        print(f"描述: {tool_info['description']}")
+        
+        # 显示参数信息
+        properties = tool_info["properties"]
+        required_fields = tool_info["required_fields"]
+        
+        if properties:
+            print(f"\n参数信息:")
+            print(f"必需参数 ({len(required_fields)} 个):")
+            for field in required_fields:
+                if field in properties:
+                    self._display_field_info(field, properties[field], True)
+            
+            optional_fields = [k for k in properties.keys() if k not in required_fields]
+            if optional_fields:
+                print(f"\n可选参数 ({len(optional_fields)} 个):")
+                for field in optional_fields:
+                    if field in properties:
+                        self._display_field_info(field, properties[field], False)
+        
+        # 获取用户输入参数
+        print(f"\n{'='*40}")
+        print("参数输入")
+        print(f"{'='*40}")
+        
+        # 生成示例参数
+        examples = tool_info["examples"]
+        if examples:
+            print("参数示例:")
+            for i, example in enumerate(examples, 1):
+                print(f"\n{i}. {example['type']}:")
+                params_json = json.dumps(example['params'], ensure_ascii=False, indent=2)
+                print(f"   {params_json}")
+        
+        print(f"\n请输入参数 (JSON格式):")
+        print("提示: 输入 'example' 使用第一个示例参数，输入 'min' 使用最小参数")
+        
+        while True:
+            try:
+                params_input = input("参数: ").strip()
+                
+                if params_input.lower() == 'example' and examples:
+                    params_input = json.dumps(examples[0]['params'], ensure_ascii=False)
+                    print(f"使用示例参数: {params_input}")
+                elif params_input.lower() == 'min' and examples:
+                    # 找到最小参数示例
+                    min_example = None
+                    for example in examples:
+                        if "最小" in example['type'] or "必需" in example['type']:
+                            min_example = example
+                            break
+                    if min_example:
+                        params_input = json.dumps(min_example['params'], ensure_ascii=False)
+                        print(f"使用最小参数: {params_input}")
+                    else:
+                        params_input = json.dumps(examples[0]['params'], ensure_ascii=False)
+                        print(f"使用第一个示例参数: {params_input}")
+                
+                if not params_input:
+                    print("❌ 参数不能为空，请重新输入")
+                    continue
+                
+                # 解析JSON参数
+                try:
+                    if params_input.strip():
+                        parsed_params = json.loads(params_input)
+                    else:
+                        parsed_params = {}
+                    break
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON格式错误: {e}")
+                    print("请检查JSON格式，例如: {\"key\": \"value\"}")
+                    continue
+                    
+            except KeyboardInterrupt:
+                print("\n\n用户中断参数输入")
+                return
+            except Exception as e:
+                print(f"❌ 参数输入错误: {e}")
+                continue
+        
+        # 执行工具
+        print(f"\n{'='*40}")
+        print("执行工具中...")
+        print(f"{'='*40}")
+        
+        try:
+            if not self.tool_adapter:
+                print("❌ 工具适配器未初始化")
+                return
+            
+            # 使用工具适配器执行工具
+            result = await self.tool_adapter.mcp_client.call_tool_directly(tool_info['name'], parsed_params)
+            
+            # 展示执行结果
+            await self._display_tool_result(tool_info['name'], result)
+            
+        except Exception as e:
+            print(f"❌ 工具执行失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _display_tool_result(self, tool_name: str, result):
+        """展示工具执行结果"""
+        print(f"\n{'='*60}")
+        print(f"工具执行结果: {tool_name}")
+        print(f"{'='*60}")
+        
+        if result.is_error:
+            print("❌ 执行失败")
+            if result.content:
+                for content in result.content:
+                    if hasattr(content, 'text'):
+                        print(f"错误信息: {content.text}")
+        else:
+            print("✅ 执行成功")
+            print(result)
+        
+        # 询问是否继续执行
+        try:
+            return True
+        except KeyboardInterrupt:
+            print("\n用户中断")
+            return False
+
+    def _safe_parse_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """容错解析JSON文本为字典"""
+        try:
+            import dirtyjson
+            return dirtyjson.loads(text)
+        except Exception:
+            try:
+                return json.loads(text)
+            except Exception as e:
+                print(f"JSON解析失败: {e}")
+                return None
+
+    def _display_call_result(self, result: Any):
+        """格式化展示 CallToolResult 返回值"""
+        try:
+            is_error = getattr(result, "is_error", False)
+            print("\n" + ("结果: 失败" if is_error else "结果: 成功"))
+            
+            content = getattr(result, "content", None)
+            if content:
+                print("\n文本内容:")
+                for i, item in enumerate(content, 1):
+                    t = getattr(item, "type", "")
+                    if t == "text":
+                        txt = getattr(item, "text", "")
+                        print(f"  [{i}] {txt}")
+                    else:
+                        # 其它类型简单序列化
+                        try:
+                            print(f"  [{i}] {json.dumps(item, ensure_ascii=False, default=lambda o: getattr(o, '__dict__', str(o)))}")
+                        except Exception:
+                            print(f"  [{i}] {item}")
+            
+            structured = getattr(result, "structured_content", None)
+            if structured is not None:
+                print("\n结构化数据:")
+                print(json.dumps(structured, ensure_ascii=False, indent=2))
+            
+            data = getattr(result, "data", None)
+            if data is not None:
+                print("\n附加数据:")
+                try:
+                    print(json.dumps(data, ensure_ascii=False, indent=2))
+                except Exception:
+                    print(str(data))
+        except Exception as e:
+            print(f"展示结果时出错: {e}")
+
 
 async def main():
     """主函数"""
@@ -610,7 +890,7 @@ async def main():
         browser.display_tools_summary(tools_info)
         
         # 显示交互式菜单
-        browser.display_interactive_menu(tools_info)
+        await browser.display_interactive_menu(tools_info)
         
     except Exception as e:
         print(f"程序运行过程中发生错误: {e}")

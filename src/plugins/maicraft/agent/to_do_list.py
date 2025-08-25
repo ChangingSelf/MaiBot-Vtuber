@@ -1,6 +1,5 @@
 class ToDoItem:
-    def __init__(self, type: str, details: str, done_criteria: str, progress: str):
-        self.type:str = type
+    def __init__(self, details: str, done_criteria: str, progress: str):
         self.details:str = details
         self.done_criteria:str = done_criteria
         self.progress:str = progress
@@ -9,7 +8,9 @@ class ToDoItem:
         self.id:str = ""
         
     def __str__(self):
-        return f"类型：{self.type}，详情：{self.details}，progress：{self.progress}，完成条件：{self.done_criteria}，是否完成：{self.done}"
+        if self.done:
+            return f"已完成的任务详情：{self.details}\n"
+        return f"任务（未完成）详情：{self.details}\nprogress：{self.progress}\n完成条件：{self.done_criteria}"
 
 class ToDoList:
     def __init__(self):
@@ -18,15 +19,15 @@ class ToDoList:
         self.is_done:bool = False
         self.need_edit:str = ""
         
-    def add_task(self, type: str, details: str, done_criteria: str):
-        to_do_item = ToDoItem(type, details, done_criteria, "尚未开始")
+    def add_task(self, details: str, done_criteria: str):
+        to_do_item = ToDoItem(details, done_criteria, "尚未开始")
         to_do_item.id = str(len(self.items)+1)
         self.items.append(to_do_item)
         
     def __str__(self):
         summary = ""
         for item in self.items:
-            summary += f"任务(id:{item.id})，类型：{item.type}，详情：{item.details}\n目前进度：{item.progress}\n完成条件：{item.done_criteria}\n是否完成：{item.done}\n"
+            summary += f"任务(id:{item.id})，{item}\n"
         return summary
 
     
@@ -45,7 +46,10 @@ class ToDoList:
         for item in self.items:
             if not item.done:
                 return False
-            
+        
+        if self.need_edit:
+            return False
+        
         self.is_done = True
         return True
         

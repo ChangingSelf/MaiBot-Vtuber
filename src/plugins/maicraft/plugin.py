@@ -5,10 +5,11 @@ from contextlib import suppress
 from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import BasePlugin
 from .mcp.client import MCPClient
-from .agent.runner import AgentRunner
-from .agent.agent import MaicraftAgent
+from .agent.old.runner import AgentRunner
+from .agent.old.agent import MaicraftAgent
 from .config import load_config_from_dict
 from .agent.mai_agent import MaiAgent
+from .agent.action.recipe_action import recipe_finder
 
 
 class MaicraftPlugin(BasePlugin):
@@ -51,7 +52,7 @@ class MaicraftPlugin(BasePlugin):
                 self.logger.error(f"[插件初始化] 配置加载失败: {e}")
                 raise
             
-            
+            recipe_finder.set_mcp_client(self.mcp_client)
             # 初始化 Agent
             try:
                 self.logger.info(f"[插件初始化] Agent模式: {self.config.agent_mode.mode}")

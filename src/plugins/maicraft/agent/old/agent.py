@@ -4,13 +4,13 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import BaseTool
 from langchain.memory import ConversationBufferMemory
 from src.utils.logger import get_logger
-from ..chains.goal_proposal_chain import GoalProposalChain
-from ..chains.memory_chain import MemoryChain
-from ..chains.error_handling_chain import ErrorHandlingChain
-from ..mcp.mcp_tool_adapter import MCPToolAdapter
-from ..config import MaicraftConfig
-from .environment_updater import EnvironmentUpdater
-from .environment import global_environment
+from .chains.goal_proposal_chain import GoalProposalChain
+from .chains.memory_chain import MemoryChain
+from .chains.error_handling_chain import ErrorHandlingChain
+from ...mcp.mcp_tool_adapter import MCPToolAdapter
+from ...config import MaicraftConfig
+from ..environment_updater import EnvironmentUpdater
+from ..environment import global_environment
 
 
 class MaicraftAgent:
