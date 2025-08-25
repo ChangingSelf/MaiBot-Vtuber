@@ -1,6 +1,6 @@
 import json
 from json_repair import repair_json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from loguru import logger
 
 def parse_json(text: str) -> dict:
@@ -10,6 +10,26 @@ def parse_json(text: str) -> dict:
         return json.loads(repaired_json)
     except json.JSONDecodeError:
         return None
+    
+    
+# 统一处理全角/半角冒号
+def extract_between(text: str, prefix_full: str, prefix_half: str, closing: str = ">") -> Optional[str]:
+    start = -1
+    use_full = False
+    if prefix_full in text:
+        start = text.find(prefix_full)
+        use_full = True
+    elif prefix_half in text:
+        start = text.find(prefix_half)
+        use_full = False
+    if start == -1:
+        return None
+    end = text.find(closing, start)
+    if end == -1:
+        # 若无闭合符，取到文本末尾
+        end = len(text)
+    offset = len(prefix_full) if use_full else len(prefix_half)
+    return text[start + offset:end].strip()
     
 def convert_mcp_tools_to_openai_format(mcp_tools) -> List[Dict[str, Any]]:
     """将MCP工具转换为OpenAI工具格式"""
@@ -167,96 +187,27 @@ def filter_action_tools(available_tools) -> List:
     
     return filtered_tools
 
-
-def _translate_block_name(block_name: str) -> str:
-    """将英文方块名转换为中文
-    
-    Args:
-        block_name: 英文方块名
-        
-    Returns:
-        中文方块名
+def format_executed_goals(goal_list: list[tuple[str, str, str]]) -> str:
     """
-    # 方块名称映射表
-    block_name_mapping = {
-        # 基础方块
-        "stone": "石头",
-        "dirt": "泥土",
-        "grass": "草方块",
-        "sand": "沙子",
-        "gravel": "沙砾",
-        "clay": "粘土",
-        "soul_sand": "灵魂沙",
-        "soul_soil": "灵魂土",
-        
-        # 矿物方块
-        "coal_ore": "煤矿石",
-        "iron_ore": "铁矿石",
-        "gold_ore": "金矿石",
-        "diamond_ore": "钻石矿石",
-        "emerald_ore": "绿宝石矿石",
-        "lapis_ore": "青金石矿石",
-        "redstone_ore": "红石矿石",
-        "copper_ore": "铜矿石",
-        "deepslate_coal_ore": "深板岩煤矿石",
-        "deepslate_iron_ore": "深板岩铁矿石",
-        "deepslate_gold_ore": "深板岩金矿石",
-        "deepslate_diamond_ore": "深板岩钻石矿石",
-        "deepslate_emerald_ore": "深板岩绿宝石矿石",
-        "deepslate_lapis_ore": "深板岩青金石矿石",
-        "deepslate_redstone_ore": "深板岩红石矿石",
-        "deepslate_copper_ore": "深板岩铜矿石",
-        
-        # 装饰方块
-        "oak_log": "橡木原木",
-        "spruce_log": "云杉原木",
-        "birch_log": "白桦原木",
-        "jungle_log": "丛林原木",
-        "acacia_log": "金合欢原木",
-        "dark_oak_log": "深色橡木原木",
-        "mangrove_log": "红树木原木",
-        "cherry_log": "樱花原木",
-        "bamboo_block": "竹子块",
-        
-        # 树叶
-        "oak_leaves": "橡木树叶",
-        "spruce_leaves": "云杉树叶",
-        "birch_leaves": "白桦树叶",
-        "jungle_leaves": "丛林树叶",
-        "acacia_leaves": "金合欢树叶",
-        "dark_oak_leaves": "深色橡木树叶",
-        "mangrove_leaves": "红树树叶",
-        "cherry_leaves": "樱花树叶",
-        "bamboo": "竹子",
-        
-        # 其他常见方块
-        "cobblestone": "圆石",
-        "mossy_cobblestone": "苔石",
-        "stone_bricks": "石砖",
-        "mossy_stone_bricks": "苔石砖",
-        "cracked_stone_bricks": "裂纹石砖",
-        "chiseled_stone_bricks": "錾制石砖",
-        "granite": "花岗岩",
-        "polished_granite": "磨制花岗岩",
-        "diorite": "闪长岩",
-        "polished_diorite": "磨制闪长岩",
-        "andesite": "安山岩",
-        "polished_andesite": "磨制安山岩",
-        "netherrack": "下界岩",
-        "basalt": "玄武岩",
-        "polished_basalt": "磨制玄武岩",
-        "blackstone": "黑石",
-        "polished_blackstone": "磨制黑石",
-        "end_stone": "末地石",
-        "purpur_block": "紫珀块",
-        "obsidian": "黑曜石",
-        "bedrock": "基岩",
-        "water": "水",
-        "lava": "岩浆",
-        "air": "空气",
-        "cave_air": "洞穴空气",
-        "void_air": "虚空空气",
-    }
+    以更详细、结构化的方式格式化已执行目标列表
+    """
+    if not goal_list:
+        return "无已执行目标"
     
-    # 返回中文名称，如果没有找到则返回原英文名称
-    return block_name_mapping.get(block_name.lower(), block_name)
+    lines = []
+    for idx, (goal, status, details) in enumerate(goal_list, 1):
+        if status == "done":
+            lines.append(f"{idx}. 完成了目标：{goal}")
+            if details and "目标执行成功" in details:
+                # 提取成功时的想法
+                if "最终想法：" in details:
+                    final_thought = details.split("最终想法：")[-1]
+                    lines.append(f"   想法：{final_thought}")
+        elif status == "edit":
+            lines.append(f"{idx}. 目标需要修改：{goal}")
+            lines.append(f"   原因：{details}")
+        elif status == "fail":
+            lines.append(f"{idx}. 目标执行失败：{goal}")
+            lines.append(f"   原因：{details}")
+    
+    return "\n".join(lines)

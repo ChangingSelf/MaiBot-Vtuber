@@ -63,7 +63,8 @@ class MaicraftPlugin(BasePlugin):
                     #等待2秒
 
                     self.logger.info("[插件初始化] 启动 Agent 主循环")
-                    await self.agent.run_loop()
+                    asyncio.create_task(self.agent.run_plan_loop())
+                    asyncio.create_task(self.agent.run_execute_loop())
                     
                 else:
                     self.agent = MaicraftAgent(self.config, self.mcp_client)

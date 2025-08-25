@@ -506,7 +506,6 @@ class EnvironmentInfo:
             block_map = self.nearby_blocks["blockMap"]
             total_count = self.nearby_blocks.get("totalCount", 0)
             lines.append(f"  总方块数量: {total_count}")
-            lines.append("  (位置坐标均为相对于玩家的相对位置)")
             
             # 按方块类型分组显示
             for block_type, block_info in block_map.items():
@@ -515,22 +514,36 @@ class EnvironmentInfo:
                     positions = block_info.get("positions", [])
                     
                     # 获取方块的中文名称
-                    block_name = self._get_block_name(block_type)
-                    lines.append(f"  {block_name}: {count} 个")
+                    # block_name = self._get_block_name(block_type)
+                    lines.append(f"  {block_type}: {count} 个")
                     
                     # 显示位置信息（限制显示数量避免过长）
                     if positions and len(positions) <= 10:
                         for pos in positions:
                             if isinstance(pos, list) and len(pos) >= 3:
                                 x, y, z = pos[0], pos[1], pos[2]
-                                lines.append(f"    相对位置: X={x}, Y={y}, Z={z}")
-                    elif positions and len(positions) > 10:
-                        lines.append(f"    位置数量过多，显示前10个:")
+                                # 将相对位置转换为绝对位置
+                                if self.position:
+                                    abs_x = self.position.x + x
+                                    abs_y = self.position.y + y
+                                    abs_z = self.position.z + z
+                                    lines.append(f"    位置: X={abs_x:.1f}, Y={abs_y:.1f}, Z={abs_z:.1f}")
+                                else:
+                                    lines.append(f"    相对位置: X={x}, Y={y}, Z={z}")
+                    elif positions and len(positions) > 5:
+                        lines.append(f"    位置数量过多，显示前5个:")
                         for i, pos in enumerate(positions[:10]):
                             if isinstance(pos, list) and len(pos) >= 3:
                                 x, y, z = pos[0], pos[1], pos[2]
-                                lines.append(f"      {i+1}. 相对位置: X={x}, Y={y}, Z={z}")
-                        lines.append(f"    ... 还有 {len(positions) - 10} 个位置")
+                                # 将相对位置转换为绝对位置
+                                if self.position:
+                                    abs_x = self.position.x + x
+                                    abs_y = self.position.y + y
+                                    abs_z = self.position.z + z
+                                    lines.append(f"      {i+1}. 位置: X={abs_x:.1f}, Y={abs_y:.1f}, Z={abs_z:.1f}")
+                                else:
+                                    lines.append(f"      {i+1}. 相对位置: X={x}, Y={y}, Z={z}")
+                        lines.append(f"    ... 还有 {len(positions) - 5} 个位置")
             lines.append("")
         else:
             lines.append("【附近方块】")
@@ -661,14 +674,6 @@ class EnvironmentInfo:
         }
         return gamemodes.get(gamemode, f"未知模式({gamemode})")
     
-    def _get_weather_name(self, weather: str) -> str:
-        """获取天气名称"""
-        weather_names = {
-            "clear": "晴朗",
-            "rain": "下雨",
-            "thunder": "雷暴"
-        }
-        return weather_names.get(weather, weather)
     
     def _get_time_name(self, time_of_day: int) -> str:
         """获取时间名称"""
@@ -684,75 +689,6 @@ class EnvironmentInfo:
             return f"夜晚 ({time_of_day})"
         else:
             return f"未知时间 ({time_of_day})"
-    
-    def _get_dimension_name(self, dimension: str) -> str:
-        """获取维度名称"""
-        dimension_names = {
-            "overworld": "主世界",
-            "nether": "下界",
-            "end": "末地"
-        }
-        return dimension_names.get(dimension, dimension)
-    
-    def _get_block_name(self, block_type: str) -> str:
-        """获取方块的中文名称"""
-        block_names = {
-            # 基础方块
-            "grass_block": "草方块",
-            "dirt": "泥土",
-            "stone": "石头",
-            "cobblestone": "圆石",
-            "oak_log": "橡木原木",
-            "spruce_log": "云杉原木",
-            "birch_log": "白桦原木",
-            "jungle_log": "丛林原木",
-            "acacia_log": "金合欢原木",
-            "dark_oak_log": "深色橡木原木",
-            "oak_planks": "橡木木板",
-            "spruce_planks": "云杉木板",
-            "birch_planks": "白桦木板",
-            "jungle_planks": "丛林木板",
-            "acacia_planks": "金合欢木板",
-            "dark_oak_planks": "深色橡木木板",
-            
-            # 矿物方块
-            "coal_ore": "煤矿石",
-            "iron_ore": "铁矿石",
-            "gold_ore": "金矿石",
-            "diamond_ore": "钻石矿石",
-            "emerald_ore": "绿宝石矿石",
-            "lapis_ore": "青金石矿石",
-            "redstone_ore": "红石矿石",
-            "nether_gold_ore": "下界金矿石",
-            "ancient_debris": "远古残骸",
-            
-            # 装饰方块
-            "glass": "玻璃",
-            "sand": "沙子",
-            "sandstone": "砂岩",
-            "clay": "粘土",
-            "gravel": "沙砾",
-            "soul_sand": "灵魂沙",
-            "soul_soil": "灵魂土",
-            
-            # 植物
-            "grass": "草",
-            "fern": "蕨",
-            "dead_bush": "枯死的灌木",
-            "cactus": "仙人掌",
-            "sugar_cane": "甘蔗",
-            "bamboo": "竹子",
-            
-            # 其他
-            "water": "水",
-            "lava": "岩浆",
-            "air": "空气",
-            "bedrock": "基岩",
-            "obsidian": "黑曜石",
-            "netherrack": "下界岩",
-            "end_stone": "末地石"
-        }
-        return block_names.get(block_type, block_type)
     
     def _get_event_description(self, event: Event) -> str:
         """获取事件描述"""

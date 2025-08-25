@@ -3,22 +3,17 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional
-from langchain.agents import AgentExecutor
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import BaseTool
-from langchain.memory import ConversationBufferMemory
 from src.utils.logger import get_logger
-from ..chains.goal_proposal_chain import GoalProposalChain
-from ..chains.memory_chain import MemoryChain
-from ..chains.error_handling_chain import ErrorHandlingChain
-from ..mcp.mcp_tool_adapter import MCPToolAdapter
 from ..config import MaicraftConfig
 from ..openai_client.llm_request import LLMClient
 from .environment_updater import EnvironmentUpdater
 from .environment import global_environment
 from .prompt_manager.prompt_manager import prompt_manager
 from .prompt_manager.template import init_templates
-from .utils import parse_json, convert_mcp_tools_to_openai_format, parse_tool_result, filter_action_tools
+from .utils import parse_json, convert_mcp_tools_to_openai_format, parse_tool_result, filter_action_tools, format_executed_goals, extract_between
+from .to_do_list import ToDoList
+
 
 class MaiAgent:
     def __init__(self, config: MaicraftConfig, mcp_client):
@@ -41,6 +36,9 @@ class MaiAgent:
         
         
         self.goal_list: list[tuple[str, str, str]] = []  # (goal, status, details)
+        
+        
+        self.to_do_list: ToDoList = ToDoList()
         
     async def initialize(self):
         """异步初始化"""
@@ -76,79 +74,116 @@ class MaiAgent:
             raise
         
         
-    async def run_loop(self):
+    async def run_plan_loop(self):
         """
         运行主循环
         """
-        modification_reason = ""  # 初始化修改原因
         while True:
             success, goal = await self.propose_next_goal()
             if not success:
                 self.logger.error("[MaiAgent] 目标提议失败")
                 continue
             
-            # steps, notes = await self.anaylze_goal(goal)
-            # if not steps:
-                # self.logger.error(f"[MaiAgent] 目标分解失败: {notes}")
-                # continue
-            
-            success, result = await self.execute_goal(goal=goal)
-            
-            # 根据执行结果确定状态和详细信息
-            if success:
-                status = "完成"
-                details = result
-            else:
-                if "目标需要修改:" in result:
-                    status = "修改"
-                    details = result.replace("目标需要修改: ", "")
-                    modification_reason = details  # 保存修改原因用于下一个目标
-                else:
-                    status = "失败"
-                    details = result
-                    modification_reason = ""  # 失败时清空修改原因
-            
-            # 记录目标执行结果
-            self.goal_list.append((goal, status, details))
-            
-            if not success:
-                self.logger.error(f"[MaiAgent] 目标执行失败: {result}")
+            await self.propose_all_task(goal=goal, to_do_list=self.to_do_list, environment_info=global_environment.get_summary())
+            while True:
+                if self.to_do_list.check_if_all_done():
+                    self.logger.info(f"[MaiAgent] 所有任务已完成，目标{goal}完成")
+                    self.to_do_list.clear()
+                    self.goal_list.append((goal, "done", "所有任务已完成"))
+                    break
+                
+                if self.to_do_list.need_edit:
+                    self.logger.info(f"[MaiAgent] 任务列表需要修改: {self.to_do_list.need_edit}")
+                    self.goal_list.append((goal, "edit", self.to_do_list.need_edit))
+                    self.to_do_list.need_edit = ""
+                    break
+                    
+                await asyncio.sleep(1)
+                
+                
+    
+    
+    async def run_execute_loop(self):
+        """
+        运行执行循环
+        """
+        while True:
+            if len(self.to_do_list.items) == 0:
+                await asyncio.sleep(1)
                 continue
             
-            # self.goal_list.append((goal, success))
+            choose_success, choose_result, details = await self.choose_next_task(to_do_list=self.to_do_list, environment_info=global_environment.get_summary())
+            if not choose_success:            
+                if choose_result == "edit":
+                    self.logger.info(f"[MaiAgent] 任务列表需要修改: {details}")
+                    self.to_do_list.need_edit = details
+                    self.to_do_list.clear()
+                else:
+                    self.logger.error(f"[MaiAgent] 任务选择失败: {choose_result}")
+                    await asyncio.sleep(5)
+                    continue
             
-            self.logger.info(f"[MaiAgent] 目标执行成功: {result}")
+            if choose_result == "done":
+                task = self.to_do_list.get_task_by_id(details)
+                if task is not None:
+                    task.done = True
+                    task.details = f"任务{details}已完成"
+                    self.logger.info(f"[MaiAgent] 任务{details}已完成")
+                    continue
+                continue
             
-    def format_executed_goals(self) -> str:
-        """
-        以更详细、结构化的方式格式化已执行目标列表
-        """
-        if not self.goal_list:
-            return "无已执行目标"
+            if choose_result == "do":
+                success, result = await self.execute_next_task(details)
+                if not success:
+                    self.logger.error(f"[MaiAgent] 任务执行失败: {result}")
+                    continue
+                self.logger.info(f"[MaiAgent] 任务执行成功: {result}")
+            
+            
+    
+    async def propose_all_task(self, goal: str, to_do_list: ToDoList, environment_info: str) -> bool:
+        self.logger.info("[MaiAgent] 开始提议任务")
+        # 使用原有的提示词模板，但通过call_tool传入工具
+        input_data = {
+            "goal": goal,
+            "environment": environment_info,
+            "to_do_list": to_do_list.__str__(),
+        }
+        prompt = prompt_manager.generate_prompt("minecraft_to_do", **input_data)
+        self.logger.info(f"[MaiAgent] 任务提议提示词: {prompt}")
         
-        lines = []
-        for idx, (goal, status, details) in enumerate(self.goal_list, 1):
-            if status == "完成":
-                lines.append(f"{idx}. 完成了目标：{goal}")
-                if details and "目标执行成功" in details:
-                    # 提取成功时的想法
-                    if "最终想法：" in details:
-                        final_thought = details.split("最终想法：")[-1]
-                        lines.append(f"   想法：{final_thought}")
-            elif status == "修改":
-                lines.append(f"{idx}. 目标需要修改：{goal}")
-                lines.append(f"   原因：{details}")
-            elif status == "失败":
-                lines.append(f"{idx}. 目标执行失败：{goal}")
-                lines.append(f"   原因：{details}")
+        response = await self.llm_client.simple_chat(prompt)
+        self.logger.info(f"[MaiAgent] 任务提议响应: {response}")
         
-        return "\n".join(lines)
+        tasks_list = parse_json(response)
+        
+        
+        no_new_task = False
+        for task in tasks_list:
+            try:
+                task_type = str(task.get("type", "")).strip().lower()
+                if task_type == "none":
+                    self.logger.info("[MaiAgent] 没有新任务需要添加")
+                    no_new_task = True
+                    break
+                details = str(task.get("details", "")).strip()
+                done_criteria = str(task.get("done_criteria", "")).strip()
+                if not task_type or not details:
+                    # 不完整任务，跳过
+                    self.logger.warning(f"[MaiAgent] 跳过不完整任务: {task}")
+                    continue
+                self.to_do_list.add_task(type=task_type, details=details, done_criteria=done_criteria)
+            except Exception as e:
+                self.logger.error(f"[MaiAgent] 处理任务时异常: {e}，任务内容: {task}")
+                continue
+        
+        return no_new_task
     
     
     async def propose_next_goal(self) -> tuple[str, str]:
         self.logger.info("[MaiAgent] 开始提议下一个目标")
         environment_info = global_environment.get_summary()
-        executed_goals = self.format_executed_goals()
+        executed_goals = format_executed_goals(self.goal_list)
         input_data = {
             "player_position": "当前游戏位置",
             "inventory": "当前物品栏",
@@ -166,45 +201,73 @@ class MaiAgent:
         self.logger.info(f"[MaiAgent] 目标提议响应: {response}")
         
         return True, response
-        
-        
-    async def anaylze_goal(self, goal: str) -> tuple[list[str], str]:
-        """
-        将目标分解为可操作的步骤，以及注意事项
-        返回: (步骤列表, 注意事项字符串)
-        """
-        #需要返回对目标的拆解
-        #和额外的注意事项
-        environment_info = global_environment.get_summary()
-        input_data = {
-            "goal": goal,
-            "environment": environment_info,
-        }
-        prompt = prompt_manager.generate_prompt("minecraft_analyze_goal", **input_data)
-        # self.logger.info(f"[MaiAgent] 目标拆解输入数据: {input_data}")
-        self.logger.info(f"[MaiAgent] 目标拆解提示词: {prompt}")
-        
-        response = await self.llm_client.simple_chat(prompt)
-        self.logger.info(f"[MaiAgent] 目标拆解响应: {response}")
-        
-        parsed_response = parse_json(response)
-        if parsed_response is None:
-            self.logger.error(f"[MaiAgent] 目标拆解响应解析失败: {response}")
-            return [], ""
-        
-        steps = parsed_response.get("steps", [])
-        notes = parsed_response.get("notes", "")
-        
-        
-        return steps, notes
-    
-    
-    async def execute_goal(self, goal: str):
+
+    async def choose_next_task(self, to_do_list: ToDoList, environment_info: str):
         """
         执行目标
         返回: (执行结果, 执行状态)
         """
         try:
+            input_data = {
+                "to_do_list": to_do_list.__str__(),
+                "environment": environment_info,
+            }
+            prompt = prompt_manager.generate_prompt("minecraft_choose_task", **input_data)
+            self.logger.info(f"[MaiAgent] 任务选择提示词: {prompt}")
+            
+            response = await self.llm_client.simple_chat(prompt)
+            self.logger.info(f"[MaiAgent] 任务选择响应: {response}")
+
+            # 解析响应，支持形如：
+            # <修改：修改的原因>
+            # <执行：执行的任务id>
+            text = str(response) if response is not None else ""
+
+            # 优先判断修改
+            modification_reason = extract_between(text, "<修改：", "<修改:")
+            if modification_reason is None and "<修改>" in text:
+                modification_reason = ""
+            if modification_reason is not None or "<修改>" in text:
+                reason = modification_reason if modification_reason is not None else ""
+                return False, "edit", reason
+
+            # 判断执行
+            execute_task_id = extract_between(text, "<执行：", "<执行:")
+            if execute_task_id is None and "<执行>" in text:
+                execute_task_id = ""
+            if execute_task_id is not None or "<执行>" in text:
+                task_id = execute_task_id if execute_task_id is not None else ""
+                return True, "do", task_id
+                
+            # 判断完成
+            done_task_id = extract_between(text, "<完成：", "<完成:")
+            if done_task_id is None and "<完成>" in text:
+                done_task_id = ""
+            if done_task_id is not None or "<完成>" in text:
+                task_id = done_task_id if done_task_id is not None else ""
+                return True, "done", task_id
+
+            # 兜底：无法解析
+            self.logger.warning(f"[MaiAgent] 无法从响应中解析任务选择结果: {text}")
+            return False, "edit", "无法解析任务选择结果"
+        except Exception as e:
+            self.logger.error(f"[MaiAgent] 任务选择解析异常: {e}")
+            return False, "edit", f"解析异常: {str(e)}"
+
+
+    
+    async def execute_next_task(self, id: str) -> tuple[bool, str]:
+        """
+        执行目标
+        返回: (执行结果, 执行状态)
+        """
+        try:
+            task = self.to_do_list.get_task_by_id(id)
+            
+            if task is None:
+                self.logger.error(f"[MaiAgent] 任务不存在: {id}")
+                return False, "任务不存在"
+            
             # 获取所有可用的MCP工具
             available_tools = await self.mcp_client.get_tools_metadata()
             if not available_tools:
@@ -229,7 +292,7 @@ class MaiAgent:
             
             while not done and attempt < max_attempts:
                 attempt += 1
-                self.logger.info(f"[MaiAgent] 执行目标: {goal} 尝试 {attempt}/{max_attempts}")
+                self.logger.info(f"[MaiAgent] 执行任务: {task} 尝试 {attempt}/{max_attempts}")
                 
                 # 获取当前环境信息
                 environment_info = global_environment.get_summary()
@@ -239,12 +302,12 @@ class MaiAgent:
                 
                 # 使用原有的提示词模板，但通过call_tool传入工具
                 input_data = {
-                    "goal": goal,
+                    "task": task.__str__(),
                     "environment": environment_info,
                     "executed_tools": executed_tools_str,
                 }
-                prompt = prompt_manager.generate_prompt("minecraft_excute_step", **input_data)
-                self.logger.info(f"[MaiAgent] 执行步骤提示词: {prompt}")
+                prompt = prompt_manager.generate_prompt("minecraft_excute_task", **input_data)
+                self.logger.info(f"[MaiAgent] 执行任务提示词: {prompt}")
                 
                 # 使用call_tool方法调用LLM，传入工具参数
                 response = await self.llm_client.call_tool(
@@ -253,7 +316,6 @@ class MaiAgent:
                     system_message="你是一个Minecraft游戏助手，请选择合适的工具来执行游戏步骤。"
                 )
                 
-                # self.logger.info(f"[MaiAgent] 执行步骤响应: {response}")
                 
                 if not response.get("success"):
                     self.logger.error(f"[MaiAgent] LLM调用失败: {response.get('error')}")
@@ -261,17 +323,18 @@ class MaiAgent:
                 
                 # 检查是否有工具调用
                 response_content = response.get("content", "")
-                self.logger.info(f"[MaiAgent] 使用了工具，想法: {response_content}")
+                self.logger.info(f"[MaiAgent] 任务想法: {response_content}")
+                # 如果想法中包含可修复的JSON，解析并更新任务进度
+                try:
+                    parsed = parse_json(response_content) if isinstance(response_content, str) else None
+                    if isinstance(parsed, dict):
+                        if "progress" in parsed:
+                            task.progress = str(parsed.get("progress"))
+                        if "done" in parsed:
+                            task.done = bool(parsed.get("done"))
+                except Exception as e:
+                    self.logger.warning(f"[MaiAgent] 解析任务进度JSON失败: {e}")
                 
-                # 根据模板说明检查目标完成情况
-                if "<完成>" in response_content:
-                    done = True
-                    break
-                elif "<修改：" in response_content:
-                    # 目标无法完成或需要修改
-                    self.logger.warning(f"[MaiAgent] 目标需要修改: {response_content}")
-                    done = True
-                    break
                 
                 tool_calls = response.get("tool_calls", [])
                 if tool_calls:
@@ -330,38 +393,29 @@ class MaiAgent:
                     # 如果没有工具调用，检查文本响应
                     content = response.get("content", "")
                     self.logger.info(f"[MaiAgent] 没有使用工具，产生想法: {content}")
-                    
-                    # 根据模板说明检查目标完成情况
-                    if "<完成>" in content:
-                        done = True
-                        break
-                    elif "<修改：" in content:
-                        # 目标无法完成或需要修改
-                        self.logger.warning(f"[MaiAgent] 目标需要修改: {content}")
-                        done = True
-                        break
-                
-                # 如果步骤未完成，等待一段时间再重试
-                if not done:
-                    await asyncio.sleep(2)
+                    # 同样尝试解析并更新任务进度
+                    try:
+                        parsed_no_tool = parse_json(content) if isinstance(content, str) else None
+                        if isinstance(parsed_no_tool, dict):
+                            if "progress" in parsed_no_tool:
+                                task.progress = str(parsed_no_tool.get("progress"))
+                            if "done" in parsed_no_tool:
+                                task.done = bool(parsed_no_tool.get("done"))
+                    except Exception as e:
+                        self.logger.warning(f"[MaiAgent] 解析无工具响应JSON失败: {e}")
+
+                if task.done:
+                    done = True
+                    return True, f"任务执行成功: {task.__str__()}"
             
             if not done:
-                self.logger.warning(f"[MaiAgent] 目标执行超时: {goal}")
-                return False, f"目标执行超时: {goal}"
-            
-            # 检查最终响应内容，判断目标完成情况
-            if "<修改：" in response_content:
-                # 提取修改原因
-                modification_reason = self._extract_modification_reason(response_content)
-                self.logger.info(f"[MaiAgent] 目标需要修改: {modification_reason}")
-                return False, f"目标需要修改: {modification_reason}"
-            else:
-                self.logger.info("[MaiAgent] 所有步骤执行完成")
-                return True, f"目标执行成功，最终想法：{response_content}"
+                self.logger.warning(f"[MaiAgent] 任务执行超时: {task.__str__()}")
+                return False, f"任务执行超时: {task.__str__()}"
+
             
         except Exception as e:
-            self.logger.error(f"[MaiAgent] 目标执行异常: {e}")
-            return False, f"执行异常: {str(e)}"
+            self.logger.error(f"[MaiAgent] 任务执行异常: {e}")
+            return False, f"任务执行异常: {str(e)}"
     
 
     
@@ -372,7 +426,8 @@ class MaiAgent:
         
         formatted_history = []
         for record in executed_tools_history:
-            status = "成功" if record["success"] else "失败"
+            # status 变量不再使用，保留逻辑可读性但避免未使用告警
+            _ = "成功" if record["success"] else "失败"
             timestamp = record["timestamp"]
             tool_name = record["tool_name"]
             arguments = record["arguments"]
@@ -482,7 +537,7 @@ class MaiAgent:
             
             return readable_text
             
-        except Exception as e:
+        except Exception:
             # 如果解析失败，返回原始结果
             return str(result)
     
@@ -538,7 +593,7 @@ class MaiAgent:
             
             return readable_text.strip()
             
-        except Exception as e:
+        except Exception:
             # 如果解析失败，返回原始结果
             return str(result)
     
@@ -585,7 +640,7 @@ class MaiAgent:
             
             return readable_text
             
-        except Exception as e:
+        except Exception:
             # 如果解析失败，返回原始结果
             return str(result)
     
@@ -624,23 +679,20 @@ class MaiAgent:
             if "minedCount" in data:
                 mined_count = data["minedCount"]
                 block_name = data.get("blockName", "未知方块")
-                
-                # 导入方块名称翻译函数
-                from .utils import _translate_block_name
-                block_name_cn = _translate_block_name(block_name)
+
                 
                 # 构建可读文本
                 if mined_count == 1:
-                    readable_text = f"成功挖掘了1个{block_name_cn}"
+                    readable_text = f"成功挖掘了1个{block_name}"
                 else:
-                    readable_text = f"成功挖掘了{mined_count}个{block_name_cn}"
+                    readable_text = f"成功挖掘了{mined_count}个{block_name}"
                 
                 return readable_text
             else:
                 # 如果没有挖掘数据，返回原始结果
                 return str(result)
             
-        except Exception as e:
+        except Exception:
             # 如果解析失败，返回原始结果
             return str(result)
     
@@ -669,6 +721,6 @@ class MaiAgent:
             # 如果没有找到标准格式，返回原始内容
             return response_content
             
-        except Exception as e:
+        except Exception:
             # 如果提取失败，返回原始内容
             return response_content
